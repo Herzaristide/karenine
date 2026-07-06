@@ -1,0 +1,18 @@
+singleton Theme 1.0 Theme.qml
+BottomBar 1.0 BottomBar.qml
+SidePanel 1.0 SidePanel.qml
+RightPanel 1.0 RightPanel.qml
+Settings 1.0 Settings.qml
+SettingsWindow 1.0 SettingsWindow.qml
+HardwareStats 1.0 HardwareStats.qml
+OllamaChat 1.0 OllamaChat.qml
+OllamaTools 1.0 OllamaTools.qml
+ClaudeChat 1.0 ClaudeChat.qml
+AIPanel 1.0 AIPanel.qml
+NotesWidget 1.0 NotesWidget.qml
+MiniGraph 1.0 MiniGraph.qml
+Metronome 1.0 Metronome.qml
+Tuner 1.0 Tuner.qml
+QuickControls 1.0 QuickControls.qml
+MusicPlayerWidget 1.0 MusicPlayerWidget.qml
+ChromaGraph 1.0 ChromaGraph.qml
