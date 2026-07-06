@@ -12,3 +12,7 @@ path = "src/main.rs"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Native audio I/O (mic capture for tuner/chroma, click playback for metronome).
+cpal = "0.15"
+# FFT for the pitch detector and chromagram.
+rustfft = "6"

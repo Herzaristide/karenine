@@ -31,6 +31,20 @@ pub enum Command {
     HwstatsGet,
     /// Keep connection open; daemon pushes a `HwStats` JSON line every second.
     HwstatsWatch,
+
+    // ── audio services (native cpal + rustfft) ────────────────────────────
+    /// Keep connection open; daemon captures the mic and pushes one
+    /// `{"pitch":<hz>}` line per analysis frame (0.0 when unvoiced).
+    TunerWatch,
+    /// Keep connection open; daemon captures the mic and pushes one
+    /// `{"chroma":[12 floats],"top":["C","E","G"]}` line per analysis frame.
+    ChromaWatch,
+    /// Long-lived metronome session. After this command the connection stays
+    /// open: the client sends control lines (`{"action":"start","bpm":120}`,
+    /// `{"action":"stop"}`, `{"action":"bpm","value":130}`,
+    /// `{"action":"beats","value":4}`) and the daemon pushes `{"beat":<n>}`
+    /// events, driving a sample-accurate cpal output stream.
+    Metronome,
 }
 
 // ── Shared state payload ──────────────────────────────────────────────────

@@ -19,9 +19,7 @@ widgets/             Contenu des panneaux
   QuickControls, ChromaGraph, MiniGraph, Settings
 ai/                  Cluster chat IA
   AIPanel (sélecteur), ClaudeChat, OllamaChat, OllamaTools
-backend/             Scripts lancés par les widgets
-  metronome.sh, tuner.py + tuner.sh, chroma-analyzer.py + chroma-analyzer.sh,
-  voice-assistant.sh, mic-level.sh, mic-transcribe.sh
+anna/                Daemon Rust unique — thème, hwstats, tuner, chroma, métronome
 assets/              nixos.svg
 ```
 
@@ -29,13 +27,11 @@ Chaque sous-dossier a un `qmldir`. Les composants sont importés par chemin rela
 (`import "../services"`, `import "../widgets"`, …) — on n'utilise pas `import "root:/…"`
 (déconseillé par Quickshell : casse le LSP et les singletons).
 
-Les backends sont résolus **relativement** au fichier QML via
-`Qt.resolvedUrl("../backend/…")` : aucun chemin n'est codé en dur, le dépôt est
-donc relocalisable (fonctionne quel que soit le préfixe d'installation).
-
-Les scripts Python lisent du PCM brut sur stdin ; leurs wrappers `.sh`
-(`tuner.sh`, `chroma-analyzer.sh`) branchent `parec` dessus au bon format
-(stéréo 44,1 kHz pour le tuner, mono 22,05 kHz pour le chromagramme).
+Tout le backend est le daemon Rust `anna` : les widgets s'y connectent via un
+**socket Unix** (`$XDG_RUNTIME_DIR/anna.sock`) et échangent du JSON ligne par
+ligne (type `Quickshell.Io.Socket`). Plus aucun script bash/python ni dépendance
+`parec`/`numpy`. L'audio (accordeur, chromagramme, métronome) est natif via
+`cpal` + `rustfft`, à la fréquence réelle du périphérique.
 
 ## Configuration
 
@@ -60,10 +56,11 @@ home.file.".config/quickshell".source = karenine.packages.${system}.default;
 ### Manuel (hors NixOS)
 
 Copier/symlink le contenu du dépôt dans `~/.config/quickshell/` (en préservant les
-sous-dossiers), rendre `backend/*.sh` exécutables, puis lancer `quickshell`.
+sous-dossiers), builder `anna` (`cargo build --release` dans `anna/`, nécessite
+`alsa-lib` + `pkg-config`) et le lancer en daemon, puis lancer `quickshell`.
 
 ## Développement
 
 - `nix build .#default` (ou `nix flake check`) : valide que le layout s'assemble.
 - `nix fmt` : formate le `flake.nix`.
-- La CI lance shellcheck sur `backend/*.sh`, `py_compile` sur les `.py`, et `nix build`.
+- La CI build le daemon `anna` (`cargo`) et `nix build` le layout.

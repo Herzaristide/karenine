@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
+import Quickshell
 import Quickshell.Io
 import "../services"
 
@@ -17,9 +18,6 @@ Item {
     // backend (persistent aplay stream) only runs while the metronome is
     // visible or actively ticking — no idle stream when it's not in use.
     property bool active:            false
-
-    // Backend résolu relativement au fichier QML (repo relocalisable).
-    readonly property string backendPath: Qt.resolvedUrl("../backend/metronome.sh").toString().replace("file://", "")
 
     function clampBpm(v) { return Math.max(20, Math.min(300, v)) }
 
@@ -38,47 +36,61 @@ Item {
     }
 
     // ── Backend ───────────────────────────────────────────────────────────
-    // Long-lived Python process that owns timing + audio via a PortAudio
-    // (PipeWire) callback. Clicks are mixed into the audio stream at exact
-    // sample offsets, so beats are perfectly evenly spaced — no per-beat
-    // process spawn, no scheduler jitter.
-    Process {
-        id: metroBackend
-        command: ["bash", "-c", "exec bash '" + metroPanel.backendPath + "' 2>>$HOME/.cache/quickshell-metronome.log"]
-        running: metroPanel.active || metroPanel.metroRunning
-        stdinEnabled: true
-        stdout: SplitParser {
-            onRead: (data) => {
-                var line = data.trim()
-                if (line.indexOf("BEAT ") === 0) {
-                    metroPanel.beatIndex = parseInt(line.substring(5))
-                } else if (line === "READY") {
-                    // Re-push state in case the backend was just (re)spawned
-                    metroPanel.metroSend("BEATS " + metroPanel.beatsPerBar)
-                    metroPanel.metroSend("BPM " + metroPanel.bpm)
-                    if (metroPanel.metroRunning)
-                        metroPanel.metroSend("START " + metroPanel.bpm)
-                }
+    // Native `anna` daemon owns timing + audio via a cpal output callback that
+    // mixes clicks at exact sample offsets, so beats are perfectly evenly
+    // spaced — no scheduler jitter. We open a metronome session over the Unix
+    // socket, send control lines ({"action":…}), and receive {"beat":<n>}.
+    Socket {
+        id: metroSock
+        path: (Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/1000") + "/anna.sock"
+        parser: SplitParser {
+            onRead: (line) => {
+                try {
+                    var msg = JSON.parse(line)
+                    if (typeof msg.beat === "number") {
+                        metroPanel.beatIndex = msg.beat
+                    } else if (msg.ready === true) {
+                        // Push current state now the session is established.
+                        metroPanel.metroCmd({ action: "beats", value: metroPanel.beatsPerBar })
+                        metroPanel.metroCmd({ action: "bpm",   value: metroPanel.bpm })
+                        if (metroPanel.metroRunning)
+                            metroPanel.metroCmd({ action: "start", bpm: metroPanel.bpm })
+                    }
+                } catch (e) { /* ignore malformed / partial line */ }
             }
         }
-        stderr: SplitParser { onRead: (data) => { /* ignore */ } }
+        onConnectedChanged: {
+            if (connected) write('{"cmd":"metronome"}\n')
+        }
     }
 
-    function metroSend(cmd) {
-        if (metroBackend.running)
-            metroBackend.write(cmd + "\n")
+    // Connect while the metronome is visible or ticking; retry every 2 s.
+    Timer {
+        interval: 2000
+        running: metroPanel.active || metroPanel.metroRunning
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: if (!metroSock.connected) metroSock.connected = true
+    }
+
+    onActiveChanged: if (!active && !metroRunning) metroSock.connected = false
+
+    function metroCmd(obj) {
+        if (metroSock.connected)
+            metroSock.write(JSON.stringify(obj) + "\n")
     }
 
     onMetroRunningChanged: {
         if (metroRunning) {
             beatIndex = -1
-            metroSend("START " + bpm)
+            metroSock.connected = true
+            metroCmd({ action: "start", bpm: bpm })
         } else {
-            metroSend("STOP")
+            metroCmd({ action: "stop" })
         }
     }
-    onBpmChanged:               metroSend("BPM " + bpm)
-    onBeatsPerBarChanged:       metroSend("BEATS " + beatsPerBar)
+    onBpmChanged:               metroCmd({ action: "bpm",   value: bpm })
+    onBeatsPerBarChanged:       metroCmd({ action: "beats", value: beatsPerBar })
 
     // ── UI Layout (centered column, max width) ───────────────────────────
     readonly property int contentMaxWidth: 320

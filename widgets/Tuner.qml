@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import Quickshell
 import Quickshell.Io
 import "../services"
 
@@ -36,24 +37,41 @@ Item {
     }
 
     // ── Backend ───────────────────────────────────────────────────────────
-    Process {
-        id: tunerBackend
-        command: ["bash", "-c", "exec bash '" + Qt.resolvedUrl("../backend/tuner.sh").toString().replace("file://", "") + "' 2>>$HOME/.cache/quickshell-tuner.log"]
-        running: tuner.active
-        stdout: SplitParser {
-            onRead: (data) => {
-                var line = data.trim()
-                if (line.indexOf("PITCH:") === 0) {
-                    var f = parseFloat(line.substring(6))
-                    tuner.setFreq(isNaN(f) ? 0 : f)
-                }
+    // Native `anna` daemon: subscribe to the tuner service over the Unix socket
+    // and receive one {"pitch":<hz>} JSON line per analysis frame. The mic is
+    // captured by anna only while this connection is open (i.e. while active).
+    Socket {
+        id: tunerSock
+        path: (Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/1000") + "/anna.sock"
+        parser: SplitParser {
+            onRead: (line) => {
+                try {
+                    var msg = JSON.parse(line)
+                    if (typeof msg.pitch === "number") tuner.setFreq(msg.pitch)
+                } catch (e) { /* ignore malformed / partial line */ }
             }
         }
-        stderr: SplitParser { onRead: (data) => { /* ignore */ } }
+        onConnectedChanged: {
+            if (connected) write('{"cmd":"tuner_watch"}\n')
+        }
     }
 
-    // Reset the readout as soon as we stop listening.
-    onActiveChanged: if (!active) setFreq(0)
+    // Connect while active; retry every 2 s if the daemon isn't up yet.
+    Timer {
+        interval: 2000
+        running: tuner.active
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: if (!tunerSock.connected) tunerSock.connected = true
+    }
+
+    // Disconnect (stops the mic in anna) and reset the readout when we stop.
+    onActiveChanged: {
+        if (!active) {
+            tunerSock.connected = false
+            setFreq(0)
+        }
+    }
 
     // Re-map the currently held pitch when the reference changes.
     onRefFreqChanged: if (freq > 0) setFreq(freq)

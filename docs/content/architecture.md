@@ -20,12 +20,12 @@ widgets/             Contenu des panneaux
   QuickControls, ChromaGraph, MiniGraph, Settings
 ai/                  Cluster chat IA
   AIPanel (sélecteur), ClaudeChat, OllamaChat, OllamaTools
-backend/             Scripts lancés par les widgets (voir Backend)
+anna/                Daemon Rust unique (voir Backend)
 assets/              nixos.svg
 ```
 
 Détail par couche : [le shell](#shell), [les panneaux](#panels),
-[les widgets](#widgets), [le cluster IA](#ai), [les backends](#backend).
+[les widgets](#widgets), [le cluster IA](#ai), [le backend](#backend).
 
 ## Conventions QML
 
@@ -36,15 +36,15 @@ Détail par couche : [le shell](#shell), [les panneaux](#panels),
 
 ## Relocalisable par conception
 
-- Les backends sont résolus **relativement** au fichier QML via
-  `Qt.resolvedUrl("../backend/…")` : aucun chemin absolu, le dépôt fonctionne
-  quel que soit le préfixe d'installation.
-- C'est ce qui permet les deux modes d'[installation](#installation) (flake ou
-  manuel) sans génération de wrappers.
+- Les composants QML sont importés par **chemin relatif** : aucun chemin absolu,
+  le layout fonctionne quel que soit le préfixe d'installation.
+- Le backend est joint via le **socket** `$XDG_RUNTIME_DIR/anna.sock` (pas de
+  chemin en dur), ce qui permet les deux modes d'[installation](#installation).
 
-## Flux audio des scripts Python
+## Flux audio (daemon anna)
 
-Les scripts Python lisent du **PCM brut sur stdin** ; leurs wrappers `.sh`
-branchent `parec` au bon format (stéréo 44,1 kHz pour l'accordeur, mono
-22,05 kHz pour le chromagramme). Détails dans [Backend](#backend) et
-[Outils musicaux](#audio-tools).
+Le backend audio est natif : `anna` capture le micro et lit le clic via
+[`cpal`](https://crates.io/crates/cpal), et fait la DSP via
+[`rustfft`](https://crates.io/crates/rustfft). Toute la math est dérivée de la
+**fréquence réelle du périphérique** (pas de rééchantillonnage). Détails dans
+[Backend](#backend) et [Outils musicaux](#audio-tools).

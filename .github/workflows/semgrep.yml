@@ -25,11 +25,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Scan
-        # Couvre le Python ET le bash des scripts backend/ (que CodeQL n'analyse pas).
+        # Règles génériques (secrets, audit sécurité) sur l'ensemble du dépôt ;
+        # le Rust d'`anna` est couvert en profondeur par CodeQL.
         run: >-
           semgrep scan
-          --config p/python
-          --config r/bash
           --config p/secrets
           --config p/security-audit
           --exclude docs

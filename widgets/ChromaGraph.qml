@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import Quickshell
 import Quickshell.Io
 import "../services"
 
@@ -20,41 +21,57 @@ Item {
 
     implicitHeight: 86
 
-    // ── Backend process ──────────────────────────────────────────────────
-    Process {
-        id: chromaProc
-        running: root.active
-        command: ["bash", "-c", "exec '" + Qt.resolvedUrl("../backend/chroma-analyzer.sh").toString().replace("file://", "") + "'"]
+    // ── Backend ──────────────────────────────────────────────────────────
+    // Native `anna` daemon: subscribe to the chroma service over the Unix
+    // socket and receive one {"chroma":[12],"top":[…]} JSON line per frame.
+    // anna captures the mic only while this connection is open (i.e. active).
+    Socket {
+        id: chromaSock
+        path: (Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/1000") + "/anna.sock"
 
-        stdout: SplitParser {
-            onRead: (data) => {
-                var line = data.trim();
-                if (line.startsWith("CHROMA:")) {
-                    var parts = line.substring(7).split(",");
-                    if (parts.length !== 12) return;
-                    var arr = [];
-                    for (var i = 0; i < 12; i++) {
-                        var v = parseFloat(parts[i]);
-                        arr.push(isNaN(v) ? 0 : v);
+        parser: SplitParser {
+            onRead: (line) => {
+                try {
+                    var msg = JSON.parse(line);
+                    if (Array.isArray(msg.chroma) && msg.chroma.length === 12) {
+                        var arr = [];
+                        for (var i = 0; i < 12; i++) {
+                            var v = msg.chroma[i];
+                            arr.push(typeof v === "number" ? v : 0);
+                        }
+                        root.chroma = arr;
                     }
-                    root.chroma = arr;
-                } else if (line.startsWith("TOP:")) {
-                    var top = line.substring(4).split(",");
-                    root.topNote  = top[0] || "";
-                    root.topNote2 = top[1] || "";
-                    root.topNote3 = top[2] || "";
-                }
+                    if (Array.isArray(msg.top)) {
+                        root.topNote  = msg.top[0] || "";
+                        root.topNote2 = msg.top[1] || "";
+                        root.topNote3 = msg.top[2] || "";
+                    }
+                } catch (e) { /* ignore malformed / partial line */ }
             }
         }
-        stderr: SplitParser { onRead: (_) => { /* swallow */ } }
 
-        onRunningChanged: if (!running) {
-            root.chroma   = [0,0,0,0,0,0,0,0,0,0,0,0];
-            root.topNote  = "";
-            root.topNote2 = "";
-            root.topNote3 = "";
+        onConnectedChanged: {
+            if (connected) {
+                write('{"cmd":"chroma_watch"}\n');
+            } else {
+                root.chroma   = [0,0,0,0,0,0,0,0,0,0,0,0];
+                root.topNote  = "";
+                root.topNote2 = "";
+                root.topNote3 = "";
+            }
         }
     }
+
+    // Connect while active; retry every 2 s if the daemon isn't up yet.
+    Timer {
+        interval: 2000
+        running: root.active
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: if (!chromaSock.connected) chromaSock.connected = true
+    }
+
+    onActiveChanged: if (!active) chromaSock.connected = false
 
     // ── Layout ───────────────────────────────────────────────────────────
     ColumnLayout {

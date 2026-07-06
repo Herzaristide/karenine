@@ -11,21 +11,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint:
-    name: Lint scripts
+  anna:
+    name: Build anna (daemon)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # shellcheck et python3 sont préinstallés sur les runners ubuntu-latest.
-      # --severity=warning : les notes « info » (ex. SC2015 sur `A && B || true`,
-      # un idiome volontaire ici) sont advisory et ne cassent pas la CI ;
-      # les vrais problèmes (warning/error) échouent toujours.
-      - name: Shellcheck (scripts bash)
-        run: git ls-files -z '*.sh' | xargs -0 --no-run-if-empty shellcheck --severity=warning
+      # cpal's ALSA backend needs the ALSA dev headers + pkg-config to build.
+      - name: Install audio build deps
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
 
-      - name: Syntaxe Python
-        run: git ls-files -z '*.py' | xargs -0 --no-run-if-empty python3 -m py_compile
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: anna
+
+      - name: Build + test
+        working-directory: anna
+        run: cargo build --locked && cargo test --locked
 
   flake:
     name: Build flake

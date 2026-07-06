@@ -22,9 +22,8 @@ nix fmt                 # formate le flake.nix (nixfmt-rfc-style)
 
 ## Ce que vérifie la CI
 
-- **shellcheck** sur `backend/*.sh`
-- **`py_compile`** sur les scripts `.py`
-- **`nix build`** du paquet
+- **`cargo`** build/clippy du daemon `anna`
+- **`nix build`** du paquet (layout + `anna`)
 
-Voir les scripts concernés dans [Backend](#backend), et les conventions QML dans
+Voir le daemon dans [Backend](#backend), et les conventions QML dans
 [Architecture](#architecture).

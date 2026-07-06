@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [python]
+        language: [rust]
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +28,9 @@ jobs:
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
+          # Le daemon `anna` est le seul code applicatif compilé. build-mode none
+          # analyse les sources sans compiler (pas besoin des dev-libs audio).
+          build-mode: none
           queries: security-and-quality
           # La doc générée (Node) n'est pas du code applicatif à auditer.
           config: |

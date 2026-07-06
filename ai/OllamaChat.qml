@@ -12,29 +12,6 @@ Item {
     property bool modelReady: false
     property var availableModels: []
     property bool isStreaming: false
-    property bool voiceEnabled: false
-    property string voiceStatus: "OFF"
-    // Live microphone RMS (0..1) emitted by mic-level.sh while voice is on.
-    property real micLevel: 0.0
-    // Rolling history of the last N levels, used to render the meter as a
-    // little waveform instead of a single jumpy bar.
-    property var micLevelHistory: [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
-    // True when the assistant is actively doing something for the user
-    // (transcribing the captured utterance, generating, or speaking the
-    // reply). The input field is locked in this state so the user cannot
-    // type over an in-flight voice turn.
-    readonly property bool voiceBusy: voiceEnabled && (
-        voiceStatus === "RECORDING" ||
-        voiceStatus === "PROCESSING" ||
-        voiceStatus === "SPEAKING"  ||
-        voiceStatus === "DOWNLOADING_MODEL" ||
-        voiceStatus === "DOWNLOADING_VOICE"
-    )
-    readonly property bool voiceListening: voiceEnabled && voiceStatus === "LISTENING"
-    // Last line whisper-stream heard while waiting for the wake word.
-    // Surfaced in the header so the user can tune the wake word without
-    // opening a terminal.
-    property string voiceDebug: ""
 
     property string systemPrompt: "Tu es un assistant IA intégré au bureau Linux (Hyprland/NixOS) de l'utilisateur. Tu peux exécuter des actions sur son système via les outils disponibles. Tu as aussi accès à des outils NixOS pour reconstruire le système, mettre à jour le flake, gérer les générations et le garbage collection. La configuration NixOS se trouve dans /etc/nixos. Tu peux démarrer et arrêter des enregistrements audio du microphone vers /records/ (start_recording / stop_recording). Tu peux ouvrir des URLs et faire des recherches web dans le navigateur par défaut (Zen) avec l'outil open_url : utilise-le quand l'utilisateur demande d'ouvrir un site, chercher une recette, regarder YouTube, trouver des informations en ligne, etc. Quand l'utilisateur te demande d'effectuer une action, utilise l'outil approprié. Réponds toujours en français."
 
@@ -131,92 +108,6 @@ Item {
         xhr.send();
     }
 
-    // ── Voice assistant process ────────────────────────────────
-    Process {
-        id: voiceProcess
-        command: ["bash", "-c", "exec '" + Qt.resolvedUrl("../backend/voice-assistant.sh").toString().replace("file://", "") + "'"]
-        running: root.voiceEnabled
-        stdinEnabled: true
-
-        stdout: SplitParser {
-            onRead: (data) => {
-                if (data.startsWith("STATUS:")) {
-                    root.voiceStatus = data.substring(7);
-                } else if (data.startsWith("TRANSCRIPT:")) {
-                    var text = data.substring(11).trim();
-                    if (text !== "") {
-                        root.voiceSubmit(text);
-                    }
-                } else if (data.startsWith("DEBUG:")) {
-                    // Whisper heard this while waiting for the wake word.
-                    // Logged so you can tune WAKE_WORD_REGEX to your voice.
-                    var dbg = data.substring(6).trim();
-                    root.voiceDebug = dbg;
-                    console.log("[wake-stream]", dbg);
-                } else if (data.startsWith("ERROR:")) {
-                    var errMsg = data.substring(6);
-                    console.warn("Voice assistant error:", errMsg);
-                    // Show error in chat so the user knows what went wrong
-                    messages.append({ role: "assistant", content: "⚠️ Voix : " + errMsg, msgType: "text" });
-                }
-            }
-        }
-        stderr: SplitParser {
-            onRead: (data) => { console.warn("voice-assistant:", data) }
-        }
-
-        onExited: (code, status) => {
-            if (root.voiceEnabled) {
-                root.voiceStatus = "ERROR";
-                root.voiceEnabled = false;
-            }
-        }
-    }
-
-    // ── Microphone level meter ───────────────────────────────────
-    // Runs only while the voice assistant is on. Streams RMS levels we use
-    // to animate the meter so the user can SEE the mic is being captured.
-    Process {
-        id: micLevelProcess
-        command: ["bash", "-c", "exec '" + Qt.resolvedUrl("../backend/mic-level.sh").toString().replace("file://", "") + "'"]
-        running: root.voiceEnabled
-
-        stdout: SplitParser {
-            onRead: (data) => {
-                if (!data.startsWith("LEVEL:")) return;
-                var v = parseFloat(data.substring(6));
-                if (isNaN(v)) return;
-                root.micLevel = v;
-                var h = root.micLevelHistory.slice(1);
-                h.push(v);
-                root.micLevelHistory = h;
-            }
-        }
-        stderr: SplitParser { onRead: (_) => { /* swallow */ } }
-
-        onRunningChanged: if (!running) {
-            root.micLevel = 0.0;
-            root.micLevelHistory = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
-        }
-    }
-
-    function speakText(text) {
-        if (!root.voiceEnabled) return;
-        // Send TTS request to voice assistant via stdin
-        voiceProcess.write("SPEAK:" + text + "\n");
-    }
-
-    function voiceSubmit(text) {
-        if (root.isStreaming) return;
-        // Write transcript into the input field so the user sees it,
-        // then re-use the normal sendMessage() path.
-        inputField.text = text;
-        root.pendingVoiceResponse = true;
-        sendMessage();
-    }
-
-    property bool pendingVoiceResponse: false
-
     property bool ttsEnabled: false
     property var ttsPendingQueue: []
 
@@ -273,9 +164,7 @@ Item {
         }
 
         inputField.text = "";
-        // Prefix voice-initiated messages with a mic icon
-        var displayText = root.pendingVoiceResponse ? "\uD83C\uDF99 " + text : text;
-        messages.append({ role: "user", content: displayText, msgType: "text" });
+        messages.append({ role: "user", content: text, msgType: "text" });
 
         // Add to internal context
         root.conversationContext.push({ role: "user", content: text });
@@ -359,13 +248,10 @@ Item {
 
                             // Normal text response
                             root.conversationContext.push({ role: "assistant", content: fullResponse });
-                            // TTS : mode global lit toutes les réponses ; mode voix lit les réponses initiées par micro
+                            // TTS : le mode global lit toutes les réponses à voix haute.
                             if (root.ttsEnabled && fullResponse !== "") {
                                 root.speakResponse(fullResponse);
-                            } else if (root.pendingVoiceResponse && fullResponse !== "") {
-                                root.speakText(fullResponse);
                             }
-                            root.pendingVoiceResponse = false;
                             return;
                         }
                     } catch (e) {}
@@ -417,178 +303,6 @@ Item {
         anchors.fill: parent
         anchors.margins: 8
         spacing: 6
-
-        // -- Voice status banner --
-        // Prominent indicator that makes it obvious whether the mic is
-        // listening, transcribing, generating or speaking. Shows a live
-        // audio meter driven by mic-level.sh while we are capturing.
-        Rectangle {
-            visible: root.voiceEnabled
-            Layout.fillWidth: true
-            Layout.preferredHeight: voiceBanner.implicitHeight + 12
-            radius: 6
-            color: {
-                switch (root.voiceStatus) {
-                    case "LISTENING":  return Qt.rgba(Theme.colorSuccess.r, Theme.colorSuccess.g, Theme.colorSuccess.b, 0.10);
-                    case "RECORDING":  return Qt.rgba(Theme.colorDanger.r,  Theme.colorDanger.g,  Theme.colorDanger.b,  0.14);
-                    case "PROCESSING": return Qt.rgba(Theme.colorWarning.r, Theme.colorWarning.g, Theme.colorWarning.b, 0.14);
-                    case "SPEAKING":   return Qt.rgba(Theme.accentColor.r,  Theme.accentColor.g,  Theme.accentColor.b,  0.14);
-                    case "ERROR":      return Qt.rgba(Theme.colorDanger.r,  Theme.colorDanger.g,  Theme.colorDanger.b,  0.18);
-                    default:           return Qt.rgba(1, 1, 1, 0.05);
-                }
-            }
-            border.width: 1
-            border.color: {
-                switch (root.voiceStatus) {
-                    case "LISTENING":  return Qt.rgba(Theme.colorSuccess.r, Theme.colorSuccess.g, Theme.colorSuccess.b, 0.55);
-                    case "RECORDING":  return Qt.rgba(Theme.colorDanger.r,  Theme.colorDanger.g,  Theme.colorDanger.b,  0.65);
-                    case "PROCESSING": return Qt.rgba(Theme.colorWarning.r, Theme.colorWarning.g, Theme.colorWarning.b, 0.65);
-                    case "SPEAKING":   return Qt.rgba(Theme.accentColor.r,  Theme.accentColor.g,  Theme.accentColor.b,  0.65);
-                    case "ERROR":      return Qt.rgba(Theme.colorDanger.r,  Theme.colorDanger.g,  Theme.colorDanger.b,  0.75);
-                    default:           return Theme.textInactive;
-                }
-            }
-
-            ColumnLayout {
-                id: voiceBanner
-                anchors.fill: parent
-                anchors.margins: 6
-                spacing: 4
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-
-                    // State icon — pulses while listening, spins while processing
-                    Text {
-                        id: voiceIcon
-                        text: {
-                            switch (root.voiceStatus) {
-                                case "LISTENING":  return "\uD83C\uDFA4"; // 🎤
-                                case "RECORDING":  return "\uD83D\uDD34"; // 🔴
-                                case "PROCESSING": return "\u2699";       // ⚙
-                                case "SPEAKING":   return "\uD83D\uDD0A"; // 🔊
-                                case "DOWNLOADING_MODEL":
-                                case "DOWNLOADING_VOICE": return "\u2B07"; // ⬇
-                                case "ERROR":      return "\u26A0";        // ⚠
-                                default:           return "\u23F3";        // ⏳
-                            }
-                        }
-                        font.pixelSize: 16
-                        color: Theme.accentColor
-
-                        SequentialAnimation on opacity {
-                            running: root.voiceListening
-                            loops: Animation.Infinite
-                            NumberAnimation { to: 1.0; duration: 700 }
-                            NumberAnimation { to: 0.35; duration: 700 }
-                            onStopped: voiceIcon.opacity = 1.0
-                        }
-                        RotationAnimation on rotation {
-                            running: root.voiceStatus === "PROCESSING"
-                                  || root.voiceStatus === "DOWNLOADING_MODEL"
-                                  || root.voiceStatus === "DOWNLOADING_VOICE"
-                            loops: Animation.Infinite
-                            from: 0; to: 360; duration: 1400
-                            onStopped: voiceIcon.rotation = 0
-                        }
-                    }
-
-                    // Plain-French status label so the state is unambiguous
-                    Text {
-                        Layout.fillWidth: true
-                        text: {
-                            switch (root.voiceStatus) {
-                                case "LISTENING":  return "À l'écoute — parlez";
-                                case "RECORDING":  return "Enregistrement de votre voix…";
-                                case "PROCESSING": return "Transcription en cours…";
-                                case "SPEAKING":   return "Lecture de la réponse…";
-                                case "DOWNLOADING_MODEL": return "Téléchargement du modèle Whisper…";
-                                case "DOWNLOADING_VOICE": return "Téléchargement de la voix Piper…";
-                                case "READY":      return "Micro prêt";
-                                case "ERROR":      return "Erreur du micro";
-                                case "OFF":        return "Micro désactivé";
-                                default:           return "Initialisation…";
-                            }
-                        }
-                        color: Theme.accentColor
-                        font.family: "JetBrains Mono"
-                        font.pixelSize: 11
-                        font.bold: root.voiceListening || root.voiceStatus === "RECORDING"
-                        elide: Text.ElideRight
-                    }
-
-                    // Stop / mute button — instantly closes the voice loop
-                    Text {
-                        text: "[stop]"
-                        color: stopMa.containsMouse ? Theme.colorDanger : Theme.textInactive
-                        font.family: "JetBrains Mono"
-                        font.pixelSize: 10
-                        MouseArea {
-                            id: stopMa
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                root.voiceEnabled = false;
-                                root.voiceStatus  = "OFF";
-                                root.voiceDebug   = "";
-                            }
-                        }
-                    }
-                }
-
-                // Live audio meter — visible while the mic is actually being
-                // captured. Goes flat (and fades) when we are processing or
-                // speaking, which doubles as a visual "input is locked" cue.
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 18
-                    spacing: 2
-                    opacity: (root.voiceListening || root.voiceStatus === "RECORDING") ? 1.0 : 0.35
-
-                    Repeater {
-                        model: 24
-                        delegate: Rectangle {
-                            required property int index
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 18
-                            radius: 1
-                            readonly property real level:
-                                root.micLevelHistory[index] || 0
-                            color: Qt.rgba(
-                                Theme.accentColor.r,
-                                Theme.accentColor.g,
-                                Theme.accentColor.b,
-                                0.18 + 0.82 * Math.min(1, level)
-                            )
-                            // Fill from the centre so it reads as a waveform.
-                            Rectangle {
-                                anchors.centerIn: parent
-                                width: parent.width
-                                height: Math.max(2, parent.height * Math.min(1, level))
-                                radius: 1
-                                color: Theme.accentColor
-                                Behavior on height { NumberAnimation { duration: 60; easing.type: Easing.OutQuad } }
-                            }
-                        }
-                    }
-                }
-
-                // Live wake-word debug echo (whatever whisper just heard)
-                Text {
-                    Layout.fillWidth: true
-                    visible: root.voiceListening && root.voiceDebug !== ""
-                    text: "“" + root.voiceDebug + "”"
-                    color: Theme.textInactive
-                    font.family: "JetBrains Mono"
-                    font.pixelSize: 9
-                    font.italic: true
-                    opacity: 0.6
-                    elide: Text.ElideLeft
-                }
-            }
-        }
 
         // -- Message list --
         ListView {
@@ -737,7 +451,7 @@ Item {
 
             Text {
                 text: "> "
-                color: (root.isStreaming || root.voiceBusy) ? Theme.textInactive : Theme.accentColor
+                color: root.isStreaming ? Theme.textInactive : Theme.accentColor
                 font.family: "JetBrains Mono"
                 font.pixelSize: 12
                 Layout.alignment: Qt.AlignTop
@@ -755,25 +469,13 @@ Item {
                 TextArea {
                     id: inputField
                     wrapMode: TextArea.Wrap
-                    placeholderText: {
-                        if (root.voiceBusy) {
-                            switch (root.voiceStatus) {
-                                case "RECORDING":  return "\uD83C\uDFA4 enregistrement…";
-                                case "PROCESSING": return "\u2699 transcription…";
-                                case "SPEAKING":   return "\uD83D\uDD0A lecture de la réponse…";
-                                default:           return "\u23F3 patientez…";
-                            }
-                        }
-                        if (root.voiceListening) return "\uD83C\uDFA4 parlez ou tapez…";
-                        if (root.isStreaming)   return "\u2026";
-                        return "message";
-                    }
+                    placeholderText: root.isStreaming ? "\u2026" : "message"
                     placeholderTextColor: Theme.placeholderColor
                     font.family: "JetBrains Mono"
                     font.pixelSize: 12
                     color: Theme.accentColor
                     background: Item {}
-                    enabled: !root.isStreaming && !root.voiceBusy
+                    enabled: !root.isStreaming
                     topPadding: 4
                     bottomPadding: 4
                     leftPadding: 0
@@ -883,43 +585,6 @@ Item {
             }
 
             Item { Layout.fillWidth: true }
-
-            // Mic toggle
-            Text {
-                text: {
-                    if (!root.voiceEnabled) return "[mic]";
-                    switch (root.voiceStatus) {
-                        case "RECORDING":  return "[mic:rec]";
-                        case "PROCESSING": return "[mic:…]";
-                        case "SPEAKING":   return "[mic:tts]";
-                        case "LISTENING":  return "[mic:on]";
-                        default:           return "[mic:on]";
-                    }
-                }
-                color: {
-                    if (!root.voiceEnabled) return Theme.textInactive;
-                    if (root.voiceStatus === "RECORDING") return Theme.colorDanger;
-                    if (root.voiceStatus === "PROCESSING") return Theme.colorWarning;
-                    return Theme.accentColor;
-                }
-                font.family: "JetBrains Mono"
-                font.pixelSize: 10
-                opacity: micMa.containsMouse ? 1.0 : 0.7
-
-                MouseArea {
-                    id: micMa
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        root.voiceEnabled = !root.voiceEnabled;
-                        if (!root.voiceEnabled) {
-                            root.voiceStatus = "OFF";
-                            root.voiceDebug = "";
-                        }
-                    }
-                }
-            }
 
             // TTS toggle
             Text {

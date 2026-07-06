@@ -42,8 +42,7 @@
             installPhase = ''
               runHook preInstall
               mkdir -p "$out"
-              cp -r shell.qml services panels widgets ai backend assets "$out"/
-              chmod +x "$out"/backend/*.sh
+              cp -r shell.qml services panels widgets ai assets "$out"/
               runHook postInstall
             '';
 

@@ -16,7 +16,15 @@ pkgs.rustPlatform.buildRustPackage {
 
   cargoLock.lockFile = ./Cargo.lock;
 
-  nativeBuildInputs = [ pkgs.makeWrapper ];
+  # pkg-config + alsa-lib are needed to build cpal's ALSA backend (mic capture
+  # for the tuner/chroma services, click playback for the metronome). alsa-lib
+  # is also a runtime dependency, so it is a buildInput (put on the RPATH).
+  nativeBuildInputs = [
+    pkgs.makeWrapper
+    pkgs.pkg-config
+  ];
+
+  buildInputs = [ pkgs.alsa-lib ];
 
   postInstall = ''
     # Theme templates read at runtime by the renderer. The home-manager module

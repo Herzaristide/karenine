@@ -1,34 +1,35 @@
 ---
 title: Outils musicaux
 group: Fonctionnalités
-summary: Accordeur, métronome et chromagramme — widgets QML + analyse audio en Python.
+summary: Accordeur, métronome et chromagramme — widgets QML + services audio natifs du daemon anna.
 links: [widgets, backend, shell]
 ---
 
 # Outils musicaux
 
 karenine embarque une petite suite pour la pratique musicale, chaque outil étant
-un [widget](#widgets) adossé à un [script backend](#backend).
+un [widget](#widgets) adossé à un service audio natif du daemon [`anna`](#backend).
 
 ## Accordeur (Tuner)
 
 - Widget : `widgets/Tuner.qml` (panneau **Pitch**, widget N°3 via l'[IPC](#shell)).
-- Backend : `backend/tuner.py` (détection de hauteur) + `backend/tuner.sh` qui
-  branche `parec` en **stéréo 44,1 kHz** sur son stdin.
+- Backend : service `tuner` d'`anna` (`tuner_watch`) — détection de hauteur par
+  autocorrélation FFT, une ligne `{"pitch":<hz>}` par frame.
 
 ## Chromagramme (ChromaGraph)
 
 - Widget : `widgets/ChromaGraph.qml`.
-- Backend : `backend/chroma-analyzer.py` + `backend/chroma-analyzer.sh` qui
-  fournit du **mono 22,05 kHz**.
+- Backend : service `chroma` d'`anna` (`chroma_watch`) — chromagramme 12 classes,
+  `{"chroma":[…],"top":[…]}` par frame.
 
 ## Métronome
 
 - Widget : `widgets/Metronome.qml`.
-- Backend : `backend/metronome.sh`.
+- Backend : service `metronome` d'`anna` — flux de sortie `cpal` sample-accurate,
+  piloté par des lignes `{"action":…}`, événements `{"beat":<n>}`.
 
 ## Principe commun
 
-Les analyseurs Python lisent du **PCM brut sur stdin** ; le wrapper `.sh`
-correspondant s'occupe de la capture au bon format (voir [Backend](#backend) et
-les conventions dans [Architecture](#architecture)).
+Les widgets se connectent au **socket** d'`anna` (`Quickshell.Io.Socket`) et
+reçoivent des lignes JSON. La capture micro (accordeur, chromagramme) ne tourne
+que tant que le widget est visible. Détails dans [Backend](#backend).

@@ -20,13 +20,17 @@
 //!   - hwstats  : hardware stats (hwstats_get / hwstats_watch)
 
 mod appctl;
+mod audio;
+mod chroma;
 mod client;
 mod color;
 mod hwstats;
+mod metronome;
 mod msi;
 mod protocol;
 mod state;
 mod templates;
+mod tuner;
 
 use appctl::{reload_all, AppCtlOptions};
 use protocol::{Command, Response};
@@ -280,6 +284,134 @@ async fn handle_connection(
                 }
             }
         }
+
+        // ── audio services ───────────────────────────────────────────────
+        Command::TunerWatch => {
+            stream_audio_service(&mut writer, tuner::run).await;
+        }
+
+        Command::ChromaWatch => {
+            stream_audio_service(&mut writer, chroma::run).await;
+        }
+
+        Command::Metronome => {
+            run_metronome(&mut writer, &mut lines).await;
+        }
+    }
+}
+
+// ── Audio service plumbing ────────────────────────────────────────────────────
+
+/// Drive a mic-based DSP service: open the shared capture, run `dsp` on a
+/// dedicated blocking thread (cpal streams and blocking recvs don't belong on
+/// the async runtime), and forward each JSON line it produces to the socket.
+/// Dropping the capture when the socket closes stops the mic stream.
+async fn stream_audio_service<F>(writer: &mut tokio::net::unix::OwnedWriteHalf, dsp: F)
+where
+    F: FnOnce(u32, std::sync::mpsc::Receiver<Vec<f32>>, tokio::sync::mpsc::Sender<String>)
+        + Send
+        + 'static,
+{
+    let (capture, audio_rx) = match audio::start_capture() {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = write_response(writer, &Response::err(format!("audio: {e}"))).await;
+            return;
+        }
+    };
+    let sample_rate = capture.sample_rate;
+
+    let (line_tx, mut line_rx) = tokio::sync::mpsc::channel::<String>(32);
+    // The DSP owns the audio receiver; it exits when either channel closes.
+    std::thread::spawn(move || dsp(sample_rate, audio_rx, line_tx));
+
+    while let Some(line) = line_rx.recv().await {
+        if write_line(writer, &line).await.is_err() {
+            break; // socket closed
+        }
+    }
+    // `capture` drops here → mic stream stops.
+}
+
+/// Long-lived metronome session: build the output stream, then service control
+/// lines (`{"action":…}`) from the client while forwarding `{"beat":<n>}`
+/// events. Dropping the handle when the socket closes stops the audio stream.
+async fn run_metronome(
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    lines: &mut tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
+) {
+    let mut handle = match metronome::start() {
+        Ok(h) => h,
+        Err(e) => {
+            let _ = write_response(writer, &Response::err(format!("metronome: {e}"))).await;
+            return;
+        }
+    };
+    if write_line(writer, "{\"ready\":true}").await.is_err() {
+        return;
+    }
+
+    // Bridge the realtime beat channel (std mpsc) to async.
+    let beats_rx = handle.take_beats();
+    let (btx, mut brx) = tokio::sync::mpsc::channel::<i32>(64);
+    if let Some(beats_rx) = beats_rx {
+        std::thread::spawn(move || {
+            while let Ok(beat) = beats_rx.recv() {
+                if btx.blocking_send(beat).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+
+    loop {
+        tokio::select! {
+            line = lines.next_line() => {
+                match line {
+                    Ok(Some(l)) => apply_metro_control(&handle, &l),
+                    _ => break, // socket closed
+                }
+            }
+            beat = brx.recv() => {
+                match beat {
+                    Some(b) => {
+                        if write_line(writer, &format!("{{\"beat\":{b}}}")).await.is_err() {
+                            break;
+                        }
+                    }
+                    None => break,
+                }
+            }
+        }
+    }
+    // `handle` drops here → output stream stops.
+}
+
+/// Apply one metronome control line: `{"action":"start","bpm":120}`,
+/// `{"action":"stop"}`, `{"action":"bpm","value":130}`,
+/// `{"action":"beats","value":4}`.
+fn apply_metro_control(handle: &metronome::MetroHandle, line: &str) {
+    let v: serde_json::Value = match serde_json::from_str(line) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    match v.get("action").and_then(|a| a.as_str()).unwrap_or("") {
+        "start" => {
+            let bpm = v.get("bpm").and_then(|b| b.as_u64()).unwrap_or(120) as u32;
+            handle.start(bpm);
+        }
+        "stop" => handle.stop_playing(),
+        "bpm" => {
+            if let Some(b) = v.get("value").and_then(|b| b.as_u64()) {
+                handle.set_bpm(b as u32);
+            }
+        }
+        "beats" => {
+            if let Some(b) = v.get("value").and_then(|b| b.as_u64()) {
+                handle.set_beats(b as u32);
+            }
+        }
+        _ => {}
     }
 }
 

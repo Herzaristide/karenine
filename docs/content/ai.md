@@ -20,5 +20,3 @@ l'[IPC du shell](#shell)).
 ## Relations
 
 - Hébergé par les [panneaux](#panels).
-- Peut s'appuyer sur des [scripts backend](#backend) (assistant vocal, capture
-  micro : `voice-assistant.sh`, `mic-transcribe.sh`).
