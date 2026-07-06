@@ -21,3 +21,6 @@ result-*
 # OS
 .DS_Store
 Thumbs.db
+
+# anna Rust build artifacts
+anna/target/

@@ -9,8 +9,8 @@ QtObject {
     // ── UI overlay state ──────────────────────────────────────────────────
     property bool settingsOpen: false
 
-    // ── State from paletted daemon ────────────────────────────────────────
-    // state.json is written by paletted on every color/mode change.
+    // ── State from the anna daemon ────────────────────────────────────────
+    // state.json is written by anna on every color/mode change.
     // FileView watches it for changes and triggers a full re-parse.
     //
     // Fallbacks (used before first file load or if the daemon is not running)
@@ -146,46 +146,46 @@ QtObject {
         "#ccaa44"   // amber
     ]
 
-    // ── IPC with paletted daemon ───────────────────────────────────────────
-    // Both processes send a JSON command to the Unix socket via the `palette`
+    // ── IPC with the anna daemon ───────────────────────────────────────────
+    // Both processes send a JSON command to the Unix socket via the `anna`
     // CLI client.  state.json is updated by the daemon on completion and
     // picked up by _stateFile's watchChanges.
 
     property Process accentSetProcess: Process {
         property string pendingColor: ""
-        command: ["palette", "set", pendingColor]
+        command: ["anna", "set", pendingColor]
     }
 
     property Process accentModeProcess: Process {
         property string _pendingMode: "dark"
-        command: ["palette", "mode", _pendingMode]
+        command: ["anna", "mode", _pendingMode]
     }
 
     property Process paletteColorProcess: Process {
         property string pendingKey:   ""
         property string pendingColor: ""
-        command: ["palette", "palette-color", pendingKey, pendingColor]
+        command: ["anna", "palette-color", pendingKey, pendingColor]
     }
 
     property Process resetProcess: Process {
         command: ["sh", "-c",
-            "palette set '#5277c3' && " +
-            "palette palette-color base00 '#0d0d0d' && " +
-            "palette palette-color base01 '#1a1a1a' && " +
-            "palette palette-color base02 '#2a2a2a' && " +
-            "palette palette-color base03 '#5a6080' && " +
-            "palette palette-color base04 '#8a90b0' && " +
-            "palette palette-color base05 '#e0e0ff' && " +
-            "palette palette-color base06 '#f0f0ff' && " +
-            "palette palette-color base07 '#ffffff' && " +
-            "palette palette-color base08 '#cc4444' && " +
-            "palette palette-color base09 '#cc8844' && " +
-            "palette palette-color base0a '#ccaa44' && " +
-            "palette palette-color base0b '#44aa88' && " +
-            "palette palette-color base0c '#7ebae4' && " +
-            "palette palette-color base0d '#5277c3' && " +
-            "palette palette-color base0e '#4488cc' && " +
-            "palette palette-color base0f '#cc5566'"
+            "anna set '#5277c3' && " +
+            "anna palette-color base00 '#0d0d0d' && " +
+            "anna palette-color base01 '#1a1a1a' && " +
+            "anna palette-color base02 '#2a2a2a' && " +
+            "anna palette-color base03 '#5a6080' && " +
+            "anna palette-color base04 '#8a90b0' && " +
+            "anna palette-color base05 '#e0e0ff' && " +
+            "anna palette-color base06 '#f0f0ff' && " +
+            "anna palette-color base07 '#ffffff' && " +
+            "anna palette-color base08 '#cc4444' && " +
+            "anna palette-color base09 '#cc8844' && " +
+            "anna palette-color base0a '#ccaa44' && " +
+            "anna palette-color base0b '#44aa88' && " +
+            "anna palette-color base0c '#7ebae4' && " +
+            "anna palette-color base0d '#5277c3' && " +
+            "anna palette-color base0e '#4488cc' && " +
+            "anna palette-color base0f '#cc5566'"
         ]
     }
 
