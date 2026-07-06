@@ -27,14 +27,8 @@ Item {
     property string cpuTemp: ""
     property string gpuTemp: ""
 
-    // RAM brand info (loaded once)
+    // RAM brand info (loaded once, provided by the daemon)
     property string ramBrand: ""
-    property bool ramBrandLoaded: false
-
-    // CPU delta state
-    property real prevCpuTotal: 0
-    property real prevCpuActive: 0
-    property bool cpuNameLoaded: false
 
     // Disk grouping and per-disk history
     property var diskHistories: ({})
@@ -110,251 +104,86 @@ Item {
         hwPanel.diskGroups    = newGroups;
     }
 
-    // ── Refresh timer ────────────────────────────────────────────────────
+    // ── Live stats from the anna daemon ──────────────────────────────────
+    // All hardware polling (CPU/RAM/GPU/temps/disks) moved out of QML into the
+    // native `anna` engine. We open one Unix socket, subscribe with
+    // `hwstats_watch`, and receive one JSON snapshot per second. The derived
+    // state below (histories, disk grouping, formatting) stays here.
+    function applyStats(s) {
+        // CPU
+        if (s.cpu_name && s.cpu_name.length > 0) hwPanel.cpuName = s.cpu_name;
+        hwPanel.cpuUsage   = s.cpu_usage;
+        hwPanel.cpuHistory = hwPanel.pushHistory(hwPanel.cpuHistory, s.cpu_usage);
+        hwPanel.cpuTemp    = s.cpu_temp > 0 ? s.cpu_temp + "°C" : "";
+
+        // RAM
+        hwPanel.ramTotalBytes = s.ram_total;
+        hwPanel.ramUsedBytes  = s.ram_used;
+        if (s.ram_brand && s.ram_brand.length > 0) hwPanel.ramBrand = s.ram_brand;
+        if (s.ram_total > 0)
+            hwPanel.ramHistory = hwPanel.pushHistory(hwPanel.ramHistory,
+                (s.ram_used / s.ram_total) * 100);
+
+        // GPU
+        hwPanel.gpuName = (s.gpu_name && s.gpu_name.length > 0) ? s.gpu_name : "Non détecté";
+        if (s.gpu_present) {
+            hwPanel.gpuUsagePercent = s.gpu_usage;
+            hwPanel.gpuUsage = s.gpu_usage + "% — " + s.gpu_mem_used_mib
+                             + " Mio / " + s.gpu_mem_total_mib + " Mio";
+            hwPanel.gpuHistory = hwPanel.pushHistory(hwPanel.gpuHistory, s.gpu_usage);
+        } else {
+            hwPanel.gpuUsage = "";
+        }
+        hwPanel.gpuTemp = s.gpu_temp > 0 ? s.gpu_temp + "°C" : "";
+
+        // Disks — remap to the {source,size,used,avail,mount} shape the UI and
+        // onDiskDataChanged expect (sizes in whole Go, as before).
+        const disks = s.disks || [];
+        const result = [];
+        for (let i = 0; i < disks.length; i++) {
+            const d = disks[i];
+            result.push({
+                source: d.source,
+                size:   d.size_gb,
+                used:   d.used_gb,
+                avail:  d.avail_gb,
+                mount:  d.mount
+            });
+        }
+        hwPanel.diskData = result;
+    }
+
+    Socket {
+        id: statsSock
+        path: (Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/1000") + "/anna.sock"
+        parser: SplitParser {
+            onRead: (line) => {
+                try { hwPanel.applyStats(JSON.parse(line)); }
+                catch (e) { /* ignore malformed / partial line */ }
+            }
+        }
+        onConnectedChanged: {
+            if (connected) write('{"cmd":"hwstats_watch"}\n');
+        }
+    }
+
+    // Connect while visible; retry every 2 s if the daemon isn't up yet.
     Timer {
-        id: refreshTimer
-        interval: 1000
+        interval: 2000
         running: hwPanel.visible
         repeat: true
         triggeredOnStart: true
-        onTriggered: {
-            if (!hwPanel.cpuNameLoaded && !cpuNameProc.running)
-                cpuNameProc.running = true;
-            if (!hwPanel.ramBrandLoaded && !ramBrandProc.running)
-                ramBrandProc.running = true;
-            if (!cpuStatProc.running) cpuStatProc.running = true;
-            if (!ramProc.running) ramProc.running = true;
-            if (!gpuProc.running) gpuProc.running = true;
-            if (!diskProc.running) diskProc.running = true;
-            if (!tempProc.running) tempProc.running = true;
-        }
+        onTriggered: if (!statsSock.connected) statsSock.connected = true;
     }
 
     onVisibleChanged: {
-        if (!visible) {
-            prevCpuTotal = 0;
-            prevCpuActive = 0;
-        }
-    }
-
-    // ── CPU model name (run once) ────────────────────────────────────────
-    Process {
-        id: cpuNameProc
-        command: ["sh", "-c", "grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | sed 's/^ *//'"]
-        stdout: StdioCollector { id: cpuNameOut }
-        onRunningChanged: {
-            if (!running) {
-                const n = cpuNameOut.text.trim();
-                if (n.length > 0) {
-                    hwPanel.cpuName = n;
-                    hwPanel.cpuNameLoaded = true;
-                }
-            }
-        }
-    }
-
-    // ── RAM brand (run once via dmidecode) ──────────────────────────────
-    Process {
-        id: ramBrandProc
-        command: [
-            "sh", "-c",
-            "sudo dmidecode -t memory 2>/dev/null | awk '"
-            + "/Memory Device/ {found=1; pn=\"\"; typ=\"\"; spd=\"\"; hasmod=0} "
-            + "found && /^\\s*Size:/ && !/No Module/ {hasmod=1} "
-            + "found && hasmod && /Part Number:/ && !/Not Specified/ {sub(/.*Part Number:[[:space:]]*/,\"\"); pn=$0} "
-            + "found && hasmod && /^[[:space:]]+Type:/ && !/Unknown/ {sub(/.*Type:[[:space:]]*/,\"\"); typ=$0} "
-            + "found && hasmod && /Configured.*Speed:/ && !/Unknown/ {sub(/.*Configured.*Speed:[[:space:]]*/,\"\"); spd=$0} "
-            + "found && /^$/ {if(hasmod && pn) {printf \"%s %s %s\\n\", pn, typ, spd; found=0; hasmod=0}} "
-            + "' | sort -u | head -1 | sed 's/[[:space:]]*$//'"
-        ]
-        stdout: StdioCollector { id: ramBrandOut }
-        onRunningChanged: {
-            if (!running) {
-                const n = ramBrandOut.text.trim();
-                if (n.length > 0) {
-                    hwPanel.ramBrand = n;
-                    hwPanel.ramBrandLoaded = true;
-                }
-            }
-        }
-    }
-
-    // ── CPU usage ───────────────────────────────────────────────────────
-    Process {
-        id: cpuStatProc
-        command: ["sh", "-c", "head -1 /proc/stat"]
-        stdout: StdioCollector { id: cpuStatOut }
-        onRunningChanged: {
-            if (!running) {
-                const parts = cpuStatOut.text.trim().split(/\s+/);
-                const user    = parseFloat(parts[1]) || 0;
-                const nice    = parseFloat(parts[2]) || 0;
-                const system  = parseFloat(parts[3]) || 0;
-                const idle    = parseFloat(parts[4]) || 0;
-                const iowait  = parseFloat(parts[5]) || 0;
-                const irq     = parseFloat(parts[6]) || 0;
-                const softirq = parseFloat(parts[7]) || 0;
-                const total   = user + nice + system + idle + iowait + irq + softirq;
-                const active  = total - idle - iowait;
-                if (hwPanel.prevCpuTotal > 0) {
-                    const dTotal  = total - hwPanel.prevCpuTotal;
-                    const dActive = active - hwPanel.prevCpuActive;
-                    hwPanel.cpuUsage = dTotal > 0 ? Math.round((dActive / dTotal) * 100) : 0;
-                    hwPanel.cpuHistory = hwPanel.pushHistory(hwPanel.cpuHistory, hwPanel.cpuUsage);
-                }
-                hwPanel.prevCpuTotal  = total;
-                hwPanel.prevCpuActive = active;
-            }
-        }
-    }
-
-    // ── RAM ──────────────────────────────────────────────────────────────
-    Process {
-        id: ramProc
-        command: ["sh", "-c", "grep -E '^(MemTotal|MemAvailable):' /proc/meminfo"]
-        stdout: StdioCollector { id: ramOut }
-        onRunningChanged: {
-            if (!running) {
-                const lines = ramOut.text.trim().split('\n');
-                let total = 0, available = 0;
-                for (const line of lines) {
-                    const m = line.match(/^(MemTotal|MemAvailable):\s+(\d+)/);
-                    if (m) {
-                        if (m[1] === "MemTotal")     total     = parseInt(m[2]) * 1024;
-                        else                         available = parseInt(m[2]) * 1024;
-                    }
-                }
-                hwPanel.ramTotalBytes = total;
-                hwPanel.ramUsedBytes  = total - available;
-                if (total > 0)
-                    hwPanel.ramHistory = hwPanel.pushHistory(hwPanel.ramHistory,
-                        (hwPanel.ramUsedBytes / total) * 100);
-            }
-        }
-    }
-
-    // ── GPU ──────────────────────────────────────────────────────────────
-    Process {
-        id: gpuProc
-        command: [
-            "sh", "-c",
-            "out=$(nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null); " +
-            "if [ -n \"$out\" ]; then echo \"$out\"; " +
-            "else " +
-            "name=$(lspci 2>/dev/null | grep -iE 'VGA|3D|Display' | head -1 | sed 's/.*: //' | sed 's/ (.*//'); " +
-            "dev=''; for h in /sys/class/hwmon/hwmon*; do [ \"$(cat $h/name 2>/dev/null)\" = 'amdgpu' ] && dev=\"$h/device\" && break; done; " +
-            "if [ -n \"$dev\" ]; then " +
-            "util=$(cat \"$dev/gpu_busy_percent\"); " +
-            "vram_used_b=$(cat \"$dev/mem_info_vram_used\" 2>/dev/null || echo 0); " +
-            "vram_total_b=$(cat \"$dev/mem_info_vram_total\" 2>/dev/null || echo 0); " +
-            "vram_used=$(( vram_used_b / 1048576 )); " +
-            "vram_total=$(( vram_total_b / 1048576 )); " +
-            "echo \"$name,$util,$vram_used,$vram_total\"; " +
-            "else echo \"$name\"; fi; fi"
-        ]
-        stdout: StdioCollector { id: gpuOut }
-        onRunningChanged: {
-            if (!running) {
-                const text = gpuOut.text.trim();
-                if (text.length === 0) {
-                    hwPanel.gpuName  = "Non détecté";
-                    hwPanel.gpuUsage = "";
-                    return;
-                }
-                const parts = text.split(',');
-                if (parts.length >= 4) {
-                    hwPanel.gpuName  = parts.slice(0, parts.length - 3).join(',').trim();
-                    const util       = parseInt(parts[parts.length - 3]) || 0;
-                    const memUsed    = parseInt(parts[parts.length - 2]) || 0;
-                    const memTotal   = parseInt(parts[parts.length - 1]) || 0;
-                    hwPanel.gpuUsage        = util + "% — " + memUsed + " Mio / " + memTotal + " Mio";
-                    hwPanel.gpuUsagePercent = util;
-                    hwPanel.gpuHistory      = hwPanel.pushHistory(hwPanel.gpuHistory, util);
-                } else {
-                    hwPanel.gpuName  = text;
-                    hwPanel.gpuUsage = "";
-                }
-            }
-        }
+        if (!visible) statsSock.connected = false;
     }
 
     // ── Open folder in Dolphin ────────────────────────────────────────────
     Process {
         id: openFolderProc
         command: ["dolphin", hwPanel.openTarget]
-    }
-
-    // ── Temperatures ─────────────────────────────────────────────────────
-    Process {
-        id: tempProc
-        command: [
-            "sh", "-c",
-            "cpu_t=''; " +
-            "for d in /sys/class/hwmon/hwmon*; do " +
-            "  n=$(cat \"$d/name\" 2>/dev/null); " +
-            "  if [ \"$n\" = 'k10temp' ] || [ \"$n\" = 'coretemp' ]; then " +
-            "    raw=$(cat \"$d/temp2_input\" 2>/dev/null || cat \"$d/temp1_input\" 2>/dev/null); " +
-            "    [ -n \"$raw\" ] && cpu_t=$(( raw / 1000 )); break; " +
-            "  fi; " +
-            "done; " +
-            "gpu_t=''; " +
-            "for d in /sys/class/hwmon/hwmon*; do " +
-            "  n=$(cat \"$d/name\" 2>/dev/null); " +
-            "  if [ \"$n\" = 'amdgpu' ]; then " +
-            "    raw=$(cat \"$d/temp2_input\" 2>/dev/null || cat \"$d/temp1_input\" 2>/dev/null); " +
-            "    [ -n \"$raw\" ] && gpu_t=$(( raw / 1000 )); break; " +
-            "  fi; " +
-            "done; " +
-            "[ -z \"$gpu_t\" ] && gpu_t=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null | head -1); " +
-            "echo \"${cpu_t},${gpu_t}\""
-        ]
-        stdout: StdioCollector { id: tempOut }
-        onRunningChanged: {
-            if (!running) {
-                const parts = tempOut.text.trim().split(',');
-                const c = parts[0] ? parts[0].trim() : "";
-                const g = parts[1] ? parts[1].trim() : "";
-                hwPanel.cpuTemp = (c.length > 0 && c !== "0") ? c + "°C" : "";
-                hwPanel.gpuTemp = (g.length > 0 && g !== "0") ? g + "°C" : "";
-            }
-        }
-    }
-
-    // ── Disques ──────────────────────────────────────────────────────────
-    Process {
-        id: diskProc
-        command: [
-            "sh", "-c",
-            "df -BG --output=source,size,used,avail,target -x tmpfs -x devtmpfs -x efivarfs -x overlay 2>/dev/null | tail -n +2"
-        ]
-        stdout: StdioCollector { id: diskOut }
-        onRunningChanged: {
-            if (!running) {
-                const lines = diskOut.text.trim().split('\n');
-                const result = [];
-                for (const line of lines) {
-                    const trimmed = line.trim();
-                    if (!trimmed) continue;
-                    const p = trimmed.split(/\s+/);
-                    if (p.length >= 5) {
-                        const mount = p[4];
-                        if (mount === "/boot" || mount.startsWith("/boot/")) continue;
-                        const size = parseInt(p[1]) || 0;
-                        const used = parseInt(p[2]) || 0;
-                        if (size > 0) {
-                            result.push({
-                                source: p[0],
-                                size:   size,
-                                used:   used,
-                                avail:  parseInt(p[3]) || 0,
-                                mount:  mount
-                            });
-                        }
-                    }
-                }
-                hwPanel.diskData = result;
-            }
-        }
     }
 
     // ── Scrollable content ──────────────────────────────────────────────

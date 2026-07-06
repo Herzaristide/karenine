@@ -26,6 +26,11 @@
       packages = forAllSystems (
         { pkgs, system }:
         {
+          # anna — moteur Rust unifié (thème accent/palette + stats matérielles).
+          # Fournit le binaire `anna` (daemon + client + init + msi-rgb-watch) et
+          # installe les templates de thème sous $out/share/anna/templates/.
+          anna = pkgs.callPackage ./anna/default.nix { };
+
           default = pkgs.stdenvNoCC.mkDerivation {
             pname = "karenine";
             version = "0.1.0";
