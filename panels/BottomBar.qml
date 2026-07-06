@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
 import Quickshell
@@ -200,6 +201,7 @@ PanelWindow {
                     model: window.appButtons
 
                     Item {
+                        id: appBtn
                         required property int index
                         required property var modelData
                         width: window.cell
@@ -215,17 +217,17 @@ PanelWindow {
                             radius: height / 2
                             anchors.centerIn: parent
                             color: Theme.iconColor
-                            opacity: (appMa.containsMouse && !parent.isActive) ? 0.08 : 0.0
+                            opacity: (appMa.containsMouse && !appBtn.isActive) ? 0.08 : 0.0
                             Behavior on opacity { NumberAnimation { duration: 150 } }
                         }
 
                         Text {
                             anchors.centerIn: parent
-                            text: modelData.glyph
+                            text: appBtn.modelData.glyph
                             font.family: "JetBrains Mono"
-                            font.pixelSize: modelData.size
+                            font.pixelSize: appBtn.modelData.size
                             color: Theme.iconColor
-                            opacity: parent.isActive ? 1.0 : (appMa.containsMouse ? 0.9 : 0.5)
+                            opacity: appBtn.isActive ? 1.0 : (appMa.containsMouse ? 0.9 : 0.5)
                             scale: appMa.pressed ? 0.82 : 1.0
 
                             Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
@@ -239,7 +241,7 @@ PanelWindow {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: window.selectWidget(modelData.widget)
+                            onClicked: window.selectWidget(appBtn.modelData.widget)
                         }
                     }
                 }

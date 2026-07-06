@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
@@ -245,7 +246,7 @@ Item {
 
                     Rectangle {
                         Layout.fillWidth: true
-                        height: 6
+                        Layout.preferredHeight: 6
                         radius: 3
                         color: Theme.bgDeep
                         Rectangle {
@@ -271,7 +272,7 @@ Item {
 
             }
 
-            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.bgElevated }
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.bgElevated }
 
             // ── RAM ──────────────────────────────────────────────────
             ColumnLayout {
@@ -303,7 +304,7 @@ Item {
 
                     Rectangle {
                         Layout.fillWidth: true
-                        height: 6
+                        Layout.preferredHeight: 6
                         radius: 3
                         color: Theme.bgDeep
                         property real ratio: hwPanel.ramTotalBytes > 0
@@ -333,7 +334,7 @@ Item {
 
             }
 
-            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.bgElevated }
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.bgElevated }
 
             // ── GPU ──────────────────────────────────────────────────
             ColumnLayout {
@@ -387,7 +388,7 @@ Item {
 
                     Rectangle {
                         Layout.fillWidth: true
-                        height: 6
+                        Layout.preferredHeight: 6
                         radius: 3
                         color: Theme.bgDeep
                         Rectangle {
@@ -441,14 +442,15 @@ Item {
                               color: Theme.colorGpu }
                         ]
                         delegate: RowLayout {
+                            id: statChip
                             required property var modelData
                             spacing: 4
                             Rectangle {
-                                width: 8; height: 8; radius: 4
-                                color: modelData.color
+                                Layout.preferredWidth: 8; Layout.preferredHeight: 8; radius: 4
+                                color: statChip.modelData.color
                             }
                             Text {
-                                text: modelData.label + " " + modelData.value
+                                text: statChip.modelData.label + " " + statChip.modelData.value
                                 font.family: "JetBrains Mono"
                                 font.pixelSize: 10
                                 color: Theme.textSecondary
@@ -460,7 +462,7 @@ Item {
                 }
             }
 
-            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.bgElevated }
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.bgElevated }
 
             // ── Disques ──────────────────────────────────────────────
             ColumnLayout {
@@ -487,6 +489,7 @@ Item {
                 Repeater {
                     model: hwPanel.diskData
                     delegate: ColumnLayout {
+                        id: diskItem
                         required property var modelData
                         Layout.fillWidth: true
                         spacing: 4
@@ -496,7 +499,7 @@ Item {
                             spacing: 6
 
                             Text {
-                                text: modelData.mount
+                                text: diskItem.modelData.mount
                                 font.family: "JetBrains Mono"
                                 font.pixelSize: 12
                                 color: Theme.textPrimary
@@ -505,14 +508,14 @@ Item {
                             }
 
                             Text {
-                                text: modelData.used + " Go / " + modelData.size + " Go"
+                                text: diskItem.modelData.used + " Go / " + diskItem.modelData.size + " Go"
                                 font.family: "JetBrains Mono"
                                 font.pixelSize: 11
                                 color: Theme.textSecondary
                             }
 
                             Text {
-                                property real ratio: modelData.size > 0 ? modelData.used / modelData.size : 0
+                                property real ratio: diskItem.modelData.size > 0 ? diskItem.modelData.used / diskItem.modelData.size : 0
                                 text: Math.round(ratio * 100) + "%"
                                 font.family: "JetBrains Mono"
                                 font.pixelSize: 11
@@ -522,8 +525,8 @@ Item {
                             }
 
                             Rectangle {
-                                width: 22
-                                height: 22
+                                Layout.preferredWidth: 22
+                                Layout.preferredHeight: 22
                                 radius: 4
                                 color: openBtn.containsMouse ? Theme.accentDark : "transparent"
                                 border.color: openBtn.containsMouse ? Theme.accentColor : Theme.bgElevated
@@ -542,7 +545,7 @@ Item {
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
-                                        hwPanel.openTarget = modelData.mount;
+                                        hwPanel.openTarget = diskItem.modelData.mount;
                                         openFolderProc.running = true;
                                     }
                                 }
@@ -551,11 +554,11 @@ Item {
 
                         Rectangle {
                             Layout.fillWidth: true
-                            height: 5
+                            Layout.preferredHeight: 5
                             radius: 3
                             color: Theme.bgDeep
-                            property real ratio: modelData.size > 0
-                                ? modelData.used / modelData.size : 0
+                            property real ratio: diskItem.modelData.size > 0
+                                ? diskItem.modelData.used / diskItem.modelData.size : 0
                             Rectangle {
                                 width: parent.width * Math.min(parent.ratio, 1.0)
                                 height: parent.height
@@ -567,7 +570,7 @@ Item {
                         }
 
                         Text {
-                            text: modelData.source
+                            text: diskItem.modelData.source
                             font.family: "JetBrains Mono"
                             font.pixelSize: 10
                             color: Theme.textDim
@@ -577,7 +580,7 @@ Item {
 
             }
 
-            Item { height: 8 }
+            Item { Layout.preferredHeight: 8 }
         }
     }
 }

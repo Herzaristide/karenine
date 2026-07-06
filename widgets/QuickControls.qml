@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
@@ -235,7 +236,7 @@ Item {
             // Dark / Light mode toggle pill
             Rectangle {
                 id: themePill
-                width: 32; height: 16; radius: 8
+                Layout.preferredWidth: 32; Layout.preferredHeight: 16; radius: 8
                 color: Theme.darkMode ? Theme.accentDark : Theme.accentColor
                 Behavior on color { ColorAnimation { duration: 200 } }
                 Rectangle {
@@ -255,7 +256,7 @@ Item {
             // Accent color square
             Rectangle {
                 id: accentSquare
-                width: 16; height: 16; radius: 3
+                Layout.preferredWidth: 16; Layout.preferredHeight: 16; radius: 3
                 color: Theme.accentColor
                 border.color: accentSquareHover.containsMouse
                               ? Qt.rgba(Theme.iconColor.r, Theme.iconColor.g, Theme.iconColor.b, 0.6)
@@ -284,6 +285,7 @@ Item {
                 ]
 
                 delegate: Text {
+                    id: volBtn
                     required property var modelData
                     text:            modelData.label
                     font.family:     "JetBrains Mono"
@@ -295,7 +297,7 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape:  Qt.PointingHandCursor
-                        onClicked:    modelData.action()
+                        onClicked:    volBtn.modelData.action()
                     }
                 }
             }
@@ -385,7 +387,7 @@ Item {
                 Canvas {
                     id: accentFieldCanvas
                     Layout.fillWidth: true
-                    height: 100
+                    Layout.preferredHeight: 100
 
                     Connections {
                         target: accentPicker
@@ -427,7 +429,7 @@ Item {
                 // Hue strip ──────────────────────────────────────────────
                 Item {
                     id: accentHueRow
-                    Layout.fillWidth: true; height: 12
+                    Layout.fillWidth: true; Layout.preferredHeight: 12
                     Canvas {
                         id: accentHueCanvas
                         anchors.fill: parent
@@ -499,7 +501,7 @@ Item {
 
                     // Rainbow toggle button
                     Item {
-                        width: 72; height: 22
+                        Layout.preferredWidth: 72; Layout.preferredHeight: 22
                         Canvas {
                             anchors.fill: parent
                             onPaint: {
@@ -589,6 +591,7 @@ Item {
                 ]
 
                 delegate: Text {
+                    id: shotBtn
                     required property var modelData
                     text:           modelData.label
                     font.family:    "JetBrains Mono"
@@ -600,7 +603,7 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape:  Qt.PointingHandCursor
-                        onClicked:    root.takeScreenshot(modelData.region)
+                        onClicked:    root.takeScreenshot(shotBtn.modelData.region)
                     }
                 }
             }
@@ -715,7 +718,7 @@ Item {
         // Bottom separator ───────────────────────────────────────────────
         Rectangle {
             Layout.fillWidth: true
-            height:           1
+            Layout.preferredHeight: 1
             color:            Theme.dividerColor
             Layout.topMargin: 2
         }

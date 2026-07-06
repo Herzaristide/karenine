@@ -2,9 +2,10 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Wayland
-import Quickshell.Hyprland
 import "../services"
 import "../widgets"
+
+pragma ComponentBehavior: Bound
 
 PanelWindow {
     id: panel
@@ -76,7 +77,7 @@ PanelWindow {
         anchors.margins: 8
         anchors.leftMargin: 12
         anchors.rightMargin: 0
-        visible: panelOpen
+        visible: panel.panelOpen
         spacing: 0
 
         // Always-visible controls: volume + screenshot

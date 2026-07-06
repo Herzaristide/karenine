@@ -1,6 +1,6 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
-import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
 import "../services"
@@ -164,6 +164,7 @@ Item {
             Repeater {
                 model: [-1, 1]
                 Rectangle {
+                    id: adjustBtn
                     required property var modelData
                     width: 38
                     height: 28
@@ -173,7 +174,7 @@ Item {
                     border.width: 1
                     Text {
                         anchors.centerIn: parent
-                        text: (modelData > 0 ? "+" : "") + modelData
+                        text: (adjustBtn.modelData > 0 ? "+" : "") + adjustBtn.modelData
                         font.family: "JetBrains Mono"
                         font.pixelSize: 11
                         color: Theme.accentMuted
@@ -183,7 +184,7 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: metroPanel.bpm = metroPanel.clampBpm(metroPanel.bpm + parent.modelData)
+                        onClicked: metroPanel.bpm = metroPanel.clampBpm(metroPanel.bpm + adjustBtn.modelData)
                     }
                 }
             }
@@ -199,6 +200,7 @@ Item {
             Repeater {
                 model: metroPanel.beatsPerBar
                 Rectangle {
+                    id: beatDot
                     required property int index
                     width: 18
                     height: 18
@@ -211,7 +213,7 @@ Item {
                     border.color: Qt.rgba(Theme.iconColor.r, Theme.iconColor.g, Theme.iconColor.b, 0.15)
                     Behavior on color { ColorAnimation { duration: 60 } }
                     SequentialAnimation on scale {
-                        running: isActive
+                        running: beatDot.isActive
                         NumberAnimation { to: 1.25; duration: 50; easing.type: Easing.OutQuad }
                         NumberAnimation { to: 1.0;  duration: 140; easing.type: Easing.InQuad }
                     }
@@ -228,7 +230,7 @@ Item {
 
             // Start / stop (large primary)
             Rectangle {
-                width: 96; height: 36; radius: 6
+                Layout.preferredWidth: 96; Layout.preferredHeight: 36; radius: 6
                 color: startStopMa.containsMouse
                        ? Theme.accentColor
                        : (metroPanel.metroRunning ? Theme.accentColor : Theme.bgDeep)
@@ -255,7 +257,7 @@ Item {
 
             // Beats-per-bar cycle
             Rectangle {
-                width: 44; height: 36; radius: 6
+                Layout.preferredWidth: 44; Layout.preferredHeight: 36; radius: 6
                 color: bpbMa.containsMouse ? Theme.accentDark : "transparent"
                 border.color: Theme.accentDark
                 border.width: 1
@@ -288,7 +290,7 @@ Item {
         Rectangle {
             Layout.alignment: Qt.AlignHCenter
             Layout.preferredWidth: 200
-            height: 34
+            Layout.preferredHeight: 34
             radius: 6
             color: tapMa.containsMouse ? Theme.accentDark : Theme.bgDeep
             border.color: Theme.accentDark

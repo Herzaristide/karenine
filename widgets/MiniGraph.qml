@@ -1,6 +1,8 @@
 import QtQuick
 import "../services"
 
+pragma ComponentBehavior: Bound
+
 // Multi-series sparkline canvas
 // series: [{values: [0-100, oldest→newest], color: Qt.color | "#rrggbb"}]
 // Legacy single-series API: values + lineColor (used when series is empty)

@@ -4,6 +4,8 @@ import QtQuick.Controls
 import Quickshell.Io
 import "../services"
 
+pragma ComponentBehavior: Bound
+
 // ClaudeChat: chat panel backed by the Claude Code CLI running in headless
 // stream-json mode. Unlike OllamaChat (which talks to Ollama over HTTP and
 // implements its own tools in OllamaTools.qml), Claude Code is itself an

@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
@@ -115,7 +116,7 @@ Item {
             }
 
             Text {
-                text: notesData.length + " note" + (notesData.length !== 1 ? "s" : "")
+                text: root.notesData.length + " note" + (root.notesData.length !== 1 ? "s" : "")
                 font.family: "JetBrains Mono"
                 font.pixelSize: 11
                 color: Theme.textInactive
@@ -211,7 +212,7 @@ Item {
         // Thin separator ──────────────────────────────────────────────────────
         Rectangle {
             Layout.fillWidth: true
-            height: 1
+            Layout.preferredHeight: 1
             color: Theme.dividerColor
         }
 
@@ -253,7 +254,7 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            height: 1
+            Layout.preferredHeight: 1
             color: Theme.dividerColor
             visible: root.searchVisible
         }
@@ -281,6 +282,7 @@ Item {
                 model: displayModel
 
                 delegate: Item {
+                    id: noteItem
                     required property var noteId
                     required property string noteContent
                     required property string noteTimestamp
@@ -306,7 +308,7 @@ Item {
                         spacing: 2
 
                         Text {
-                            text: noteTimestamp
+                            text: noteItem.noteTimestamp
                             font.family: "JetBrains Mono"
                             font.pixelSize: 10
                             color: Theme.textInactive
@@ -318,7 +320,7 @@ Item {
                             readOnly: true
                             selectByMouse: true
                             wrapMode: TextEdit.Wrap
-                            text: noteContent
+                            text: noteItem.noteContent
                             font.family: "JetBrains Mono"
                             font.pixelSize: 12
                             color: Theme.textBody
@@ -347,7 +349,7 @@ Item {
                             anchors.margins: -6
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: root.deleteNote(noteId)
+                            onClicked: root.deleteNote(noteItem.noteId)
                         }
                     }
                 }

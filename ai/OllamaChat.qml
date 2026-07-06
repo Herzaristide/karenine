@@ -2,8 +2,9 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
 import Quickshell.Io
-import Quickshell.Hyprland
 import "../services"
+
+pragma ComponentBehavior: Bound
 
 Item {
     id: root

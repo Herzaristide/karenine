@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
 import Quickshell
@@ -162,6 +163,7 @@ Item {
             Repeater {
                 model: [-1, 1]
                 Rectangle {
+                    id: refBtn
                     required property var modelData
                     width: 24
                     height: 22
@@ -171,7 +173,7 @@ Item {
                     border.width: 1
                     Text {
                         anchors.centerIn: parent
-                        text: parent.modelData > 0 ? "+" : "−"
+                        text: refBtn.modelData > 0 ? "+" : "−"
                         font.family: "JetBrains Mono"
                         font.pixelSize: 12
                         color: Theme.accentMuted
@@ -181,7 +183,7 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: tuner.refFreq = Math.max(400, Math.min(480, tuner.refFreq + parent.modelData))
+                        onClicked: tuner.refFreq = Math.max(400, Math.min(480, tuner.refFreq + refBtn.modelData))
                     }
                 }
             }

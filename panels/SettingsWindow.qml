@@ -6,6 +6,8 @@ import Quickshell.Wayland
 import "../services"
 import "../widgets"
 
+pragma ComponentBehavior: Bound
+
 PanelWindow {
     id: win
 

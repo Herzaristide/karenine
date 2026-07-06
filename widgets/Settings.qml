@@ -1,8 +1,7 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
-import Quickshell
-import Quickshell.Io
 import "../services"
 
 Item {
@@ -76,7 +75,7 @@ Item {
 
             Rectangle {
                 Layout.fillWidth: true
-                height: 1
+                Layout.preferredHeight: 1
                 color: Theme.accentDark
                 Layout.bottomMargin: 16
                 visible: root.showInternalHeader
@@ -101,7 +100,7 @@ Item {
                 // Toggle pill
                 Rectangle {
                     id: themePill
-                    width: 44; height: 22; radius: 11
+                    Layout.preferredWidth: 44; Layout.preferredHeight: 22; radius: 11
                     color: Theme.darkMode ? Theme.accentDark : Theme.accentColor
                     Behavior on color { ColorAnimation { duration: 200 } }
 
@@ -138,7 +137,7 @@ Item {
                 spacing: 8
 
                 Rectangle {
-                    width: 24; height: 24; radius: 5
+                    Layout.preferredWidth: 24; Layout.preferredHeight: 24; radius: 5
                     color: Theme.accentColor
                     border.color: Theme.dividerColor
                     border.width: 1
@@ -488,7 +487,7 @@ Item {
             // ── Separator ─────────────────────────────────────────────────
             Rectangle {
                 Layout.fillWidth: true
-                height: 1
+                Layout.preferredHeight: 1
                 color: Theme.dividerColor
                 Layout.topMargin: 4
                 Layout.bottomMargin: 16
@@ -518,6 +517,8 @@ Item {
                             "base08","base09","base0a","base0b",
                             "base0c","base0d","base0e","base0f"]
                     delegate: Item {
+                        id: swatchItem
+                        required property string modelData
                         Layout.fillWidth: true
                         implicitHeight: paletteSwatchRect.height + paletteSwatchLabel.implicitHeight + 4
 
@@ -528,21 +529,21 @@ Item {
                             anchors.right: parent.right
                             height: 30
                             radius: 4
-                            color: Theme.palette[modelData] || "#666666"
-                            border.color: root.selectedPaletteKey === modelData
+                            color: Theme.palette[swatchItem.modelData] || "#666666"
+                            border.color: root.selectedPaletteKey === swatchItem.modelData
                                           ? Theme.iconColor : "transparent"
-                            border.width: root.selectedPaletteKey === modelData ? 2 : 0
+                            border.width: root.selectedPaletteKey === swatchItem.modelData ? 2 : 0
 
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
-                                    if (root.selectedPaletteKey === modelData) {
+                                    if (root.selectedPaletteKey === swatchItem.modelData) {
                                         root.selectedPaletteKey = ""
                                     } else {
-                                        root.selectedPaletteKey = modelData
+                                        root.selectedPaletteKey = swatchItem.modelData
                                         // Initialise the inline picker from this swatch's color
-                                        var c = Qt.color(Theme.palette[modelData] || "#666666")
+                                        var c = Qt.color(Theme.palette[swatchItem.modelData] || "#666666")
                                         var max = Math.max(c.r, c.g, c.b)
                                         var min = Math.min(c.r, c.g, c.b)
                                         var delta = max - min
@@ -569,10 +570,10 @@ Item {
                             anchors.top: paletteSwatchRect.bottom
                             anchors.topMargin: 3
                             anchors.horizontalCenter: parent.horizontalCenter
-                            text: modelData
+                            text: swatchItem.modelData
                             font.family: "JetBrains Mono"
                             font.pixelSize: 8
-                            color: root.selectedPaletteKey === modelData
+                            color: root.selectedPaletteKey === swatchItem.modelData
                                    ? Theme.textPrimary : Theme.textDim
                         }
                     }
@@ -632,7 +633,7 @@ Item {
                         spacing: 6
 
                         Rectangle {
-                            width: 16; height: 16; radius: 3
+                            Layout.preferredWidth: 16; Layout.preferredHeight: 16; radius: 3
                             color: paletteColorPicker.hsvToHex(
                                        paletteColorPicker.pickerH,
                                        paletteColorPicker.pickerS,

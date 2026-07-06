@@ -3,6 +3,8 @@ import Quickshell.Io
 import Quickshell.Hyprland
 import "../services"
 
+pragma ComponentBehavior: Bound
+
 // OllamaTools: tool definitions, execution logic and processes for OllamaChat.
 // Emits toolResult(toolName, assistantIdx, result) when any tool finishes.
 Item {

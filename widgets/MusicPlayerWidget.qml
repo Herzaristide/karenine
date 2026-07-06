@@ -1,8 +1,7 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
-import QtQuick.Controls
 import QtQuick.Effects
-import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Mpris
 import "../services"
@@ -543,7 +542,7 @@ Item {
         // ── Animated EQ bars ─────────────────────────────────────────
         Row {
             Layout.alignment: Qt.AlignHCenter
-            height: 36
+            Layout.preferredHeight: 36
             spacing: 4
             opacity: root.showLyrics ? 0 : 1
             Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }

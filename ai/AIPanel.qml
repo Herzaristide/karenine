@@ -2,6 +2,8 @@ import QtQuick
 import QtQuick.Layouts
 import "../services"
 
+pragma ComponentBehavior: Bound
+
 // AIPanel: hosts the two AI backends behind a small switch. Index 0 is the
 // local Ollama chat (with its tools), index 1 is Claude Code. The bar's
 // "AI" button opens this panel; the toggle below picks which engine answers.
