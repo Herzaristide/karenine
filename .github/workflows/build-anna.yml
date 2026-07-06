@@ -1,0 +1,91 @@
+name: Build anna
+
+# Compile le daemon Rust `anna` en release et publie le binaire :
+#   - toujours comme artifact de workflow (téléchargeable depuis l'onglet Actions) ;
+#   - comme GitHub Release `v<version>` dès que la version de anna/Cargo.toml change
+#     (aucun tag manuel : le workflow crée le tag et la release automatiquement).
+#
+# Choix : `cargo build --release` (et non `nix build .#anna`) car le paquet Nix
+# wrappe le binaire avec des chemins /nix/store non portables hors NixOS ; ici on
+# veut un binaire glibc réutilisable tel quel.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'anna/src/**'
+      - 'anna/Cargo.toml'
+      - 'anna/Cargo.lock'
+      - 'anna/templates/**'
+      - '.github/workflows/build-anna.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: build-anna-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write # nécessaire pour créer le tag + la Release
+
+jobs:
+  build:
+    name: Build anna binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: anna
+
+      - name: Build release
+        working-directory: anna
+        run: cargo build --release --locked
+
+      - name: Stage binary + checksum
+        run: |
+          mkdir -p dist
+          install -m 0755 anna/target/release/anna dist/anna
+          sha256sum dist/anna | awk '{print $1"  anna"}' > dist/anna.sha256
+
+      # Artifact de workflow : disponible sur chaque build (rétention 90 j par défaut).
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: anna-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+
+      # Lit la version déclarée dans anna/Cargo.toml (ex. 0.1.0).
+      - name: Read anna version
+        id: version
+        run: |
+          v=$(grep -m1 -E '^version\s*=' anna/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ -z "$v" ]; then
+            echo "Impossible de lire la version dans anna/Cargo.toml" >&2
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      # Release seulement si `v<version>` n'existe pas encore : publie donc dès
+      # qu'on bump la version dans Cargo.toml, sinon ne fait rien.
+      - name: Publish release if version changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          tag="v${VERSION}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag existe déjà — version inchangée, rien à publier."
+            exit 0
+          fi
+          echo "Nouvelle version détectée : publication de $tag."
+          gh release create "$tag" \
+            dist/anna dist/anna.sha256 \
+            --target "$GITHUB_SHA" \
+            --title "anna $tag" \
+            --generate-notes
