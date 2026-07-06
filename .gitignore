@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Cache QML/Qt
+*.qmlc
+*.jsc
+
+# Éditeurs
+*.swp
+*~
+.idea/
+.vscode/
+
+# Nix (si build local)
+result
+result-*
+
+# OS
+.DS_Store
+Thumbs.db

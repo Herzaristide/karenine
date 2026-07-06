@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # shellcheck et python3 sont préinstallés sur les runners ubuntu-latest.
+      - name: Shellcheck (scripts bash)
+        run: git ls-files -z '*.sh' | xargs -0 --no-run-if-empty shellcheck
+
+      - name: Syntaxe Python
+        run: git ls-files -z '*.py' | xargs -0 --no-run-if-empty python3 -m py_compile
