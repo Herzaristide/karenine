@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell.Io
 import Quickshell.Hyprland
+import "../services"
 
 // OllamaTools: tool definitions, execution logic and processes for OllamaChat.
 // Emits toolResult(toolName, assistantIdx, result) when any tool finishes.

@@ -1,0 +1,4 @@
+BottomBar 1.0 BottomBar.qml
+SidePanel 1.0 SidePanel.qml
+RightPanel 1.0 RightPanel.qml
+SettingsWindow 1.0 SettingsWindow.qml

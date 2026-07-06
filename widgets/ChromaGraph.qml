@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
+import "../services"
 
 Item {
     id: root
@@ -23,7 +24,7 @@ Item {
     Process {
         id: chromaProc
         running: root.active
-        command: ["bash", "-c", "exec $HOME/.config/quickshell/chroma-analyzer.sh"]
+        command: ["bash", "-c", "exec '" + Qt.resolvedUrl("../backend/chroma-analyzer.sh").toString().replace("file://", "") + "'"]
 
         stdout: SplitParser {
             onRead: (data) => {

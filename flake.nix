@@ -5,10 +5,59 @@
 
   outputs =
     { self, nixpkgs }:
+    let
+      systems = [ "x86_64-linux" "aarch64-linux" ];
+      forAllSystems =
+        f:
+        nixpkgs.lib.genAttrs systems (
+          system:
+          f {
+            inherit system;
+            pkgs = nixpkgs.legacyPackages.${system};
+          }
+        );
+    in
     {
-      # Fichiers bruts de l'interface (QML/scripts/assets). La glue NixOS
-      # (installation dans ~/.config/quickshell) vit dans la configuration qui
-      # consomme cet input : elle lit `${inputs.karenine}/<fichier>` via le
-      # chemin source du flake (outPath). Rien à builder ici.
+      # Layout prêt à l'emploi pour ~/.config/quickshell. La config NixOS qui
+      # consomme ce flake fait pointer :
+      #   home.file.".config/quickshell".source = karenine.packages.${system}.default;
+      # (ou l'installe autrement). Plus de copie de fichiers bruts ni de wrappers
+      # générés côté config : ce paquet est la seule source de vérité du layout.
+      packages = forAllSystems (
+        { pkgs, system }:
+        {
+          default = pkgs.stdenvNoCC.mkDerivation {
+            pname = "karenine";
+            version = "0.1.0";
+            src = self;
+
+            dontConfigure = true;
+            dontBuild = true;
+
+            installPhase = ''
+              runHook preInstall
+              mkdir -p "$out"
+              cp -r shell.qml services panels widgets ai backend assets "$out"/
+              chmod +x "$out"/backend/*.sh
+              runHook postInstall
+            '';
+
+            meta = {
+              description = "Interface Quickshell (barre, panneaux, chat IA, accordeur, métronome)";
+              platforms = systems;
+            };
+          };
+        }
+      );
+
+      # `nix flake check` valide au minimum que le layout s'assemble.
+      checks = forAllSystems (
+        { system, ... }:
+        {
+          build = self.packages.${system}.default;
+        }
+      );
+
+      formatter = forAllSystems ({ pkgs, ... }: pkgs.nixfmt-rfc-style);
     };
 }

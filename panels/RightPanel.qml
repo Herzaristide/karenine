@@ -3,6 +3,8 @@ import QtQuick.Layouts
 import Quickshell
 import Quickshell.Wayland
 import Quickshell.Hyprland
+import "../services"
+import "../widgets"
 
 PanelWindow {
     id: panel

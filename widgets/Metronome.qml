@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
 import Quickshell.Io
+import "../services"
 
 Item {
     id: metroPanel
@@ -17,8 +18,8 @@ Item {
     // visible or actively ticking — no idle stream when it's not in use.
     property bool active:            false
 
-    // Path resolved by quickshell.nix → ~/.config/quickshell/metronome.sh
-    readonly property string backendPath: Qt.resolvedUrl("metronome.sh").toString().replace("file://", "")
+    // Backend résolu relativement au fichier QML (repo relocalisable).
+    readonly property string backendPath: Qt.resolvedUrl("../backend/metronome.sh").toString().replace("file://", "")
 
     function clampBpm(v) { return Math.max(20, Math.min(300, v)) }
 

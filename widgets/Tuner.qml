@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
+import "../services"
 
 Item {
     id: tuner
@@ -37,7 +38,7 @@ Item {
     // ── Backend ───────────────────────────────────────────────────────────
     Process {
         id: tunerBackend
-        command: ["bash", "-c", "exec bash $HOME/.config/quickshell/tuner.sh 2>>$HOME/.cache/quickshell-tuner.log"]
+        command: ["bash", "-c", "exec bash '" + Qt.resolvedUrl("../backend/tuner.sh").toString().replace("file://", "") + "' 2>>$HOME/.cache/quickshell-tuner.log"]
         running: tuner.active
         stdout: SplitParser {
             onRead: (data) => {

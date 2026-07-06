@@ -1,6 +1,8 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import "panels"
+import "services"
 
 ShellRoot {
     id: root

@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import QtQuick.Controls
 import Quickshell.Io
 import Quickshell.Hyprland
+import "../services"
 
 Item {
     id: root
@@ -133,7 +134,7 @@ Item {
     // ── Voice assistant process ────────────────────────────────
     Process {
         id: voiceProcess
-        command: ["bash", "-c", "exec $HOME/.config/quickshell/voice-assistant.sh"]
+        command: ["bash", "-c", "exec '" + Qt.resolvedUrl("../backend/voice-assistant.sh").toString().replace("file://", "") + "'"]
         running: root.voiceEnabled
         stdinEnabled: true
 
@@ -177,7 +178,7 @@ Item {
     // to animate the meter so the user can SEE the mic is being captured.
     Process {
         id: micLevelProcess
-        command: ["bash", "-c", "exec $HOME/.config/quickshell/mic-level.sh"]
+        command: ["bash", "-c", "exec '" + Qt.resolvedUrl("../backend/mic-level.sh").toString().replace("file://", "") + "'"]
         running: root.voiceEnabled
 
         stdout: SplitParser {

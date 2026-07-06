@@ -1,4 +1,5 @@
 import QtQuick
+import "../services"
 
 // Multi-series sparkline canvas
 // series: [{values: [0-100, oldest→newest], color: Qt.color | "#rrggbb"}]

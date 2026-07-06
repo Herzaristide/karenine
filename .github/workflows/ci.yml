@@ -26,3 +26,16 @@ jobs:
 
       - name: Syntaxe Python
         run: git ls-files -z '*.py' | xargs -0 --no-run-if-empty python3 -m py_compile
+
+  flake:
+    name: Build flake
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      # Valide que le layout ~/.config/quickshell s'assemble correctement.
+      - name: nix flake check
+        run: nix flake check --print-build-logs

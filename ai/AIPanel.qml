@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import "../services"
 
 // AIPanel: hosts the two AI backends behind a small switch. Index 0 is the
 // local Ollama chat (with its tools/voice), index 1 is Claude Code. The bar's

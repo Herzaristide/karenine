@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
 import Quickshell.Io
+import "../services"
 
 // ClaudeChat: chat panel backed by the Claude Code CLI running in headless
 // stream-json mode. Unlike OllamaChat (which talks to Ollama over HTTP and

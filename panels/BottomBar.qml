@@ -4,6 +4,7 @@ import Quickshell
 import Quickshell.Wayland
 import Quickshell.Hyprland
 import Quickshell.Services.SystemTray
+import "../services"
 
 PanelWindow {
     id: window
@@ -375,7 +376,7 @@ PanelWindow {
                 anchors.centerIn: parent
                 width: 18
                 height: 18
-                source: "nixos.svg"
+                source: "../assets/nixos.svg"
                 sourceSize.width: 64
                 sourceSize.height: 64
                 fillMode: Image.PreserveAspectFit
