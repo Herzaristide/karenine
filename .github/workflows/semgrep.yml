@@ -1,0 +1,43 @@
+name: Semgrep (SAST)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "30 4 * * 1" # hebdomadaire (lundi 04:30 UTC), décalé de CodeQL
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write # publie le SARIF dans Security → Code scanning
+  actions: read
+
+jobs:
+  semgrep:
+    name: Analyse Semgrep
+    runs-on: ubuntu-latest
+    # Image officielle : semgrep est préinstallé.
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan
+        # Couvre le Python ET le bash des scripts backend/ (que CodeQL n'analyse pas).
+        run: >-
+          semgrep scan
+          --config p/python
+          --config p/bash
+          --config p/secrets
+          --config p/security-audit
+          --exclude docs
+          --sarif --output semgrep.sarif
+
+      - name: Publier les résultats
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep

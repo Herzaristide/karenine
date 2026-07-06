@@ -1,0 +1,40 @@
+name: CodeQL (SAST)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 4 * * 1" # analyse hebdomadaire (lundi 04:00 UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write # nécessaire pour publier les résultats dans Security
+
+jobs:
+  analyze:
+    name: Analyse ${{ matrix.language }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialiser CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+          # La doc générée (Node) n'est pas du code applicatif à auditer.
+          config: |
+            paths-ignore:
+              - docs
+
+      - name: Analyser
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
