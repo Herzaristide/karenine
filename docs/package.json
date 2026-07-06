@@ -1,0 +1,15 @@
+{
+  "name": "karenine-docs",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Documentation de karenine (interface Quickshell), générée avec Barjavel.",
+  "scripts": {
+    "dev": "barjavel dev",
+    "build": "barjavel build",
+    "preview": "barjavel preview"
+  },
+  "dependencies": {
+    "barjavel": "^1.0.0"
+  }
+}
