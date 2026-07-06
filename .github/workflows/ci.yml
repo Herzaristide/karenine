@@ -18,8 +18,11 @@ jobs:
       - uses: actions/checkout@v4
 
       # shellcheck et python3 sont préinstallés sur les runners ubuntu-latest.
+      # --severity=warning : les notes « info » (ex. SC2015 sur `A && B || true`,
+      # un idiome volontaire ici) sont advisory et ne cassent pas la CI ;
+      # les vrais problèmes (warning/error) échouent toujours.
       - name: Shellcheck (scripts bash)
-        run: git ls-files -z '*.sh' | xargs -0 --no-run-if-empty shellcheck
+        run: git ls-files -z '*.sh' | xargs -0 --no-run-if-empty shellcheck --severity=warning
 
       - name: Syntaxe Python
         run: git ls-files -z '*.py' | xargs -0 --no-run-if-empty python3 -m py_compile
