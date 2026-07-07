@@ -1,0 +1,34 @@
+name: SonarQube
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sonarqube:
+    name: Analyse SonarQube
+    runs-on: ubuntu-latest
+    env:
+      # SonarQube Cloud. Seul le jeton est secret ; il se configure dans
+      # Settings → Secrets and variables → Actions → SONAR_TOKEN
+      # (généré depuis sonarcloud.io → My Account → Security, ou au niveau projet).
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: https://sonarcloud.io
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Historique complet : nécessaire à la détection du « new code » et au
+          # blame (attribution des problèmes par commit).
+          fetch-depth: 0
+
+      - name: Scan SonarQube
+        # Sauté proprement si le jeton n'est pas configuré (ex : PR de fork),
+        # plutôt que d'échouer.
+        if: env.SONAR_TOKEN != ''
+        uses: SonarSource/sonarqube-scan-action@v8
