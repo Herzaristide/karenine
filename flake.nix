@@ -62,6 +62,18 @@
         }
       );
 
+      devShells = forAllSystems (
+        { pkgs, ... }:
+        {
+          default = pkgs.mkShell {
+            buildInputs = with pkgs; [
+              qt6.full
+              qmlls
+            ];
+          };
+        }
+      );
+
       formatter = forAllSystems ({ pkgs, ... }: pkgs.nixfmt-rfc-style);
     };
 }

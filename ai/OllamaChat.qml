@@ -1,4 +1,5 @@
 import QtQuick
+import QtQml
 import QtQuick.Layouts
 import QtQuick.Controls
 import Quickshell.Io
@@ -19,7 +20,7 @@ Item {
     // Tool definitions and execution are in OllamaTools.qml
     OllamaTools {
         id: llmTools
-        onToolResult: (toolName, assistantIdx, result) => handleToolResult(toolName, assistantIdx, result)
+        onToolResult: (toolName, assistantIdx, result) => root.handleToolResult(toolName, assistantIdx, result)
     }
 
     Component.onCompleted: checkAndPullModel()
@@ -336,6 +337,7 @@ Item {
             }
 
             delegate: Item {
+                id: msgItem
                 required property string role
                 required property string content
                 required property string msgType
@@ -346,12 +348,12 @@ Item {
                 // Screenshot bubble
                 Column {
                     id: screenshotCol
-                    visible: msgType === "screenshot"
+                    visible: msgItem.msgType === "screenshot"
                     width: parent.width
                     spacing: 4
 
                     Text {
-                        text: "\uD83D\uDCF7 " + content
+                        text: "\uD83D\uDCF7 " + msgItem.content
                         color: Theme.textDim
                         font.family: "JetBrains Mono"
                         font.pixelSize: 10
@@ -361,7 +363,7 @@ Item {
 
                     Image {
                         id: screenshotImg
-                        source: msgType === "screenshot" ? "file://" + content : ""
+                        source: msgItem.msgType === "screenshot" ? "file://" + msgItem.content : ""
                         width: parent.width
                         height: status === Image.Ready
                                 ? Math.min(width * sourceSize.height / sourceSize.width, 300)
@@ -374,13 +376,13 @@ Item {
 
                 Row {
                     id: msgRow
-                    visible: msgType !== "screenshot"
+                    visible: msgItem.msgType !== "screenshot"
                     width: parent.width
 
                     Text {
                         id: prefixText
-                        text: role === "user" ? "> " : (msgType === "action" ? "$ " : "  ")
-                        color: role === "user" ? Theme.accentColor : (msgType === "action" ? Theme.colorAmber : Theme.textInactive)
+                        text: msgItem.role === "user" ? "> " : (msgItem.msgType === "action" ? "$ " : "  ")
+                        color: msgItem.role === "user" ? Theme.accentColor : (msgItem.msgType === "action" ? Theme.colorAmber : Theme.textInactive)
                         font.family: "JetBrains Mono"
                         font.pixelSize: 12
                     }
@@ -390,11 +392,11 @@ Item {
                         width: msgRow.width - prefixText.implicitWidth - (copyBtn.visible ? copyBtn.implicitWidth + 6 : 0)
                         readOnly: true
                         selectByMouse: true
-                        text: (role === "assistant" && content === "" && root.isStreaming)
-                              ? "\u258B" : content
+                        text: (msgItem.role === "assistant" && msgItem.content === "" && root.isStreaming)
+                              ? "\u258B" : msgItem.content
                         color: {
-                            if (role === "user") return Theme.accentColor;
-                            if (msgType === "action") return Theme.colorAmber;
+                            if (msgItem.role === "user") return Theme.accentColor;
+                            if (msgItem.msgType === "action") return Theme.colorAmber;
                             return Theme.textBody;
                         }
                         selectionColor: Theme.accentColor
@@ -406,7 +408,7 @@ Item {
 
                     Text {
                         id: copyBtn
-                        visible: role === "assistant" && content !== "" && !root.isStreaming
+                        visible: msgItem.role === "assistant" && msgItem.content !== "" && !root.isStreaming
                         text: copyTimer.running ? "[copied]" : "[copy]"
                         color: copyMa.containsMouse ? Theme.accentColor : Theme.textSubtle
                         font.family: "JetBrains Mono"
@@ -420,9 +422,10 @@ Item {
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 copyProcess.running = false;
+                                copyProcess.stdinEnabled = true;
                                 copyProcess.running = true;
-                                copyProcess.write(content);
-                                copyProcess.closeStdin();
+                                copyProcess.write(msgItem.content);
+                                copyProcess.stdinEnabled = false;
                                 copyTimer.restart();
                             }
                         }
@@ -547,6 +550,7 @@ Item {
                         ScrollIndicator.vertical: ScrollIndicator {}
 
                         delegate: Item {
+                            id: modelItem
                             required property string modelData
                             required property int index
                             width: modelListView.width
@@ -555,7 +559,7 @@ Item {
                             Text {
                                 anchors.fill: parent
                                 leftPadding: 6
-                                text: modelData
+                                text: modelItem.modelData
                                 font.family: "JetBrains Mono"
                                 font.pixelSize: 10
                                 color: delegateMa.containsMouse ? Theme.selectedTextColor : Theme.accentColor
@@ -574,7 +578,7 @@ Item {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 onClicked: {
-                                    root.modelName = modelData;
+                                    root.modelName = modelItem.modelData;
                                     root.modelReady = false;
                                     root.checkAndPullModel();
                                     modelPopup.close();

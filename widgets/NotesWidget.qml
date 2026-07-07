@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import QtQml
 import QtQuick.Layouts
 import QtQuick.Controls
 import Quickshell
