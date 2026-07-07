@@ -8,7 +8,7 @@ import "../ai"
 
 pragma ComponentBehavior: Bound
 
-PanelWindow {
+PanelWindow { // qmllint disable uncreatable-type
     id: panel
 
     property bool panelOpen: false
@@ -33,7 +33,7 @@ PanelWindow {
 
     color: "transparent"
 
-    margins {
+    margins { // qmllint disable unqualified unresolved-type
         left: 8
         bottom: 52  // laisse la place à la BottomBar horizontale
     }

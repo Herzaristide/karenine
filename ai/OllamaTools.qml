@@ -320,7 +320,7 @@ Item {
             onRead: (data) => { toolProcess.stderrBuffer += data + "\n" }
         }
 
-        onExited: (code, status) => {
+        onExited: (code, status) => { // qmllint disable signal-handler-parameters
             var result;
             if (pendingToolName === "open_url") {
                 result = code === 0
@@ -345,7 +345,7 @@ Item {
         stdout: SplitParser { onRead: (data) => {} }
         stderr: SplitParser { onRead: (data) => {} }
 
-        onExited: (code, status) => {
+        onExited: (code, status) => { // qmllint disable signal-handler-parameters
             if (pendingAssistantIdx >= 0) {
                 root.toolResult(pendingToolName, pendingAssistantIdx,
                     "Enregistrement sauvegardé : " + currentFile);

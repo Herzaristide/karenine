@@ -47,7 +47,7 @@ ShellRoot {
                 }
             }
         }
-        onExited: Qt.callLater(function() { ipcListener.running = true; })
+        onExited: Qt.callLater(function() { ipcListener.running = true; }) // qmllint disable signal-handler-parameters
     }
 
     property string primaryScreen: "DP-1"

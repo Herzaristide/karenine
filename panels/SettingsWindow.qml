@@ -8,7 +8,7 @@ import "../widgets"
 
 pragma ComponentBehavior: Bound
 
-PanelWindow {
+PanelWindow { // qmllint disable uncreatable-type
     id: win
 
     WlrLayershell.layer: WlrLayer.Overlay

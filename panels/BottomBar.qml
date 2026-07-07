@@ -7,7 +7,7 @@ import Quickshell.Hyprland
 import Quickshell.Services.SystemTray
 import "../services"
 
-PanelWindow {
+PanelWindow { // qmllint disable uncreatable-type
     id: window
 
     property bool panelOpen: false

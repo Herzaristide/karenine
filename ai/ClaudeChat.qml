@@ -53,7 +53,7 @@ Item {
         id: copyProcess
         command: ["wl-copy"]
         stdinEnabled: true
-        onExited: running = false
+        onExited: running = false // qmllint disable signal-handler-parameters
     }
 
     // ── Claude Code CLI process ──────────────────────────────────────────────
@@ -79,7 +79,7 @@ Item {
             root.flushPending();
         }
 
-        onExited: (code, status) => {
+        onExited: (code, status) => { // qmllint disable signal-handler-parameters
             root.started = false;
             root.ready = false;
             root.isStreaming = false;

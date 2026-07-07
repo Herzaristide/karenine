@@ -35,7 +35,7 @@ Item {
         id: copyProcess
         command: ["wl-copy"]
         stdinEnabled: true
-        onExited: running = false
+        onExited: running = false // qmllint disable signal-handler-parameters
     }
 
     // ── Ollama model pull process ────────────────────────────────────────────
@@ -52,7 +52,7 @@ Item {
         }
         stderr: SplitParser { onRead: (data) => {} }
 
-        onExited: (code, status) => {
+        onExited: (code, status) => { // qmllint disable signal-handler-parameters
             if (code === 0) {
                 root.modelReady = true;
                 if (pullProcess.pullMsgIdx >= 0)
@@ -119,7 +119,7 @@ Item {
     Process {
         id: ttsProcess
         running: false
-        onExited: {
+        onExited: { // qmllint disable signal-handler-parameters
             running = false;
             if (root.ttsPendingQueue.length > 0) {
                 var nextText = root.ttsPendingQueue.shift();

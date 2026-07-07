@@ -23,7 +23,7 @@ Item {
         onFileChanged: reload()
         onAdapterUpdated: writeAdapter()
 
-        JsonAdapter {
+        JsonAdapter { // qmllint disable unresolved-type
             id: notesAdapter
             property var notes: []
         }
@@ -38,14 +38,14 @@ Item {
 
     // ── Data helpers ──────────────────────────────────────────────────────────
     function loadNotes() {
-        var parsed = notesAdapter.notes;
+        var parsed = notesAdapter.notes; // qmllint disable unqualified
         notesData = parsed instanceof Array ? parsed : [];
         refreshView(searchFilter);
     }
 
     function saveNotes() {
         // Assigning triggers onAdapterUpdated → writeAdapter() (persist to disk).
-        notesAdapter.notes = notesData;
+        notesAdapter.notes = notesData; // qmllint disable unqualified
     }
 
     function addNote(text) {
