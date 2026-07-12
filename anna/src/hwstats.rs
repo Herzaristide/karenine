@@ -193,16 +193,20 @@ impl Collector {
             }
         }
 
-        // 2) AMD via amdgpu sysfs.
-        if let Some(dev) = amdgpu_device_dir() {
-            let usage = read_num(&format!("{dev}/gpu_busy_percent")).unwrap_or(0) as u8;
-            let vram_used = read_num(&format!("{dev}/mem_info_vram_used")).unwrap_or(0) / 1_048_576;
-            let vram_total =
-                read_num(&format!("{dev}/mem_info_vram_total")).unwrap_or(0) / 1_048_576;
+        // 2) AMD via amdgpu sysfs — live polling TEMPORARILY DISABLED.
+        // Reading gpu_busy_percent (and the amdgpu hwmon temp in read_temps)
+        // every second re-arms the driver's runtime-PM autosuspend timer, which
+        // pins a *headless* discrete card (display driven by the iGPU) at boost
+        // clocks (~115 W) instead of letting it BACO-suspend. Unlike NVML,
+        // rocm-smi/sysfs offer no way to query without re-arming PM, so until a
+        // proper idle back-off lands we only detect the card (a wake-safe stat)
+        // and report its name — never touch the SMU — so it can sleep. NVIDIA
+        // above is unaffected (nvidia-smi does not re-arm runtime PM).
+        if amdgpu_device_dir().is_some() {
             if self.gpu_name.is_none() {
                 self.gpu_name = Some(gpu_name_from_lspci());
             }
-            return (true, usage.min(100), vram_used, vram_total, 0);
+            return (false, 0, 0, 0, 0);
         }
 
         // 3) No live data — just a name (if any).
@@ -315,7 +319,8 @@ fn join_brand(part: &str, typ: &str, speed: &str) -> String {
 /// Returns (cpu_temp, gpu_temp) in °C from /sys/class/hwmon, 0 when not found.
 fn read_temps() -> (u32, u32) {
     let mut cpu_temp = 0u32;
-    let mut gpu_temp = 0u32;
+    // gpu_temp stays 0: amdgpu temp polling is disabled (see the match below).
+    let gpu_temp = 0u32;
 
     let entries = match fs::read_dir("/sys/class/hwmon") {
         Ok(e) => e,
@@ -335,7 +340,9 @@ fn read_temps() -> (u32, u32) {
         };
         match name.as_str() {
             "k10temp" | "coretemp" if cpu_temp == 0 => cpu_temp = temp(),
-            "amdgpu" if gpu_temp == 0 => gpu_temp = temp(),
+            // amdgpu GPU temp reading TEMPORARILY DISABLED — see read_gpu:
+            // polling it re-arms runtime PM and keeps a headless discrete card
+            // pinned awake. Re-enable together with the idle back-off.
             _ => {}
         }
     }
