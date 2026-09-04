@@ -16,7 +16,7 @@ panels/              Chrome de haut niveau (fenêtres Wayland)
   BottomBar, SidePanel, RightPanel, SettingsWindow
 widgets/             Contenu des panneaux
   HardwareStats, NotesWidget, Metronome, Tuner, MusicPlayerWidget,
-  QuickControls, ChromaGraph, MiniGraph, Settings
+  QuickControls, ChromaGraph, MiniGraph, Settings, ConsoleWidget
 ai/                  Cluster chat IA
   AIPanel (sélecteur), ClaudeChat, OllamaChat, OllamaTools
 anna/                Daemon Rust unique — thème, hwstats, tuner, chroma, métronome
@@ -32,6 +32,26 @@ Tout le backend est le daemon Rust `anna` : les widgets s'y connectent via un
 ligne (type `Quickshell.Io.Socket`). Plus aucun script bash/python ni dépendance
 `parec`/`numpy`. L'audio (accordeur, chromagramme, métronome) est natif via
 `cpal` + `rustfft`, à la fréquence réelle du périphérique.
+
+### Console (widget 5)
+
+`ConsoleWidget` est une **console de commandes**, pas un émulateur de terminal.
+`Quickshell.Io.Process` est un `QProcess` — des tubes, pas de pty — donc les
+commandes sortiraient sans couleurs et sans largeur connue. Le pty est obtenu en
+passant par `script` (util-linux), qui en alloue un vrai même quand ses propres
+entrée et sortie sont des tubes. La commande voyage dans `QS_CMD` plutôt que
+d'être interpolée dans le wrapper : rien à échapper. Le wrapper dimensionne le
+pty (`stty cols`) depuis la largeur du panneau, restaure le répertoire courant,
+puis émet `\001<code>\001<cwd>\001` — c'est ainsi que `cd` persiste d'une
+commande à l'autre et que le code de retour remonte.
+
+Seul le SGR est interprété (couleurs 16 / 256 / 24 bits mappées sur la palette
+base16, gras, italique, souligné) ; les autres séquences sont reconnues pour
+être proprement ignorées. Il n'y a pas d'entrée standard ni d'adressage du
+curseur : les programmes plein écran (`vim`, `htop`, `less`) ne fonctionnent pas
+— `PAGER=cat` évite que les plus courants s'y invitent par accident, et `[stop]`
+règle le reste. Un vrai terminal demande une machine à états VT et une grille de
+cellules, ce qui relève d'`anna`, pas du QML.
 
 ## Configuration
 

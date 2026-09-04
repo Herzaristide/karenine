@@ -26,8 +26,10 @@ Item {
     readonly property bool hasPlayer: player !== null && player !== undefined
     readonly property bool isPlaying: hasPlayer && player.playbackState === MprisPlaybackState.Playing
 
-    // ── Real-time audio spectrum from cava (9 bars, 0–100) ─────────────
-    property var eqLevels: [0,0,0,0,0,0,0,0,0]
+    // ── Real-time audio spectrum from cava (0–100 per bar) ────────────
+    // Enough bars to read as a ring around the disc rather than a row.
+    readonly property int eqBars: 32
+    property var eqLevels: new Array(32).fill(0)
 
     Process {
         id: cavaProc
@@ -35,17 +37,17 @@ Item {
         command: [
             "sh", "-c",
             "mkdir -p /tmp/qs-music && cat > /tmp/qs-music/cava.conf <<'EOF'\n" +
-            "[general]\nbars = 9\nframerate = 60\n" +
+            "[general]\nbars = " + root.eqBars + "\nframerate = 60\n" +
             "[input]\nmethod = pulse\nsource = auto\n" +
             "[output]\nmethod = raw\ndata_format = ascii\nascii_max_range = 100\nchannels = mono\n" +
-            "[smoothing]\nnoise_reduction = 35\n" +
+            "[smoothing]\nnoise_reduction = 12\n" +
             "EOF\nexec cava -p /tmp/qs-music/cava.conf"
         ]
         stdout: SplitParser {
             onRead: (line) => {
                 var parts = line.trim().split(';');
                 var arr = [];
-                for (var i = 0; i < 9; i++) {
+                for (var i = 0; i < root.eqBars; i++) {
                     var v = parseInt(parts[i]);
                     arr.push(isNaN(v) ? 0 : v);
                 }
@@ -53,7 +55,21 @@ Item {
             }
         }
         // Reset bars when audio stops streaming
-        onRunningChanged: if (!running) root.eqLevels = [0,0,0,0,0,0,0,0,0]
+        onRunningChanged: if (!running) root.eqLevels = new Array(root.eqBars).fill(0)
+    }
+
+    // ── Loop mode ─────────────────────────────────────────────────────
+    // MPRIS owns the state (None / Track / Playlist); the button just walks
+    // through it. Players that don't advertise loopSupported stay disabled.
+    readonly property int loopState: hasPlayer ? player.loopState : MprisLoopState.None
+
+    function cycleLoop() {
+        if (!hasPlayer || !player.loopSupported) return;
+        switch (player.loopState) {
+            case MprisLoopState.None:     player.loopState = MprisLoopState.Playlist; break;
+            case MprisLoopState.Playlist: player.loopState = MprisLoopState.Track;    break;
+            default:                      player.loopState = MprisLoopState.None;     break;
+        }
     }
 
     // ── Vinyl disc rotation (25 fps) ──────────────────────────────────
@@ -212,383 +228,404 @@ Item {
     // ══════════════════════════════════════════════════════════════════════
     // MAIN CONTENT
     // ══════════════════════════════════════════════════════════════════════
-    ColumnLayout {
-        anchors.fill: parent
-        anchors.margins: 12
-        spacing: 16
+    // ══ Stage — the disc with the spectrum ringed behind it. Anchored to the
+    // widget's own centre, not stacked in the column, so it lands on the
+    // screen's vertical midline — level with the LeftBar's flake.
+    Item {
+        id: stage
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.verticalCenter: parent.verticalCenter
+        width: parent.width - 24
+        height: Math.min(parent.height - 24, 300)
 
-        // Top spacer — keeps the widget vertically centered in the panel
-        Item { Layout.fillHeight: true }
+        // Disc diameter, leaving room for the ring to breathe around it.
+        readonly property real discSize:
+            Math.max(80, Math.min(width - 76, height - 76, 186))
 
-        // ── Vinyl disc ───────────────────────────────────────────────
+        // ── Spectrum ring — behind the disc, bars radiating outward ──
         Item {
-            id: vinylContainer
-            Layout.alignment: Qt.AlignHCenter
-            Layout.preferredWidth: Math.min(parent.width - 16, 186)
-            Layout.preferredHeight: width
+            id: spectrumRing
+            anchors.centerIn: parent
+            width: stage.discSize + spectrumRing.reach * 2
+            height: width
 
-            // Gesture state for click/drag interactions on the disc
-            property real pressX: 0
-            property real dragDx: 0
-            property bool dragging: false
-            readonly property real dragThreshold: 12
-            // Animated horizontal offset applied to the vinyl disc via Translate
-            property real discOffset: 0
+            // Where a bar starts (just off the disc) and how far it grows.
+            readonly property real innerRadius: stage.discSize / 2 + 7
+            readonly property real reach: 34
 
-            // Single wrapper so rings + disc all move with one Translate
-            Item {
-                id: vinylCarousel
-                anchors.fill: parent
-                transform: Translate { x: vinylContainer.discOffset }
-                opacity: root.showLyrics ? 0 : 1
-                visible: opacity > 0.001
-                scale: vinylContainer.dragging ? 0.94 : 1.0
-                Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
-                Behavior on scale   { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-
-                // Outer counter-rotating ring
-                Rectangle {
-                    anchors.centerIn: parent
-                    width: parent.width + 22; height: parent.height + 22; radius: width / 2
-                    color: "transparent"
-                    border.width: 1; border.color: Theme.accentColor
-                    opacity: root.isPlaying ? 0.45 : 0.0
-                    Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
-
-                    RotationAnimator on rotation {
-                        running: root.isPlaying && !root.showLyrics
-                        from: 0; to: -360; duration: 14000; loops: Animation.Infinite
-                    }
-                }
-
-                // Inner pulsing ring
-                Rectangle {
-                    anchors.centerIn: parent
-                    width: parent.width + 8; height: parent.height + 8; radius: width / 2
-                    color: "transparent"
-                    border.width: 2; border.color: Theme.accentColor
-                    opacity: root.isPlaying ? 0.30 : 0.0
-                    Behavior on opacity { NumberAnimation { duration: 320 } }
-
-                    SequentialAnimation on scale {
-                        running: root.isPlaying && !root.showLyrics; loops: Animation.Infinite
-                        NumberAnimation { from: 1.0; to: 1.04; duration: 860; easing.type: Easing.InOutSine }
-                        NumberAnimation { from: 1.04; to: 1.0; duration: 860; easing.type: Easing.InOutSine }
-                    }
-                }
-
-                // Disc body (rotates with the art)
-                Item {
-                    id: vinylDisc
-                    anchors.fill: parent
-                    rotation: root.vinylRotation
-                }
-            }
-
-            // Snap back to center after a short (non-skip) drag
-            NumberAnimation {
-                id: snapBackAnim
-                target: vinylContainer
-                property: "discOffset"
-                to: 0
-                duration: 220
-                easing.type: Easing.OutCubic
-            }
-
-            // Slide-out + slide-in animation for track skips. Mirrors the swipe
-            // direction so the listener sees one record leaving and the next
-            // arriving from the opposite side.
-            SequentialAnimation {
-                id: skipAnim
-                property int direction: 1   // +1 = drag right, -1 = drag left
-                property bool isPrev: false
-
-                NumberAnimation {
-                    target: vinylContainer
-                    property: "discOffset"
-                    to: skipAnim.direction * vinylContainer.width
-                    duration: 220
-                    easing.type: Easing.InCubic
-                }
-                ScriptAction {
-                    script: {
-                        if (root.hasPlayer) {
-                            if (skipAnim.isPrev) {
-                                if (root.player.canGoPrevious) root.player.previous();
-                            } else {
-                                if (root.player.canGoNext) root.player.next();
-                            }
-                        }
-                        // Reposition off the opposite edge so the new disc can
-                        // glide in from the side the swipe came from.
-                        vinylContainer.discOffset = -skipAnim.direction * vinylContainer.width;
-                    }
-                }
-                NumberAnimation {
-                    target: vinylContainer
-                    property: "discOffset"
-                    to: 0
-                    duration: 320
-                    easing.type: Easing.OutCubic
-                }
-            }
-
-            // Original disc content lives inside vinylDisc — keep wrapping it.
-            Item {
-                id: vinylDiscContent
-                parent: vinylDisc
-                anchors.fill: parent
-
-                // Black circular base (vinyl)
-                Rectangle {
-                    anchors.fill: parent
-                    radius: width / 2
-                    color: Theme.bgDeep
-                }
-
-                // Decorative groove rings (no-art state)
-                Repeater {
-                    model: 5
-                    Rectangle {
-                        required property int index
-                        anchors.centerIn: parent
-                        width: parent.width * (0.28 + index * 0.14); height: width; radius: width / 2
-                        color: "transparent"
-                        border.width: 0.5
-                        border.color: Qt.rgba(1, 1, 1, 0.04 + index * 0.025)
-                        visible: discArt.status !== Image.Ready
-                    }
-                }
-
-                // High-resolution album art — source for the masked render.
-                // Use opacity:0 (not visible:false) so the scene graph keeps the
-                // layer texture alive; visible:false lets Qt cull the node and
-                // the cached layer texture gets dropped after a while.
-                Image {
-                    id: discArt
-                    anchors.fill: parent
-                    source: root.hasPlayer && root.player.trackArtUrl ? root.player.trackArtUrl : ""
-                    sourceSize.width: 1024
-                    sourceSize.height: 1024
-                    fillMode: Image.PreserveAspectCrop
-                    asynchronous: true
-                    smooth: true
-                    mipmap: true
-                    cache: true
-                    opacity: 0
-                    layer.enabled: true
-                    layer.smooth: true
-                    layer.mipmap: true
-                    layer.textureSize: Qt.size(1024, 1024)
-
-                    onSourceChanged: { artScale.scale = 1.07; artScaleAnim.restart(); }
-                }
-
-                // Circular mask source
-                Item {
-                    id: discMask
-                    anchors.fill: parent
-                    opacity: 0
-                    layer.enabled: true
-                    layer.smooth: true
-                    layer.textureSize: Qt.size(1024, 1024)
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: width / 2
-                        color: "white"
-                        antialiasing: true
-                    }
-                }
-
-                // Wrapper providing the entrance scale animation
-                Item {
-                    id: artScale
-                    anchors.fill: parent
-
-                    MultiEffect {
-                        anchors.fill: parent
-                        source: discArt
-                        maskEnabled: true
-                        maskSource: discMask
-                        maskThresholdMin: 0.5
-                        maskSpreadAtMin: 1.0
-                        opacity: discArt.status === Image.Ready ? 1.0 : 0.0
-                        Behavior on opacity { NumberAnimation { duration: 350; easing.type: Easing.OutCubic } }
-                    }
-
-                    NumberAnimation on scale {
-                        id: artScaleAnim
-                        from: 1.07; to: 1.0
-                        duration: 380; easing.type: Easing.OutCubic
-                        running: false
-                    }
-                }
-
-                // Radial vignette over art (clipped to circle naturally)
-                Rectangle {
-                    anchors.fill: parent
-                    radius: width / 2
-                    visible: discArt.status === Image.Ready
-                    color: "transparent"
-                    gradient: Gradient {
-                        orientation: Gradient.Vertical
-                        GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0.06) }
-                        GradientStop { position: 0.6; color: "transparent"          }
-                        GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.45) }
-                    }
-                }
-
-                // Placeholder note icon (no art)
-                Text {
-                    anchors.centerIn: parent
-                    visible: discArt.status !== Image.Ready
-                    text: "♪"; font.pixelSize: parent.width * 0.35
-                    color: Theme.iconColor; opacity: 0.22
-                }
-
-                // Center spindle hole
-                Rectangle {
-                    anchors.centerIn: parent
-                    width: parent.width * 0.10; height: width; radius: width / 2
-                    color: Theme.bgDeep
-                    border.width: 2
-                    border.color: Qt.rgba(Theme.accentColor.r, Theme.accentColor.g, Theme.accentColor.b, 0.80)
-                    z: 10
-                }
-            }
-
-            // Pause indicator overlay (fades in when halted)
-            Rectangle {
-                anchors.centerIn: parent
-                width: 52; height: 52; radius: 26
-                color: Qt.rgba(0, 0, 0, 0.58)
-                opacity: !root.showLyrics && root.hasPlayer && !root.isPlaying && !vinylContainer.dragging ? 0.92 : 0.0
-                Behavior on opacity { NumberAnimation { duration: 260 } }
-
-                Text {
-                    anchors.centerIn: parent
-                    text: root.hasPlayer ? "⏸" : "♪"
-                    font.pixelSize: 20; color: "white"
-                }
-            }
-
-            // Drag direction hint (◮ previous / ◭ next — swipe right pulls in
-            // the previous track from the left, swipe left brings the next one)
-            Rectangle {
-                anchors.centerIn: parent
-                width: 52; height: 52; radius: 26
-                color: Qt.rgba(0, 0, 0, 0.58)
-                readonly property bool show:
-                    vinylContainer.dragging
-                    && Math.abs(vinylContainer.dragDx) > vinylContainer.dragThreshold
-                opacity: show ? 0.92 : 0.0
-                Behavior on opacity { NumberAnimation { duration: 160 } }
-
-                Text {
-                    anchors.centerIn: parent
-                    text: vinylContainer.dragDx > 0 ? "⏮" : "⏭"
-                    font.pixelSize: 22; color: "white"
-                }
-            }
-
-            // Gesture surface: click toggles play/pause, horizontal drag skips
-            // tracks (drag right → previous, drag left → next).
-            MouseArea {
-                anchors.fill: parent
-                hoverEnabled: true
-                enabled: root.hasPlayer && !skipAnim.running
-                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                preventStealing: true
-
-                onPressed: (mouse) => {
-                    snapBackAnim.stop();
-                    vinylContainer.discOffset = 0;
-                    vinylContainer.pressX = mouse.x;
-                    vinylContainer.dragDx = 0;
-                    vinylContainer.dragging = true;
-                }
-                onPositionChanged: (mouse) => {
-                    if (vinylContainer.dragging) {
-                        vinylContainer.dragDx = mouse.x - vinylContainer.pressX;
-                        vinylContainer.discOffset = vinylContainer.dragDx * 0.6;
-                    }
-                }
-                onReleased: (mouse) => {
-                    var dx = vinylContainer.dragDx;
-                    var t = vinylContainer.dragThreshold;
-                    vinylContainer.dragging = false;
-                    vinylContainer.dragDx = 0;
-                    if (!root.hasPlayer) {
-                        snapBackAnim.restart();
-                        return;
-                    }
-                    if (Math.abs(dx) < t) {
-                        snapBackAnim.restart();
-                        root.player.togglePlaying();
-                    } else {
-                        // dx > 0 (swipe right) → previous, dx < 0 → next
-                        skipAnim.direction = dx > 0 ? 1 : -1;
-                        skipAnim.isPrev = dx > 0;
-                        skipAnim.start();
-                    }
-                }
-                onCanceled: {
-                    vinylContainer.dragging = false;
-                    vinylContainer.dragDx = 0;
-                    snapBackAnim.restart();
-                }
-            }
-        }
-
-        // ── Animated EQ bars ─────────────────────────────────────────
-        Row {
-            Layout.alignment: Qt.AlignHCenter
-            Layout.preferredHeight: 36
-            spacing: 4
-            opacity: root.showLyrics ? 0 : 1
+            opacity: root.isPlaying ? 1.0 : 0.35
             Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
 
             Repeater {
-                model: 9
-                delegate: Item {
-                    required property int index
-                    width: 6; height: 36
+                model: root.eqBars
 
-                    // 0..1 normalized level for this bar from cava
-                    readonly property real level: Math.max(0, Math.min(1,
-                        (root.eqLevels[index] || 0) / 100))
+                Item {
+                    id: barSlot
+                    required property int index
+                    anchors.centerIn: parent
+                    width: 6
+                    height: spectrumRing.height
+                    // Bar 0 at the top, then clockwise around the disc.
+                    rotation: index * (360 / root.eqBars)
+
+                    // Raised to a power below 1: cava's raw levels sit low, so
+                    // a kick should read as a jump rather than a nudge.
+                    readonly property real level: Math.pow(Math.max(0, Math.min(1,
+                        (root.eqLevels[index] || 0) / 100)), 0.7)
 
                     Rectangle {
-                        anchors.bottom: parent.bottom
-                        width: parent.width
-                        // 3 px floor + audio-driven amplitude up to bar height
-                        height: 3 + parent.level * (parent.height - 3)
-                        radius: 3
+                        width: 3
+                        height: 3 + barSlot.level * spectrumRing.reach
+                        radius: width / 2
+                        x: (parent.width - width) / 2
+                        // Grows outward from the disc edge, along the radius.
+                        y: parent.height / 2 - spectrumRing.innerRadius - height
                         color: Theme.accentColor
-                        opacity: root.isPlaying ? (0.55 + parent.level * 0.45) : 0.22
-                        Behavior on height { NumberAnimation { duration: 80; easing.type: Easing.OutCubic } }
-                        Behavior on opacity { NumberAnimation { duration: 220 } }
+                        opacity: root.isPlaying ? (0.45 + barSlot.level * 0.55) : 0.25
+
+                        // Short enough to keep up with the beat — at 60 fps
+                        // cava hands us a frame every 16 ms.
+                        Behavior on height { NumberAnimation { duration: 40; easing.type: Easing.OutCubic } }
+                        Behavior on opacity { NumberAnimation { duration: 120 } }
                     }
                 }
             }
         }
 
-        // ── Chromagram (12 pitch classes of currently playing audio) ──
-        ChromaGraph {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 70
-            active: root.isPlaying
+    // ── Vinyl disc ───────────────────────────────────────────────
+    Item {
+        id: vinylContainer
+        anchors.centerIn: parent
+        width: stage.discSize
+        height: stage.discSize
+
+        // Gesture state for click/drag interactions on the disc
+        property real pressX: 0
+        property real dragDx: 0
+        property bool dragging: false
+        readonly property real dragThreshold: 12
+        // Animated horizontal offset applied to the vinyl disc via Translate
+        property real discOffset: 0
+
+        // Single wrapper so rings + disc all move with one Translate
+        Item {
+            id: vinylCarousel
+            anchors.fill: parent
+            transform: Translate { x: vinylContainer.discOffset }
             opacity: root.showLyrics ? 0 : 1
+            visible: opacity > 0.001
+            scale: vinylContainer.dragging ? 0.94 : 1.0
             Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
+            Behavior on scale   { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+
+            // Outer counter-rotating ring
+            Rectangle {
+                anchors.centerIn: parent
+                width: parent.width + 22; height: parent.height + 22; radius: width / 2
+                color: "transparent"
+                border.width: 1; border.color: Theme.accentColor
+                opacity: root.isPlaying ? 0.45 : 0.0
+                Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
+
+                RotationAnimator on rotation {
+                    running: root.isPlaying && !root.showLyrics
+                    from: 0; to: -360; duration: 14000; loops: Animation.Infinite
+                }
+            }
+
+            // Inner pulsing ring
+            Rectangle {
+                anchors.centerIn: parent
+                width: parent.width + 8; height: parent.height + 8; radius: width / 2
+                color: "transparent"
+                border.width: 2; border.color: Theme.accentColor
+                opacity: root.isPlaying ? 0.30 : 0.0
+                Behavior on opacity { NumberAnimation { duration: 320 } }
+
+                SequentialAnimation on scale {
+                    running: root.isPlaying && !root.showLyrics; loops: Animation.Infinite
+                    NumberAnimation { from: 1.0; to: 1.04; duration: 860; easing.type: Easing.InOutSine }
+                    NumberAnimation { from: 1.04; to: 1.0; duration: 860; easing.type: Easing.InOutSine }
+                }
+            }
+
+            // Disc body (rotates with the art)
+            Item {
+                id: vinylDisc
+                anchors.fill: parent
+                rotation: root.vinylRotation
+            }
         }
+
+        // Snap back to center after a short (non-skip) drag
+        NumberAnimation {
+            id: snapBackAnim
+            target: vinylContainer
+            property: "discOffset"
+            to: 0
+            duration: 220
+            easing.type: Easing.OutCubic
+        }
+
+        // Slide-out + slide-in animation for track skips. Mirrors the swipe
+        // direction so the listener sees one record leaving and the next
+        // arriving from the opposite side.
+        SequentialAnimation {
+            id: skipAnim
+            property int direction: 1   // +1 = drag right, -1 = drag left
+            property bool isPrev: false
+
+            NumberAnimation {
+                target: vinylContainer
+                property: "discOffset"
+                to: skipAnim.direction * vinylContainer.width
+                duration: 220
+                easing.type: Easing.InCubic
+            }
+            ScriptAction {
+                script: {
+                    if (root.hasPlayer) {
+                        if (skipAnim.isPrev) {
+                            if (root.player.canGoPrevious) root.player.previous();
+                        } else {
+                            if (root.player.canGoNext) root.player.next();
+                        }
+                    }
+                    // Reposition off the opposite edge so the new disc can
+                    // glide in from the side the swipe came from.
+                    vinylContainer.discOffset = -skipAnim.direction * vinylContainer.width;
+                }
+            }
+            NumberAnimation {
+                target: vinylContainer
+                property: "discOffset"
+                to: 0
+                duration: 320
+                easing.type: Easing.OutCubic
+            }
+        }
+
+        // Original disc content lives inside vinylDisc — keep wrapping it.
+        Item {
+            id: vinylDiscContent
+            parent: vinylDisc
+            anchors.fill: parent
+
+            // Black circular base (vinyl)
+            Rectangle {
+                anchors.fill: parent
+                radius: width / 2
+                color: Theme.bgDeep
+            }
+
+            // Decorative groove rings (no-art state)
+            Repeater {
+                model: 5
+                Rectangle {
+                    required property int index
+                    anchors.centerIn: parent
+                    width: parent.width * (0.28 + index * 0.14); height: width; radius: width / 2
+                    color: "transparent"
+                    border.width: 0.5
+                    border.color: Qt.rgba(1, 1, 1, 0.04 + index * 0.025)
+                    visible: discArt.status !== Image.Ready
+                }
+            }
+
+            // High-resolution album art — source for the masked render.
+            // Use opacity:0 (not visible:false) so the scene graph keeps the
+            // layer texture alive; visible:false lets Qt cull the node and
+            // the cached layer texture gets dropped after a while.
+            Image {
+                id: discArt
+                anchors.fill: parent
+                source: root.hasPlayer && root.player.trackArtUrl ? root.player.trackArtUrl : ""
+                sourceSize.width: 1024
+                sourceSize.height: 1024
+                fillMode: Image.PreserveAspectCrop
+                asynchronous: true
+                smooth: true
+                mipmap: true
+                cache: true
+                opacity: 0
+                layer.enabled: true
+                layer.smooth: true
+                layer.mipmap: true
+                layer.textureSize: Qt.size(1024, 1024)
+
+                onSourceChanged: { artScale.scale = 1.07; artScaleAnim.restart(); }
+            }
+
+            // Circular mask source
+            Item {
+                id: discMask
+                anchors.fill: parent
+                opacity: 0
+                layer.enabled: true
+                layer.smooth: true
+                layer.textureSize: Qt.size(1024, 1024)
+                Rectangle {
+                    anchors.fill: parent
+                    radius: width / 2
+                    color: "white"
+                    antialiasing: true
+                }
+            }
+
+            // Wrapper providing the entrance scale animation
+            Item {
+                id: artScale
+                anchors.fill: parent
+
+                MultiEffect {
+                    anchors.fill: parent
+                    source: discArt
+                    maskEnabled: true
+                    maskSource: discMask
+                    maskThresholdMin: 0.5
+                    maskSpreadAtMin: 1.0
+                    opacity: discArt.status === Image.Ready ? 1.0 : 0.0
+                    Behavior on opacity { NumberAnimation { duration: 350; easing.type: Easing.OutCubic } }
+                }
+
+                NumberAnimation on scale {
+                    id: artScaleAnim
+                    from: 1.07; to: 1.0
+                    duration: 380; easing.type: Easing.OutCubic
+                    running: false
+                }
+            }
+
+            // Radial vignette over art (clipped to circle naturally)
+            Rectangle {
+                anchors.fill: parent
+                radius: width / 2
+                visible: discArt.status === Image.Ready
+                color: "transparent"
+                gradient: Gradient {
+                    orientation: Gradient.Vertical
+                    GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0.06) }
+                    GradientStop { position: 0.6; color: "transparent"          }
+                    GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.45) }
+                }
+            }
+
+            // Placeholder note icon (no art)
+            Text {
+                anchors.centerIn: parent
+                visible: discArt.status !== Image.Ready
+                text: "♪"; font.pixelSize: parent.width * 0.35
+                color: Theme.iconColor; opacity: 0.22
+            }
+
+            // Center spindle hole
+            Rectangle {
+                anchors.centerIn: parent
+                width: parent.width * 0.10; height: width; radius: width / 2
+                color: Theme.bgDeep
+                border.width: 2
+                border.color: Qt.rgba(Theme.accentColor.r, Theme.accentColor.g, Theme.accentColor.b, 0.80)
+                z: 10
+            }
+        }
+
+        // Pause indicator overlay (fades in when halted)
+        Rectangle {
+            anchors.centerIn: parent
+            width: 52; height: 52; radius: 26
+            color: Qt.rgba(0, 0, 0, 0.58)
+            opacity: !root.showLyrics && root.hasPlayer && !root.isPlaying && !vinylContainer.dragging ? 0.92 : 0.0
+            Behavior on opacity { NumberAnimation { duration: 260 } }
+
+            Text {
+                anchors.centerIn: parent
+                text: root.hasPlayer ? "⏸" : "♪"
+                font.pixelSize: 20; color: "white"
+            }
+        }
+
+        // Drag direction hint (◮ previous / ◭ next — swipe right pulls in
+        // the previous track from the left, swipe left brings the next one)
+        Rectangle {
+            anchors.centerIn: parent
+            width: 52; height: 52; radius: 26
+            color: Qt.rgba(0, 0, 0, 0.58)
+            readonly property bool show:
+                vinylContainer.dragging
+                && Math.abs(vinylContainer.dragDx) > vinylContainer.dragThreshold
+            opacity: show ? 0.92 : 0.0
+            Behavior on opacity { NumberAnimation { duration: 160 } }
+
+            Text {
+                anchors.centerIn: parent
+                text: vinylContainer.dragDx > 0 ? "⏮" : "⏭"
+                font.pixelSize: 22; color: "white"
+            }
+        }
+
+        // Gesture surface: click toggles play/pause, horizontal drag skips
+        // tracks (drag right → previous, drag left → next).
+        MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            enabled: root.hasPlayer && !skipAnim.running
+            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            preventStealing: true
+
+            onPressed: (mouse) => {
+                snapBackAnim.stop();
+                vinylContainer.discOffset = 0;
+                vinylContainer.pressX = mouse.x;
+                vinylContainer.dragDx = 0;
+                vinylContainer.dragging = true;
+            }
+            onPositionChanged: (mouse) => {
+                if (vinylContainer.dragging) {
+                    vinylContainer.dragDx = mouse.x - vinylContainer.pressX;
+                    vinylContainer.discOffset = vinylContainer.dragDx * 0.6;
+                }
+            }
+            onReleased: (mouse) => {
+                var dx = vinylContainer.dragDx;
+                var t = vinylContainer.dragThreshold;
+                vinylContainer.dragging = false;
+                vinylContainer.dragDx = 0;
+                if (!root.hasPlayer) {
+                    snapBackAnim.restart();
+                    return;
+                }
+                if (Math.abs(dx) < t) {
+                    snapBackAnim.restart();
+                    root.player.togglePlaying();
+                } else {
+                    // dx > 0 (swipe right) → previous, dx < 0 → next
+                    skipAnim.direction = dx > 0 ? 1 : -1;
+                    skipAnim.isPrev = dx > 0;
+                    skipAnim.start();
+                }
+            }
+            onCanceled: {
+                vinylContainer.dragging = false;
+                vinylContainer.dragDx = 0;
+                snapBackAnim.restart();
+            }
+        }
+        }
+    }   // ══ end stage
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Column around the stage: track info at the top, transport at the bottom.
+    // ══════════════════════════════════════════════════════════════════════
+    ColumnLayout {
+        anchors.fill: parent
+        anchors.margins: 12
+        spacing: 10
 
         // ── Title + Artist ───────────────────────────────────────────
         ColumnLayout {
             Layout.fillWidth: true
             Layout.alignment: Qt.AlignHCenter
             spacing: 4
-            opacity: root.showLyrics ? 0 : 1
-            Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
 
             // Marquee title
             Item {
@@ -656,11 +693,21 @@ Item {
             }
         }
 
+        // Keeps the stage's airspace clear between the two blocks.
+        Item { Layout.fillHeight: true }
+
+        // ── Chromagram (12 pitch classes of currently playing audio) ──
+        ChromaGraph {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 70
+            active: root.isPlaying
+        }
+
         // ── Progress bar ─────────────────────────────────────────────
         ColumnLayout {
             Layout.fillWidth: true
             spacing: 4
-            opacity: root.showLyrics ? 0 : (root.hasPlayer ? 1.0 : 0.4)
+            opacity: root.hasPlayer ? 1.0 : 0.4
             Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
 
             Rectangle {
@@ -728,33 +775,69 @@ Item {
             }
         }
 
-        // ── Lyrics toggle (transport controls live on the vinyl itself) ──
+        // ── Transport bar ────────────────────────────────────────────
+        // Full controls, rather than only what the disc's swipe gestures
+        // exposed: those stay, this makes them discoverable.
         RowLayout {
             Layout.alignment: Qt.AlignHCenter
+            Layout.topMargin: 2
             spacing: 14
 
+            // Loop, mirroring the lyrics toggle at the far end. MPRIS carries
+            // the three states itself, so this only cycles the player's own.
             TransportButton {
-                glyph: "♪"
-                size: 30
+                icon: root.loopState === MprisLoopState.Track
+                      ? Qt.resolvedUrl("../assets/icons/loop-one.svg")
+                      : Qt.resolvedUrl("../assets/icons/loop.svg")
+                size: 28
+                accent: root.loopState !== MprisLoopState.None
+                enabled: root.hasPlayer && root.player.loopSupported
+                onActivated: root.cycleLoop()
+            }
+
+            TransportButton {
+                icon: Qt.resolvedUrl("../assets/icons/prev.svg")
+                size: 34
+                enabled: root.hasPlayer && root.player.canGoPrevious
+                onActivated: root.player.previous()
+            }
+
+            TransportButton {
+                icon: root.isPlaying ? Qt.resolvedUrl("../assets/icons/pause.svg")
+                                     : Qt.resolvedUrl("../assets/icons/play.svg")
+                size: 46
+                accent: true
+                enabled: root.hasPlayer && root.player.canTogglePlaying
+                onActivated: root.player.togglePlaying()
+            }
+
+            TransportButton {
+                icon: Qt.resolvedUrl("../assets/icons/next.svg")
+                size: 34
+                enabled: root.hasPlayer && root.player.canGoNext
+                onActivated: root.player.next()
+            }
+
+            TransportButton {
+                icon: Qt.resolvedUrl("../assets/icons/notes.svg")
+                size: 28
                 accent: root.showLyrics
                 enabled: root.hasPlayer
                 onActivated: root.showLyrics = !root.showLyrics
             }
         }
-
-        // Bottom spacer — paired with the top spacer to vertically center content
-        Item { Layout.fillHeight: true }
     }
 
-    // ── Lyrics overlay (full panel width) ────────────────────────────────
+    // ── Lyrics overlay ───────────────────────────────────────────────────
     // Shows the active sentence centered, plus 1–2 sibling lines fading out
     // above and below. No scrolling — lines just rotate through this fixed
-    // 5-slot column as the position advances. Spans the entire widget width
-    // with a small padding so long lines wrap rather than getting cropped.
+    // 5-slot column as the position advances. It takes the disc's place on
+    // the stage and nothing else: title, progress and the ring stay put.
     Item {
         id: lyricsOverlay
+        parent: stage
         anchors.fill: parent
-        anchors.margins: 12
+        anchors.margins: 4
         opacity: root.showLyrics ? 1 : 0
         visible: opacity > 0.001
         Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
@@ -857,6 +940,7 @@ Item {
     component TransportButton: Item {
         id: btn
         property string glyph: ""
+        property url icon                    // takes precedence over glyph
         property real size: 36
         property bool accent: false
         signal activated()
@@ -882,8 +966,17 @@ Item {
 
             Text {
                 anchors.centerIn: parent
+                visible: btn.icon.toString() === ""
                 text: btn.glyph
                 font.pixelSize: btn.size * 0.42
+                color: btn.accent ? Theme.selectedTextColor : Theme.iconColor
+            }
+
+            NixIcon {
+                anchors.centerIn: parent
+                visible: btn.icon.toString() !== ""
+                source: btn.icon
+                iconSize: btn.size * 0.44
                 color: btn.accent ? Theme.selectedTextColor : Theme.iconColor
             }
         }

@@ -149,48 +149,16 @@ Item {
     }
 
     // ── Battery state ──────────────────────────────────────────────────────
-    property bool   batteryPresent: false
-    property int    batteryPercent: 0
-    property string batteryStatus:  ""
-
-    Process {
-        id: batteryProc
-        command: [
-            "sh", "-c",
-            "bat=$(ls -d /sys/class/power_supply/BAT* 2>/dev/null | head -n1); " +
-            "if [ -n \"$bat\" ]; then " +
-            "  cap=$(cat \"$bat/capacity\" 2>/dev/null); " +
-            "  st=$(cat \"$bat/status\" 2>/dev/null); " +
-            "  echo \"$cap|$st\"; " +
-            "fi"
-        ]
-        stdout: StdioCollector { id: batteryOut }
-        onRunningChanged: {
-            if (!running) {
-                var line = batteryOut.text.trim();
-                if (line.length > 0) {
-                    var parts = line.split('|');
-                    root.batteryPercent = parseInt(parts[0]);
-                    root.batteryStatus  = parts.length > 1 ? parts[1] : "";
-                    root.batteryPresent = !isNaN(root.batteryPercent);
-                } else {
-                    root.batteryPresent = false;
-                }
-            }
-        }
-    }
+    // Polled by the Battery singleton — the LeftBar shows it too, so it is
+    // read once and shared rather than polled from both places.
+    readonly property bool   batteryPresent: Battery.present
+    readonly property int    batteryPercent: Battery.percent
+    readonly property string batteryStatus:  Battery.status
 
     function batteryString() {
-        if (!batteryPresent) return "";
-        var sym = "";
-        switch (batteryStatus) {
-            case "Charging":     sym = "+"; break;
-            case "Discharging":  sym = "-"; break;
-            case "Full":         sym = "="; break;
-            case "Not charging": sym = "~"; break;
-            default:             sym = "?"; break;
-        }
-        return "bat  " + sym + " " + batteryPercent + "%";
+        return batteryPresent
+            ? "bat  " + Battery.symbol + " " + batteryPercent + "%"
+            : "";
     }
 
     // ── Refresh timer ──────────────────────────────────────────────────────
@@ -201,11 +169,10 @@ Item {
         onTriggered: {
             if (!getVolProc.running)  getVolProc.running  = true;
             if (!statusProc.running)  statusProc.running  = true;
-            if (!batteryProc.running) batteryProc.running = true;
         }
     }
 
-    Component.onCompleted: { getVolProc.running = true; statusProc.running = true; batteryProc.running = true; }
+    Component.onCompleted: { getVolProc.running = true; statusProc.running = true; }
 
     // ── UI ─────────────────────────────────────────────────────────────────
     ColumnLayout {

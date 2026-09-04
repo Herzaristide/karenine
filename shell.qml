@@ -12,11 +12,29 @@ ShellRoot {
     property bool panelOpen: false
     property int activeWidget: 0
     property bool rightOpen: false
+    property bool controlsOpen: false
+
+    // Toggle a widget. Only one panel is ever open: opening either side
+    // closes the other. Shared by the FIFO listener and the bar's buttons.
+    function activateWidget(idx) {
+        if (idx === 0) {
+            rightOpen = !rightOpen;
+            if (rightOpen)
+                panelOpen = false;
+        } else if (panelOpen && activeWidget === idx) {
+            panelOpen = false;
+        } else {
+            activeWidget = idx;
+            panelOpen = true;
+            rightOpen = false;
+        }
+    }
 
     // ── IPC externe via FIFO /tmp/qs-panel.fifo ──────────────────────────
     //   echo "widget:N" > /tmp/qs-panel.fifo   → bascule le widget N
+    //   echo "controls" > /tmp/qs-panel.fifo   → bascule le popup de contrôles
     //   echo "close"    > /tmp/qs-panel.fifo   → ferme le panel
-    //   N : 0=Stats  1=IA  2=Notes  3=Pitch  4=Music
+    //   N : 0=Stats  1=IA  2=Notes  3=Pitch  4=Music  5=Console
     Process {
         id: ipcListener
         command: [
@@ -31,26 +49,21 @@ ShellRoot {
                 var msg = data.trim();
                 if (msg.startsWith("widget:")) {
                     var idx = parseInt(msg.substring(7));
-                    if (!isNaN(idx)) {
-                        if (idx === 0) {
-                            root.rightOpen = !root.rightOpen;
-                        } else if (root.panelOpen && root.activeWidget === idx) {
-                            root.panelOpen = false;
-                        } else {
-                            root.activeWidget = idx;
-                            root.panelOpen = true;
-                        }
-                    }
+                    if (!isNaN(idx))
+                        root.activateWidget(idx);
+                } else if (msg === "controls") {
+                    root.controlsOpen = !root.controlsOpen;
                 } else if (msg === "close") {
                     root.panelOpen = false;
                     root.rightOpen = false;
+                    root.controlsOpen = false;
                 }
             }
         }
         onExited: Qt.callLater(function() { ipcListener.running = true; }) // qmllint disable signal-handler-parameters
     }
 
-    property string primaryScreen: "DP-1"
+    property string primaryScreen: "eDP-1"
 
     // Only the primary screen. Feeding this (instead of Quickshell.screens) to
     // the Variants below means the panels are instantiated ONCE, not once per
@@ -68,23 +81,27 @@ ShellRoot {
     Variants {
         model: root.primaryScreens
 
-        BottomBar {
+        LeftBar {
             property var modelData
             screen: modelData
             visible: modelData && modelData.name === root.primaryScreen
             panelOpen: root.panelOpen
             activeWidget: root.activeWidget
             rightOpen: root.rightOpen
-            onSelectWidget: (idx) => {
-                if (idx === 0) {
-                    root.rightOpen = !root.rightOpen;
-                } else if (root.panelOpen && root.activeWidget === idx) {
-                    root.panelOpen = false;
-                } else {
-                    root.activeWidget = idx;
-                    root.panelOpen = true;
-                }
-            }
+            controlsOpen: root.controlsOpen
+            onSelectWidget: (idx) => root.activateWidget(idx)
+            onToggleControls: root.controlsOpen = !root.controlsOpen
+        }
+    }
+
+    Variants {
+        model: root.primaryScreens
+
+        ControlsPopup {
+            property var modelData
+            screen: modelData
+            popupOpen: root.controlsOpen && modelData && modelData.name === root.primaryScreen
+            onDismissed: root.controlsOpen = false
         }
     }
 

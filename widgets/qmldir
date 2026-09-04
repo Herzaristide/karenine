@@ -7,3 +7,5 @@ QuickControls 1.0 QuickControls.qml
 ChromaGraph 1.0 ChromaGraph.qml
 MiniGraph 1.0 MiniGraph.qml
 Settings 1.0 Settings.qml
+NixIcon 1.0 NixIcon.qml
+ConsoleWidget 1.0 ConsoleWidget.qml

@@ -17,7 +17,8 @@ PanelWindow { // qmllint disable uncreatable-type
     readonly property real minWidth: 180
     readonly property real maxWidth: 600
 
-    WlrLayershell.layer: WlrLayer.Bottom
+    // Same layer as the LeftBar so the bar, created first, keeps the screen edge.
+    WlrLayershell.layer: WlrLayer.Top
     WlrLayershell.namespace: "quickshell-sidepanel"
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
 
@@ -34,8 +35,29 @@ PanelWindow { // qmllint disable uncreatable-type
     color: "transparent"
 
     margins { // qmllint disable unqualified unresolved-type
-        left: 8
-        bottom: 52  // laisse la place à la BottomBar horizontale
+        left: 8     // la LeftBar réserve déjà ses 44 px (exclusive zone)
+        bottom: 0
+    }
+
+    // ── Panel surface ────────────────────────────────────────────
+    // Deliberately lighter than the LeftBar's slab: the bar is always on
+    // screen and anchors the edge, the panel only visits.
+    Rectangle {
+        anchors.fill: parent
+        visible: panel.panelOpen
+        color: Theme.bgDeep
+        opacity: 0.62
+
+        Behavior on color { ColorAnimation { duration: 200; easing.type: Easing.OutCubic } }
+
+        // Only the inner edge is drawn — nothing on the bar side.
+        Rectangle {
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            width: 1
+            color: Theme.dividerColor
+        }
     }
 
     // ── Resize handle on right edge ──────────────────────────────
@@ -82,19 +104,16 @@ PanelWindow { // qmllint disable uncreatable-type
         visible: panel.panelOpen
         spacing: 0
 
-        // Always-visible controls: volume + screenshot
-        QuickControls {
-            Layout.fillWidth: true
-        }
-
         StackLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
             currentIndex: panel.activeWidget
 
+            // Les index sont figés par l'IPC (widget:N), donc les entrées
+            // retirées laissent un trou plutôt que de tout décaler.
             Item {}  // index 0 : hardware déplacé dans RightPanel
             AIPanel {}
-            NotesWidget {}
+            Item {}  // index 2 : notes retirées
             ColumnLayout {          // index 3 : métronome + accordeur
                 spacing: 8
                 Metronome {
@@ -109,6 +128,9 @@ PanelWindow { // qmllint disable uncreatable-type
                 }
             }
             MusicPlayerWidget {}
+            ConsoleWidget {          // index 5
+                active: panel.panelOpen && panel.activeWidget === 5
+            }
         }
     }
 }

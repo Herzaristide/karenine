@@ -15,13 +15,16 @@ PanelWindow { // qmllint disable uncreatable-type
     readonly property real minWidth: 180
     readonly property real maxWidth: 600
 
-    WlrLayershell.layer: WlrLayer.Bottom
+    // Same layer as the LeftBar so the bar, created first, keeps the screen edge.
+    WlrLayershell.layer: WlrLayer.Top
     WlrLayershell.namespace: "quickshell-rightpanel"
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
 
+    // Opens on the left, alongside the SidePanel — the LeftBar already
+    // reserves its own 44 px, so this stacks just past it.
     anchors {
         top: true
-        right: true
+        left: true
         bottom: true
     }
 
@@ -32,15 +35,36 @@ PanelWindow { // qmllint disable uncreatable-type
     color: "transparent"
 
     margins { // qmllint disable unqualified unresolved-type
-        right: 8
-        bottom: 52  // laisse la place à la BottomBar horizontale
+        left: 8
+        bottom: 0
     }
 
-    // ── Resize handle on left edge ───────────────────────────────
+    // ── Panel surface ────────────────────────────────────────────
+    // Deliberately lighter than the LeftBar's slab: the bar is always on
+    // screen and anchors the edge, the panel only visits.
+    Rectangle {
+        anchors.fill: parent
+        visible: panel.panelOpen
+        color: Theme.bgDeep
+        opacity: 0.62
+
+        Behavior on color { ColorAnimation { duration: 200; easing.type: Easing.OutCubic } }
+
+        // Only the inner edge is drawn — nothing on the bar side.
+        Rectangle {
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            width: 1
+            color: Theme.dividerColor
+        }
+    }
+
+    // ── Resize handle on right edge ──────────────────────────────
     MouseArea {
         id: resizeHandle
         width: 8
-        anchors.left: parent.left
+        anchors.right: parent.right
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         cursorShape: Qt.SizeHorCursor
@@ -58,7 +82,7 @@ PanelWindow { // qmllint disable uncreatable-type
         onPositionChanged: (mouse) => {
             if (!pressed) return;
             const currentGlobalX = mapToGlobal(mouse.x, 0).x;
-            const delta = startGlobalX - currentGlobalX;
+            const delta = currentGlobalX - startGlobalX;
             panel.panelWidth = Math.max(panel.minWidth,
                 Math.min(panel.maxWidth, startWidth + delta));
         }
@@ -75,15 +99,10 @@ PanelWindow { // qmllint disable uncreatable-type
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 8
-        anchors.leftMargin: 12
-        anchors.rightMargin: 0
+        anchors.leftMargin: 0
+        anchors.rightMargin: 12
         visible: panel.panelOpen
         spacing: 0
-
-        // Always-visible controls: volume + screenshot
-        QuickControls {
-            Layout.fillWidth: true
-        }
 
         HardwareStats {
             Layout.fillWidth: true

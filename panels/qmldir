@@ -1,4 +1,5 @@
-BottomBar 1.0 BottomBar.qml
+LeftBar 1.0 LeftBar.qml
 SidePanel 1.0 SidePanel.qml
 RightPanel 1.0 RightPanel.qml
 SettingsWindow 1.0 SettingsWindow.qml
+ControlsPopup 1.0 ControlsPopup.qml
