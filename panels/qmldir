@@ -3,3 +3,4 @@ SidePanel 1.0 SidePanel.qml
 RightPanel 1.0 RightPanel.qml
 SettingsWindow 1.0 SettingsWindow.qml
 ControlsPopup 1.0 ControlsPopup.qml
+RightDock 1.0 RightDock.qml

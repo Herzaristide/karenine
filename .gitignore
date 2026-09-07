@@ -24,3 +24,6 @@ Thumbs.db
 
 # anna Rust build artifacts
 anna/target/
+
+# Claude Code
+.claude/

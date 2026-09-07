@@ -1,2 +1,12 @@
 singleton Theme 1.0 Theme.qml
 singleton Battery 1.0 Battery.qml
+singleton Fuzzy 1.0 Fuzzy.qml
+singleton Audio 1.0 Audio.qml
+singleton Search 1.0 Search.qml
+AppSource 1.0 AppSource.qml
+FileSource 1.0 FileSource.qml
+WebSource 1.0 WebSource.qml
+SettingSource 1.0 SettingSource.qml
+ClaudeSource 1.0 ClaudeSource.qml
+singleton DefaultApps 1.0 DefaultApps.qml
+singleton DragState 1.0 DragState.qml

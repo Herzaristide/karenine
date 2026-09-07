@@ -1,0 +1,9 @@
+CardFrame 1.0 CardFrame.qml
+ActionPill 1.0 ActionPill.qml
+AppCard 1.0 AppCard.qml
+FileCard 1.0 FileCard.qml
+WebCard 1.0 WebCard.qml
+SettingCard 1.0 SettingCard.qml
+IconPill 1.0 IconPill.qml
+ConversationCard 1.0 ConversationCard.qml
+GenericCard 1.0 GenericCard.qml

@@ -12,8 +12,12 @@ configuration NixOS qui consomme ce dépôt comme *input de flake*.
 shell.qml            Point d'entrée Quickshell (barre + panneaux, IPC via FIFO)
 services/            Singletons transverses
   Theme.qml            État de thème (lit le daemon paletted, defaults intégrés)
+  Search.qml           Agrégateur de recherche + <Type>Source.qml (app, fichier,
+                       web, paramètre, conversation), Fuzzy, DefaultApps, Audio
 panels/              Chrome de haut niveau (fenêtres Wayland)
   BottomBar, SidePanel, RightPanel, SettingsWindow
+  RightDock            Dock au survol du bord droit : navigation + recherche
+  cards/               Cartes du dock, une par type de résultat
 widgets/             Contenu des panneaux
   HardwareStats, NotesWidget, Metronome, Tuner, MusicPlayerWidget,
   QuickControls, ChromaGraph, MiniGraph, Settings, ConsoleWidget
@@ -31,7 +35,8 @@ Tout le backend est le daemon Rust `anna` : les widgets s'y connectent via un
 **socket Unix** (`$XDG_RUNTIME_DIR/anna.sock`) et échangent du JSON ligne par
 ligne (type `Quickshell.Io.Socket`). Plus aucun script bash/python ni dépendance
 `parec`/`numpy`. L'audio (accordeur, chromagramme, métronome) est natif via
-`cpal` + `rustfft`, à la fréquence réelle du périphérique.
+`cpal` + `rustfft`, à la fréquence réelle du périphérique. (Le dock de droite,
+lui, appelle quelques outils du système — voir *Dépendances externes* plus bas.)
 
 ### Console (widget 5)
 
@@ -52,6 +57,26 @@ curseur : les programmes plein écran (`vim`, `htop`, `less`) ne fonctionnent pa
 — `PAGER=cat` évite que les plus courants s'y invitent par accident, et `[stop]`
 règle le reste. Un vrai terminal demande une machine à états VT et une grille de
 cellules, ce qui relève d'`anna`, pas du QML.
+
+## Dépendances externes
+
+Le backend des widgets est entièrement `anna` (voir ci-dessus), mais le dock de
+droite (`panels/RightDock.qml`) pilote des outils du système. Ils sont appelés par
+leur nom dans le `$PATH` ; aucun n'est requis pour démarrer le shell, chacun ne
+désactive que sa propre fonction s'il manque.
+
+| Outil | Utilisé par | Sans lui |
+| --- | --- | --- |
+| `fd` | `services/FileSource.qml` | la recherche de fichiers ne renvoie rien |
+| `jq` | `services/ClaudeSource.qml` | les conversations Claude ne sont pas indexées |
+| `wpctl` (wireplumber) | `services/Audio.qml` | la carte volume n'affiche ni ne règle rien |
+| `grimblast` | `services/SettingSource.qml` | la carte capture d'écran ne fait rien |
+| `xdg-mime`, `xdg-open` (xdg-utils) | `services/DefaultApps.qml`, `FileSource` | les rôles retombent sur le premier outil connu du `$PATH` |
+| `claude-desktop` | `services/ClaudeSource.qml` | les sessions Claude Desktop ne s'ouvrent pas (celles du CLI, si) |
+
+L'éditeur, l'explorateur, le terminal et le navigateur ne sont **jamais** des noms
+en dur : `DefaultApps` les résout depuis `xdg-mime` et `$TERMINAL`, avec un repli
+sur le premier candidat connu trouvé dans le `$PATH`.
 
 ## Configuration
 

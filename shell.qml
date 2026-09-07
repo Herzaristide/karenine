@@ -131,6 +131,18 @@ ShellRoot {
     Variants {
         model: root.primaryScreens
 
+        RightDock {
+            property var modelData
+            screen: modelData
+            active: modelData && modelData.name === root.primaryScreen
+            // Le RightPanel tient le même bord : le dock lui cède la place.
+            blocked: root.rightOpen
+        }
+    }
+
+    Variants {
+        model: root.primaryScreens
+
         SettingsWindow {
             property var modelData
             screen: modelData
