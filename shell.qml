@@ -13,6 +13,8 @@ ShellRoot {
     property int activeWidget: 0
     property bool rightOpen: false
     property bool controlsOpen: false
+    // Dock de droite maintenu ouvert au clavier (cf. commande IPC "dock").
+    property bool dockPinned: false
 
     // Toggle a widget. Only one panel is ever open: opening either side
     // closes the other. Shared by the FIFO listener and the bar's buttons.
@@ -32,6 +34,7 @@ ShellRoot {
 
     // ── IPC externe via FIFO /tmp/qs-panel.fifo ──────────────────────────
     //   echo "widget:N" > /tmp/qs-panel.fifo   → bascule le widget N
+    //   echo "dock"     > /tmp/qs-panel.fifo   → bascule le dock de droite
     //   echo "controls" > /tmp/qs-panel.fifo   → bascule le popup de contrôles
     //   echo "close"    > /tmp/qs-panel.fifo   → ferme le panel
     //   N : 0=Stats  1=IA  2=Notes  3=Pitch  4=Music  5=Console
@@ -51,12 +54,15 @@ ShellRoot {
                     var idx = parseInt(msg.substring(7));
                     if (!isNaN(idx))
                         root.activateWidget(idx);
+                } else if (msg === "dock") {
+                    root.dockPinned = !root.dockPinned;
                 } else if (msg === "controls") {
                     root.controlsOpen = !root.controlsOpen;
                 } else if (msg === "close") {
                     root.panelOpen = false;
                     root.rightOpen = false;
                     root.controlsOpen = false;
+                    root.dockPinned = false;
                 }
             }
         }
@@ -135,8 +141,8 @@ ShellRoot {
             property var modelData
             screen: modelData
             active: modelData && modelData.name === root.primaryScreen
-            // Le RightPanel tient le même bord : le dock lui cède la place.
-            blocked: root.rightOpen
+            pinned: root.dockPinned
+            onCloseRequested: root.dockPinned = false
         }
     }
 

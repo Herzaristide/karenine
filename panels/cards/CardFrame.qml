@@ -33,6 +33,11 @@ Item {
     readonly property bool hovered: frameHover.hovered
     readonly property bool pressed: frameTap.pressed
 
+    // Sélection au clavier (flèches du dock). La carte s'allume exactement
+    // comme au survol : il n'y a jamais qu'un seul « ici » à l'écran.
+    property bool selected: false
+    readonly property bool highlighted: frame.hovered || frame.selected
+
     // En carré la colonne de texte est étroite : le titre passe sur deux lignes.
     readonly property bool square: width < 200
 
@@ -47,7 +52,7 @@ Item {
 
     signal primaryActivated()
 
-    scale: pressed ? 0.96 : (hovered ? 1.03 : 1.0)
+    scale: pressed ? 0.96 : (highlighted ? 1.03 : 1.0)
 
     Behavior on scale {
         NumberAnimation { duration: 240; easing.type: Easing.OutBack; easing.overshoot: 1.6 }
@@ -113,8 +118,8 @@ Item {
         height: textCol.implicitHeight + 10
         radius: 9
 
-        color: Theme.darkMode ? Qt.rgba(0, 0, 0, frame.hovered ? 0.52 : 0.42)
-                              : Qt.rgba(1, 1, 1, frame.hovered ? 0.78 : 0.66)
+        color: Theme.darkMode ? Qt.rgba(0, 0, 0, frame.highlighted ? 0.52 : 0.42)
+                              : Qt.rgba(1, 1, 1, frame.highlighted ? 0.78 : 0.66)
 
         Behavior on color { ColorAnimation { duration: 180 } }
 
@@ -135,7 +140,7 @@ Item {
                 width: frame.square ? frame.textAvail
                                     : Math.min(implicitWidth, frame.textAvail)
                 text: frame.title
-                color: frame.hovered ? frame.tone : Theme.textPrimary
+                color: frame.highlighted ? frame.tone : Theme.textPrimary
                 font.family: "JetBrains Mono"
                 font.pixelSize: 13
                 font.weight: Font.DemiBold
@@ -183,7 +188,7 @@ Item {
         anchors.bottom: parent.bottom
         spacing: 5
 
-        opacity: frame.hovered ? 1.0 : 0.45
+        opacity: frame.highlighted ? 1.0 : 0.45
         Behavior on opacity { NumberAnimation { duration: 160 } }
     }
 

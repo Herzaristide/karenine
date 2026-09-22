@@ -28,10 +28,28 @@ Scope {
     property var screen: null
     property bool active: true
 
-    // Le RightPanel occupe le même bord : tant qu'il est ouvert, le dock se
-    // retire complètement — bande d'entrée comprise — plutôt que de se glisser
-    // par-dessus lui.
-    property bool blocked: false
+    // Ouverture au clavier (« dock » sur le FIFO IPC, câblé sur le tap de
+    // Super). Le dock reste alors ouvert sans curseur dessus, jusqu'au tap
+    // suivant ou à Échap ; le survol garde son comportement habituel.
+    // Le dock ne se déverrouille jamais lui-même : il émet closeRequested()
+    // et c'est shell.qml, seul propriétaire de l'état, qui retombe pinned.
+    property bool pinned: false
+    signal closeRequested()
+
+    // ── Sélection clavier ────────────────────────────────────────
+    // Le champ de recherche garde le focus tant que le dock est ouvert ; les
+    // flèches promènent une sélection dans la vue affichée (les résultats, ou
+    // le dossier courant) et Entrée active la carte retenue. -1 = rien de
+    // sélectionné : Entrée retombe alors sur le premier résultat, comme avant.
+    property int selectedIndex: -1
+
+    readonly property int itemCount: Search.active
+                                     ? Search.results.length
+                                     : Math.min(folderModel.count, dock.browseCap)
+
+    // Le quadrillage tient deux cartes par rangée, la liste une seule : c'est
+    // ce pas qui sépare « une ligne plus bas » de « une carte plus loin ».
+    readonly property int columns: dock.viewMode === dock.modeGrid ? 2 : 1
 
     // ── Design tokens ────────────────────────────────────────────
     readonly property int hotZone:   6
@@ -100,12 +118,24 @@ Scope {
         }
     }
 
-    onBlockedChanged: if (dock.blocked) dock.dockOpen = false
+    onPinnedChanged: {
+        if (dock.pinned) {
+            openTimer.stop();
+            closeTimer.stop();
+            dock.dockOpen = true;
+        } else if (!dock.pointerInside) {
+            dock.dockOpen = false;
+        }
+    }
 
     onDockOpenChanged: {
         if (dockOpen) {
             graceTimer.restart();
+            // Le dock s'ouvre prêt à écrire : la surface est en OnDemand, elle
+            // ne réclame le clavier qu'à cet instant.
+            searchField.forceActiveFocus();
         } else {
+            dock.selectedIndex = -1;
             searchField.text = "";
             Search.clear();
             // La fenêtre reste visible une fois le dock refermé : sans ce
@@ -118,7 +148,7 @@ Scope {
     Timer {
         id: openTimer
         interval: 90
-        onTriggered: if (!dock.blocked) dock.dockOpen = true
+        onTriggered: dock.dockOpen = true
     }
 
     // La fermeture est différée *et* revérifiée : un couple leave/enter
@@ -127,6 +157,10 @@ Scope {
         id: closeTimer
         interval: 340
         onTriggered: {
+            // Ouvert au clavier : c'est un nouveau tap (ou Échap) qui referme,
+            // jamais la sortie du curseur.
+            if (dock.pinned)
+                return;
             // Un glisser en cours emmène le curseur hors du dock : le fermer
             // détruirait la carte source et annulerait le geste.
             if (graceTimer.running || DragState.active) {
@@ -146,6 +180,9 @@ Scope {
     // ── Navigation ───────────────────────────────────────────────
     readonly property url homeFolder: StandardPaths.writableLocation(StandardPaths.HomeLocation)
     property url currentFolder: homeFolder
+
+    // Changer de dossier rebat les cartes : la sélection repart de « rien ».
+    onCurrentFolderChanged: dock.selectedIndex = -1
 
     readonly property string folderLabel: {
         var parts = currentFolder.toString().split("/");
@@ -203,12 +240,91 @@ Scope {
         return dock.tones[h % dock.tones.length];
     }
 
+    // ── Déplacement de la sélection ──────────────────────────────
+    // `delta` compte en cartes : ±1 pour la carte voisine, ±columns pour la
+    // rangée. Depuis « rien de sélectionné », on entre par le haut ou par le
+    // bas de la liste selon le sens.
+    function moveSelection(delta) {
+        if (dock.itemCount === 0) {
+            dock.selectedIndex = -1;
+            return;
+        }
+        var next = dock.selectedIndex < 0
+                   ? (delta > 0 ? 0 : dock.itemCount - 1)
+                   : dock.selectedIndex + delta;
+        dock.selectedIndex = Math.max(0, Math.min(dock.itemCount - 1, next));
+        dock.revealSelection();
+    }
+
+    // Les deux vues ont leur défilement piloté à la main (interactive: false) :
+    // amener la sélection à l'écran, c'est viser la même animation que la
+    // molette, pas appeler positionViewAtIndex.
+    function revealSelection() {
+        if (dock.selectedIndex < 0)
+            return;
+
+        var view = Search.active ? results : grid;
+        var anim = Search.active ? resultScroll : browseScroll;
+
+        var top = Math.floor(dock.selectedIndex / dock.columns) * dock.cellH;
+        var bottom = top + dock.cellH;
+        var from = anim.running ? anim.to : view.contentY;
+        var target = from;
+
+        if (top < from)
+            target = top;
+        else if (bottom > from + view.height)
+            target = bottom - view.height;
+
+        target = Math.max(0, Math.min(Math.max(0, view.contentHeight - view.height), target));
+        if (Math.abs(target - from) < 0.5)
+            return;
+
+        anim.to = target;
+        anim.restart();
+    }
+
+    // Entrée : ouvrir la carte sélectionnée. En navigation, un dossier se
+    // parcourt au lieu de s'ouvrir — même règle qu'au clic (cf. FileCard).
+    function activateSelection() {
+        if (Search.active) {
+            var item = dock.selectedIndex >= 0 && dock.selectedIndex < Search.results.length
+                       ? Search.results[dock.selectedIndex]
+                       : Search.firstItem;
+            if (!item)
+                return;
+            Search.activate(item, item.type === "conversation"
+                                  && item.payload.kind !== "desktop" ? "resume" : "open");
+            return;
+        }
+
+        if (dock.selectedIndex < 0 || dock.selectedIndex >= folderModel.count)
+            return;
+
+        var path = folderModel.get(dock.selectedIndex, "filePath");
+        if (folderModel.get(dock.selectedIndex, "fileIsDir")) {
+            dock.currentFolder = dock.folderUrl(path);
+        } else {
+            Search.activate({
+                "type": "file",
+                "payload": { "path": path, "isDir": false }
+            }, "open");
+        }
+    }
+
+    // Une requête qui change rebat les cartes : la sélection ne veut plus rien
+    // dire, on repart de « rien ».
+    Connections {
+        target: Search
+        function onQueryChanged() { dock.selectedIndex = -1; }
+    }
+
     // ── Edge strip ───────────────────────────────────────────────
     PanelWindow { // qmllint disable uncreatable-type
         id: edge
 
         screen: dock.screen
-        visible: dock.active && !dock.blocked
+        visible: dock.active
 
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.namespace: "quickshell-dockedge"
@@ -232,13 +348,17 @@ Scope {
         id: panel
 
         screen: dock.screen
-        visible: dock.active && !dock.blocked
+        visible: dock.active
 
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.namespace: "quickshell-rightdock"
-        // OnDemand : le champ de recherche a besoin du clavier, mais seulement
-        // une fois cliqué. Survoler le dock ne vole jamais le focus.
-        WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+        // Ouvert au clavier, le dock prend le focus pour de bon : en OnDemand,
+        // le compositeur ne route les frappes vers une layer qu'une fois
+        // cliquée — le champ aurait le focus côté Qt sans jamais rien recevoir.
+        // Au survol on reste en OnDemand : passer la souris au bord droit ne
+        // doit pas détourner ce qu'on est en train de taper ailleurs.
+        WlrLayershell.keyboardFocus: dock.pinned ? WlrKeyboardFocus.Exclusive
+                                                 : WlrKeyboardFocus.OnDemand
 
         anchors { top: true; right: true; bottom: true }
 
@@ -404,19 +524,52 @@ Scope {
 
                     onTextChanged: Search.query = text
 
-                    Keys.onReturnPressed: {
-                        var first = Search.firstItem;
-                        if (first)
-                            Search.activate(first, first.type === "conversation"
-                                                   && first.payload.kind !== "desktop"
-                                                   ? "resume" : "open");
+                    Keys.onReturnPressed: dock.activateSelection()
+                    Keys.onEnterPressed: dock.activateSelection()
+
+                    // Haut/bas = la rangée voisine, dans les deux dispositions.
+                    Keys.onUpPressed: dock.moveSelection(-dock.columns)
+                    Keys.onDownPressed: dock.moveSelection(dock.columns)
+
+                    // Gauche/droite ne servent à la sélection qu'en quadrillage
+                    // et sur un champ vide : dès qu'il y a du texte, elles
+                    // restent les flèches du curseur.
+                    Keys.onLeftPressed: (event) => {
+                        if (dock.columns > 1 && searchField.text.length === 0)
+                            dock.moveSelection(-1);
+                        else
+                            event.accepted = false;
+                    }
+
+                    Keys.onRightPressed: (event) => {
+                        if (dock.columns > 1 && searchField.text.length === 0)
+                            dock.moveSelection(1);
+                        else
+                            event.accepted = false;
+                    }
+
+                    // Champ vide, en navigation : Retour arrière remonte d'un
+                    // cran, le geste attendu dans un explorateur.
+                    Keys.onPressed: (event) => {
+                        if (event.key === Qt.Key_Backspace
+                                && searchField.text.length === 0
+                                && !Search.active
+                                && dock.currentFolder.toString() !== "file:///") {
+                            dock.currentFolder = folderModel.parentFolder;
+                            event.accepted = true;
+                        }
                     }
 
                     Keys.onEscapePressed: {
-                        if (text.length > 0)
+                        if (text.length > 0) {
                             text = "";
-                        else
+                        } else {
                             focus = false;
+                            // Ouvert au clavier : Échap referme aussi le dock,
+                            // sinon il resterait épinglé sans plus rien à faire.
+                            if (dock.pinned)
+                                dock.closeRequested();
+                        }
                     }
                 }
 
@@ -752,6 +905,16 @@ Scope {
                                     dock.currentFolder = dock.folderUrl(path);
                                 }
                             }
+
+                            // `selected` ne peut pas passer par setSource : les
+                            // propriétés initiales sont posées une fois pour
+                            // toutes, sans lien vivant avec la sélection.
+                            Binding {
+                                target: cardLoader.item || null
+                                property: "selected"
+                                value: dock.selectedIndex === browseCell.index
+                                restoreMode: Binding.RestoreNone
+                            }
                         }
                     }
                 }
@@ -826,6 +989,7 @@ Scope {
                     id: resultCell
 
                     required property var modelData
+                    required property int index
 
                     width: dock.cellW
                     height: dock.cellH
@@ -854,6 +1018,15 @@ Scope {
                         }
 
                         Component.onCompleted: reload()
+
+                        // Même raison qu'en navigation : la sélection doit
+                        // rester vivante après le setSource.
+                        Binding {
+                            target: resultLoader.item || null
+                            property: "selected"
+                            value: dock.selectedIndex === resultCell.index
+                            restoreMode: Binding.RestoreNone
+                        }
                     }
                 }
             }
