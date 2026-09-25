@@ -2,12 +2,17 @@ import QtQuick
 import "../../services"
 
 // Composition commune à toutes les cartes, quel que soit le mode d'affichage :
-// une icône à gauche, le texte à sa droite, les actions en dessous. Aucun fond,
-// aucun contour — ce sont l'icône et la couleur du titre qui portent le survol.
+// l'icône occupe toute la tuile, le nom et le type sont posés par-dessus en
+// haut, les actions par-dessus en bas. Aucun fond, aucun contour — c'est
+// l'icône qui fait la carte, et sa couleur de titre qui porte le survol.
+//
+// Le texte et les boutons se superposent donc à l'image : ils gardent chacun
+// leur plaque translucide, qui est ce qui les rend lisibles quelle que soit
+// l'icône dessous.
 //
 // Une carte concrète ne fait que renseigner `title`, `subtitle`, l'icône (image
 // ou glyphe dessiné) et sa liste d'actions ; la géométrie vient du dock, qui
-// donne à ce cadre soit une ligne allongée, soit un carré.
+// donne à ce cadre une tuile.
 Item {
     id: frame
 
@@ -38,17 +43,29 @@ Item {
     property bool selected: false
     readonly property bool highlighted: frame.hovered || frame.selected
 
-    // En carré la colonne de texte est étroite : le titre passe sur deux lignes.
-    readonly property bool square: width < 200
+    // Le carrousel ne laisse agir que la carte du centre. Ailleurs, la pression
+    // ne lance rien : elle réclame le centre, et c'est le carrousel qui l'y
+    // amène. Une carte hors du dock garde le comportement direct.
+    property bool primaryEnabled: true
+    signal focusRequested()
 
-    // L'icône occupe toute la hauteur de la carte. En carré, cette règle la
-    // ferait manger toute la largeur : on la plafonne pour garder au texte une
-    // colonne utilisable.
-    readonly property real iconSize: Math.min(height, width * 0.42)
+    // Le geste d'activation, quel que soit le type de carte : c'est ici qu'on
+    // tranche entre « agir » et « venir au centre », et nulle part ailleurs.
+    function primaryPressed() {
+        if (frame.primaryEnabled)
+            frame.primaryActivated();
+        else
+            frame.focusRequested();
+    }
 
-    // Largeur utile pour le texte, une fois l'icône, l'écart et les marges de
-    // la plaque retirés.
-    readonly property real textAvail: Math.max(40, width - iconSize - 10 - 16)
+    // Largeur utile pour le texte, une fois les marges de la plaque retirées.
+    // Elle ne dépend que du cadre : la plaque, elle, se règle sur le texte, et
+    // la faire entrer dans ce calcul bouclerait.
+    readonly property real textAvail: Math.max(40, width - 16)
+
+    // L'icône prend toute la tuile ; le côté le plus court la borne, puisqu'elle
+    // garde ses proportions.
+    readonly property real iconSize: Math.min(frame.width, frame.height)
 
     signal primaryActivated()
 
@@ -58,25 +75,24 @@ Item {
         NumberAnimation { duration: 240; easing.type: Easing.OutBack; easing.overshoot: 1.6 }
     }
 
+    // ── Icône ────────────────────────────────────────────────────
+    // Déclarée en premier : tout le reste de la carte se pose dessus.
     Item {
         id: iconBox
 
-        width: frame.iconSize
-        height: frame.iconSize
-        anchors.left: parent.left
-        anchors.verticalCenter: parent.verticalCenter
+        anchors.fill: parent
         clip: frame.iconCrop
 
         Image {
             id: iconImage
 
             anchors.fill: parent
-            anchors.margins: frame.iconCrop ? 0 : frame.iconSize * 0.10
+            anchors.margins: frame.iconCrop ? 0 : frame.iconSize * 0.06
             source: frame.iconSource
             visible: frame.iconSource.length > 0 && status !== Image.Error
 
             // `sourceSize` borne le décodage : une photo de 4000 px n'est jamais
-            // décompressée en entier pour une vignette de 94. `asynchronous`
+            // décompressée en entier pour une vignette de 126. `asynchronous`
             // garde le chargement hors du fil de rendu.
             sourceSize.width: frame.iconSize
             sourceSize.height: frame.iconSize
@@ -103,50 +119,53 @@ Item {
         }
     }
 
-    // Plaque de lisibilité : elle épouse le texte, pas la carte. Sans fond de
-    // carte, un titre posé sur un fond d'écran clair devient illisible ; une
-    // plaque qui ne dépasse pas du texte règle ça sans rendre la carte lourde.
+    // Déclaré avant le texte et la rangée d'actions, donc dessous : ce qu'on
+    // pose ici — une zone de glissé, typiquement — peut couvrir toute la carte
+    // sans avaler les pressions destinées aux boutons.
+    Item {
+        id: extraSlot
+        anchors.fill: parent
+    }
+
+    // Plaque de lisibilité : elle épouse le texte, pas la carte. Posée sur
+    // l'icône, c'est elle qui garde un titre lisible sur une vignette claire —
+    // et elle ne déborde pas du texte, donc l'icône reste visible autour.
     Rectangle {
         id: textPlate
 
-        anchors.left: iconBox.right
-        anchors.leftMargin: 10
         anchors.top: parent.top
-        anchors.topMargin: frame.square ? 0 : 3
+        anchors.horizontalCenter: parent.horizontalCenter
 
         width: Math.max(titleText.width, subtitleText.width) + 16
-        height: textCol.implicitHeight + 10
+        height: textCol.implicitHeight + 8
         radius: 9
 
-        color: Theme.darkMode ? Qt.rgba(0, 0, 0, frame.highlighted ? 0.52 : 0.42)
-                              : Qt.rgba(1, 1, 1, frame.highlighted ? 0.78 : 0.66)
+        color: Theme.darkMode ? Qt.rgba(0, 0, 0, frame.highlighted ? 0.66 : 0.54)
+                              : Qt.rgba(1, 1, 1, frame.highlighted ? 0.84 : 0.74)
 
         Behavior on color { ColorAnimation { duration: 180 } }
 
         Column {
             id: textCol
 
-            anchors.left: parent.left
-            anchors.leftMargin: 8
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 2
+            anchors.centerIn: parent
+            spacing: 1
 
             Text {
                 id: titleText
 
-                // En carré on fixe la largeur pour pouvoir replier sur deux
-                // lignes ; en liste on épouse le texte, ce qui donne à la
-                // plaque sa largeur.
-                width: frame.square ? frame.textAvail
-                                    : Math.min(implicitWidth, frame.textAvail)
+                // La tuile est étroite : le titre se replie sur deux lignes
+                // plutôt que d'être amputé dès le premier mot un peu long.
+                width: Math.min(implicitWidth, frame.textAvail)
                 text: frame.title
                 color: frame.highlighted ? frame.tone : Theme.textPrimary
                 font.family: "JetBrains Mono"
-                font.pixelSize: 13
+                font.pixelSize: 12
                 font.weight: Font.DemiBold
                 font.letterSpacing: 0.2
-                wrapMode: frame.square ? Text.WrapAnywhere : Text.NoWrap
-                maximumLineCount: frame.square ? 2 : 1
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WrapAnywhere
+                maximumLineCount: 2
                 elide: Text.ElideRight
 
                 Behavior on color { ColorAnimation { duration: 150 } }
@@ -155,40 +174,35 @@ Item {
             Text {
                 id: subtitleText
 
-                width: frame.square ? frame.textAvail
-                                    : Math.min(implicitWidth, frame.textAvail)
+                width: Math.min(implicitWidth, frame.textAvail)
                 text: frame.subtitle
                 color: Theme.textSecondary
                 font.family: "JetBrains Mono"
-                font.pixelSize: 10
+                font.pixelSize: 9
                 font.letterSpacing: 0.1
-                wrapMode: frame.square ? Text.WrapAnywhere : Text.NoWrap
-                maximumLineCount: frame.square ? 2 : 1
+                horizontalAlignment: Text.AlignHCenter
+                maximumLineCount: 1
                 // Un chemin se lit par la fin : c'est le début qu'on ampute.
-                elide: frame.square ? Text.ElideRight : Text.ElideLeft
+                elide: Text.ElideLeft
                 visible: text.length > 0
             }
         }
     }
 
-    // Déclaré avant la rangée d'actions, donc dessous : ce qu'on pose ici — une
-    // zone de glissé, typiquement — peut couvrir toute la carte sans avaler les
-    // pressions destinées aux boutons.
-    Item {
-        id: extraSlot
-        anchors.fill: parent
-    }
-
-    // Les actions restent visibles mais en retrait ; le survol les révèle
-    // franchement, sans que la carte change de taille.
+    // Les actions n'appartiennent qu'à la carte retenue — celle du centre du
+    // carrousel. Ailleurs elles ne servent à rien : on ne peut pas les viser
+    // sans d'abord amener la carte au milieu, et vingt rangées de boutons sur
+    // la bande ne font que du bruit. Déclarées en dernier : elles passent
+    // au-dessus de l'icône et de la couche de glissé.
     Row {
         id: actionRow
 
-        anchors.right: parent.right
         anchors.bottom: parent.bottom
+        anchors.horizontalCenter: parent.horizontalCenter
         spacing: 5
 
-        opacity: frame.highlighted ? 1.0 : 0.45
+        opacity: frame.selected ? 1.0 : 0.0
+        visible: opacity > 0.001
         Behavior on opacity { NumberAnimation { duration: 160 } }
     }
 
@@ -200,6 +214,6 @@ Item {
     TapHandler {
         id: frameTap
         enabled: frame.tapEnabled
-        onTapped: frame.primaryActivated()
+        onTapped: frame.primaryPressed()
     }
 }

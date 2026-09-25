@@ -20,35 +20,35 @@ PanelWindow { // qmllint disable uncreatable-type
     signal selectWidget(int index)
     signal toggleControls()
 
-    // Top, not Bottom: on Bottom the bar is painted under the windows and
+    // Top layer: the bar must stay painted above the windows, otherwise it
     // disappears behind them while Hyprland animates a workspace switch.
     WlrLayershell.layer: WlrLayer.Top
-    WlrLayershell.namespace: "quickshell-leftbar"
+    WlrLayershell.namespace: "quickshell-topbar"
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
 
     anchors {
         top: true
         left: true
-        bottom: true
+        right: true
     }
 
-    // The surface is wider than the bar itself so the background can bulge out
-    // around the flake; only `barWidth` is reserved from the workspace, and the
+    // The surface is taller than the bar itself so the background can bulge out
+    // around the flake; only `barHeight` is reserved from the workspace, and the
     // input mask keeps the overhang click-through.
-    readonly property int barWidth: 44
-    implicitWidth: 56
-    exclusiveZone: barWidth
+    readonly property int barHeight: 44
+    implicitHeight: 56
+    exclusiveZone: barHeight
     color: "transparent"
 
     mask: Region { // qmllint disable unqualified
         x: 0
         y: 0
-        width: window.barWidth
-        height: window.height
+        width: window.width
+        height: window.barHeight
     }
 
     // ── Design tokens ────────────────────────────────────────────
-    readonly property int  pillW:   32          // uniform width of every group
+    readonly property int  pillH:   32          // uniform thickness of every group
     readonly property int  pad:     4           // inner padding along the bar axis
     readonly property int  cell:    32          // one segment / hit-target
     readonly property int  capInset: 4          // capsule inset across the bar
@@ -67,22 +67,22 @@ PanelWindow { // qmllint disable uncreatable-type
     }
 
     // ── Flake geometry ───────────────────────────────────────────
-    // The flake sits left of the bar's centre so it bleeds off the screen
+    // The flake sits above the bar's centre line so it bleeds off the screen
     // edge; the background bulge is a slightly larger hexagon sharing that
     // centre, so its two visible edges run parallel to the flake's own arms.
     readonly property int  logoSize:   56
     readonly property real logoOffset: -8
-    readonly property real hexCx: barWidth / 2 + logoOffset
-    readonly property real hexCy: height / 2
+    readonly property real hexCx: width / 2
+    readonly property real hexCy: barHeight / 2 + logoOffset
     readonly property real hexR:  38
 
-    // Upper-right vertex of that hexagon, and where the edge running from it
-    // down to the right-hand tip crosses the bar's own edge.
-    readonly property real hexVertexX: hexCx + hexR / 2
-    readonly property real hexVertexY: hexCy - hexR * 0.8660254
-    readonly property real hexTipX:    hexCx + hexR
-    readonly property real hexEdgeY: hexVertexY
-        + (hexCy - hexVertexY) * ((barWidth - hexVertexX) / (hexTipX - hexVertexX))
+    // Lower-left vertex of that hexagon, and where the edge running from it
+    // across to the bottom tip crosses the bar's own edge.
+    readonly property real hexVertexX: hexCx - hexR * 0.8660254
+    readonly property real hexVertexY: hexCy + hexR / 2
+    readonly property real hexTipY:    hexCy + hexR
+    readonly property real hexEdgeX: hexVertexX
+        + (hexCx - hexVertexX) * ((barHeight - hexVertexY) / (hexTipY - hexVertexY))
 
     // Apple-ish spring for anything that slides between positions —
     // a tiny overshoot reads as "settling", not bouncy.
@@ -93,7 +93,7 @@ PanelWindow { // qmllint disable uncreatable-type
         return romanNumerals[num - 1] || "";
     }
 
-    // Top group — one connected control. Icons drawn on the flake's own grid:
+    // Left group — one connected control. Icons drawn on the flake's own grid:
     // 60° angles, constant stroke, bevelled ends (see assets/icons).
     readonly property var appButtons: [
         { icon: Qt.resolvedUrl("../assets/icons/ai.svg"),        widget: 1 },
@@ -104,8 +104,8 @@ PanelWindow { // qmllint disable uncreatable-type
 
     // ── Bar surface ───────────────────────────────────────────────
     // One slab behind the whole bar — the groups themselves are bare, only
-    // the accent capsules and hover halos sit on top of it. Its right edge
-    // steps out into a point around the flake, along the hexagon's edges.
+    // the accent capsules and hover halos sit on top of it. Its bottom edge
+    // steps down into a point around the flake, along the hexagon's edges.
     Shape {
         anchors.fill: parent
         preferredRendererType: Shape.CurveRenderer
@@ -118,17 +118,17 @@ PanelWindow { // qmllint disable uncreatable-type
 
             startX: 0
             startY: 0
-            PathLine { x: window.barWidth; y: 0 }
-            PathLine { x: window.barWidth; y: window.hexEdgeY }
-            PathLine { x: window.hexTipX;  y: window.hexCy }
-            PathLine { x: window.barWidth; y: 2 * window.hexCy - window.hexEdgeY }
-            PathLine { x: window.barWidth; y: window.height }
-            PathLine { x: 0;               y: window.height }
+            PathLine { x: window.width; y: 0 }
+            PathLine { x: window.width; y: window.barHeight }
+            PathLine { x: 2 * window.hexCx - window.hexEdgeX; y: window.barHeight }
+            PathLine { x: window.hexCx;    y: window.hexTipY }
+            PathLine { x: window.hexEdgeX; y: window.barHeight }
+            PathLine { x: 0;               y: window.barHeight }
         }
     }
 
     // ── NixOS snowflake — workspace indicator, centered ───────────
-    // Deliberately wider than the bar and pushed left so it bleeds off the
+    // Deliberately taller than the bar and pushed up so it bleeds off the
     // screen edge. It turns once per workspace step while the numeral at its
     // hub tracks the current workspace.
     Item {
@@ -261,46 +261,46 @@ PanelWindow { // qmllint disable uncreatable-type
         }
     }
 
-    ColumnLayout {
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
+    RowLayout {
         anchors.left: parent.left
-        anchors.topMargin: 12
-        anchors.bottomMargin: 12
-        width: window.barWidth   // stay inside the bar, not the overhang
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.leftMargin: 12
+        anchors.rightMargin: 12
+        height: window.barHeight   // stay inside the bar, not the overhang
         spacing: 0
 
-        // ── Top connected app group ───────────────────────────────
+        // ── Left connected app group ──────────────────────────────
         Item {
             id: appGroup
-            Layout.alignment: Qt.AlignHCenter
-            Layout.preferredWidth:  window.pillW
-            Layout.preferredHeight: window.appButtons.length * window.cell + window.pad * 2
+            Layout.alignment: Qt.AlignVCenter
+            Layout.preferredWidth:  window.appButtons.length * window.cell + window.pad * 2
+            Layout.preferredHeight: window.pillH
 
-            // Row of the active widget. Looked up rather than derived from the
-            // widget id: the ids are fixed by the IPC protocol and no longer
-            // match the row order now that Notes is gone.
-            readonly property int activeRow: {
+            // Column of the active widget. Looked up rather than derived from
+            // the widget id: the ids are fixed by the IPC protocol and no longer
+            // match the column order now that Notes is gone.
+            readonly property int activeCol: {
                 for (let i = 0; i < window.appButtons.length; i++)
                     if (window.appButtons[i].widget === window.activeWidget)
                         return i;
                 return -1;
             }
 
-            readonly property bool hasActive: window.panelOpen && activeRow >= 0
+            readonly property bool hasActive: window.panelOpen && activeCol >= 0
 
             // Sliding accent capsule behind the active app.
             Rectangle {
-                width: parent.width - window.capInset * 2
-                height: window.cell - window.capGap * 2
-                radius: width / 2
+                width: window.cell - window.capGap * 2
+                height: parent.height - window.capInset * 2
+                radius: height / 2
                 color: Theme.accentColor
-                x: window.capInset
-                y: window.pad + window.capGap + Math.max(0, appGroup.activeRow) * window.cell
+                x: window.pad + window.capGap + Math.max(0, appGroup.activeCol) * window.cell
+                y: window.capInset
                 opacity: appGroup.hasActive ? 1.0 : 0.0
                 scale: appGroup.hasActive ? 1.0 : 0.6
 
-                Behavior on y {
+                Behavior on x {
                     NumberAnimation {
                         duration: window.slideDuration
                         easing.type: Easing.OutBack
@@ -314,9 +314,9 @@ PanelWindow { // qmllint disable uncreatable-type
                 Behavior on color { ColorAnimation { duration: 220 } }
             }
 
-            Column {
-                y: window.pad
-                width: parent.width
+            Row {
+                x: window.pad
+                height: parent.height
                 spacing: 0
 
                 Repeater {
@@ -326,17 +326,17 @@ PanelWindow { // qmllint disable uncreatable-type
                         id: appBtn
                         required property int index
                         required property var modelData
-                        width: window.pillW
-                        height: window.cell
+                        width: window.cell
+                        height: window.pillH
 
                         readonly property bool isActive: window.panelOpen
                                                          && window.activeWidget === modelData.widget
 
                         // Hover halo (hidden while active — the capsule owns it).
                         Rectangle {
-                            width: parent.width - window.capInset * 2
-                            height: window.cell - window.capGap * 2
-                            radius: width / 2
+                            width: window.cell - window.capGap * 2
+                            height: parent.height - window.capInset * 2
+                            radius: height / 2
                             anchors.centerIn: parent
                             color: Theme.iconColor
                             opacity: (appMa.containsMouse && !appBtn.isActive) ? 0.08 : 0.0
@@ -370,22 +370,23 @@ PanelWindow { // qmllint disable uncreatable-type
         }
 
         // ── Spacer ─────────────────────────────────────────────────
-        Item { Layout.fillHeight: true }
+        // The flake floats over this gap, at the centre of the screen.
+        Item { Layout.fillWidth: true }
 
         // ── System tray (StatusNotifierItem) ───────────────────────
         Item {
-            Layout.alignment: Qt.AlignHCenter
-            Layout.preferredWidth:  window.pillW
-            Layout.preferredHeight: SystemTray.items.values.length * window.cell + window.pad * 2
+            Layout.alignment: Qt.AlignVCenter
+            Layout.preferredWidth:  SystemTray.items.values.length * window.cell + window.pad * 2
+            Layout.preferredHeight: window.pillH
             visible: SystemTray.items.values.length > 0
 
-            Behavior on Layout.preferredHeight {
+            Behavior on Layout.preferredWidth {
                 NumberAnimation { duration: 260; easing.type: Easing.OutCubic }
             }
 
-            Column {
-                y: window.pad
-                width: parent.width
+            Row {
+                x: window.pad
+                height: parent.height
                 spacing: 0
 
                 Repeater {
@@ -394,14 +395,14 @@ PanelWindow { // qmllint disable uncreatable-type
                     Item {
                         id: trayItem
                         required property var modelData
-                        width: window.pillW
-                        height: window.cell
+                        width: window.cell
+                        height: window.pillH
 
                         // Hover halo, matching the app group.
                         Rectangle {
-                            width: parent.width - window.capInset * 2
-                            height: window.cell - window.capGap * 2
-                            radius: width / 2
+                            width: window.cell - window.capGap * 2
+                            height: parent.height - window.capInset * 2
+                            radius: height / 2
                             anchors.centerIn: parent
                             color: Theme.iconColor
                             opacity: trayMa.containsMouse ? 0.08 : 0.0
@@ -464,8 +465,8 @@ PanelWindow { // qmllint disable uncreatable-type
                                 }
                                 // Right click, or left click on a menu-only item → open menu.
                                 if (mouse.button === Qt.RightButton || item.onlyMenu) {
-                                    // Menus open off the bar's right edge now.
-                                    const p = trayItem.mapToItem(null, trayItem.width, trayItem.height / 2);
+                                    // Menus drop from the bar's bottom edge now.
+                                    const p = trayItem.mapToItem(null, trayItem.width / 2, trayItem.height);
                                     item.display(window, p.x, p.y);
                                 } else {
                                     item.activate();
@@ -482,15 +483,15 @@ PanelWindow { // qmllint disable uncreatable-type
 
         // ── Volume button — opens the controls popup ───────────────
         Item {
-            Layout.alignment: Qt.AlignHCenter
-            Layout.preferredWidth:  window.pillW
-            Layout.preferredHeight: window.cell
-            Layout.topMargin: 4
+            Layout.alignment: Qt.AlignVCenter
+            Layout.preferredWidth:  window.cell
+            Layout.preferredHeight: window.pillH
+            Layout.leftMargin: 4
 
             Rectangle {
-                width: parent.width - window.capInset * 2
-                height: window.cell - window.capGap * 2
-                radius: width / 2
+                width: window.cell - window.capGap * 2
+                height: parent.height - window.capInset * 2
+                radius: height / 2
                 anchors.centerIn: parent
                 color: window.controlsOpen ? Theme.accentColor : Theme.iconColor
                 opacity: window.controlsOpen ? 1.0 : (volMa.containsMouse ? 0.08 : 0.0)
@@ -527,19 +528,22 @@ PanelWindow { // qmllint disable uncreatable-type
         }
 
         // ── Battery ────────────────────────────────────────────────
+        // Symbol and percentage side by side: stacked, they would not fit the
+        // bar's 32 px of usable height.
         Item {
-            Layout.alignment: Qt.AlignHCenter
-            Layout.preferredWidth:  window.pillW
-            Layout.preferredHeight: batteryCol.implicitHeight + 6
+            Layout.alignment: Qt.AlignVCenter
+            Layout.preferredWidth:  batteryRow.implicitWidth + 12
+            Layout.preferredHeight: window.pillH
+            Layout.leftMargin: 4
             visible: Battery.present
 
-            Column {
-                id: batteryCol
+            Row {
+                id: batteryRow
                 anchors.centerIn: parent
-                spacing: 0
+                spacing: 3
 
                 Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.verticalCenter: parent.verticalCenter
                     text: Battery.symbol
                     font.family: "JetBrains Mono"
                     font.pixelSize: 10
@@ -549,7 +553,7 @@ PanelWindow { // qmllint disable uncreatable-type
                 }
 
                 Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.verticalCenter: parent.verticalCenter
                     text: Battery.percent
                     font.family: "JetBrains Mono"
                     font.pixelSize: 10

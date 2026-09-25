@@ -10,10 +10,10 @@ CardFrame {
 
     required property var item
 
-    // En mode navigation, un dossier se parcourt dans le dock au lieu de
-    // partir chez le gestionnaire de fichiers.
-    property bool navigateDirs: false
-    signal navigateRequested(string path)
+    // Activer, c'est ouvrir — un fichier comme un dossier, dans l'application
+    // par défaut (`xdg-open` s'occupe des deux). Descendre dans un dossier est
+    // un autre geste, qui appartient au dock : les flèches haut/bas.
+    onPrimaryActivated: Search.activate(card.item, "open")
 
     readonly property bool isDir: card.item.payload.isDir
     readonly property string path: card.item.payload.path
@@ -330,13 +330,10 @@ CardFrame {
                 dragProxy.y = 0;
             }
 
-            // MouseArea n'émet pas clicked si un glissé a eu lieu.
-            onClicked: {
-                if (card.isDir && card.navigateDirs)
-                    card.navigateRequested(card.path);
-                else
-                    Search.activate(card.item, "open");
-            }
+            // MouseArea n'émet pas clicked si un glissé a eu lieu. La carte
+            // court-circuite le TapHandler de la coque pour pouvoir glisser,
+            // elle repasse donc par la même bascule « agir ou venir au centre ».
+            onClicked: card.primaryPressed()
         }
     ]
 }

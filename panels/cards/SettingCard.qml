@@ -23,9 +23,11 @@ CardFrame {
               ? (Audio.muted ? "coupé" : Audio.percent + " %")
               : card.item.subtitle
 
-    // Rien à « ouvrir » sur un réglage piloté sur place : ce sont les commandes
-    // qui agissent.
-    tapEnabled: card.control === "toggle" || card.control === "action"
+    // Rien à « ouvrir » sur le volume : il se règle aux flèches ou aux
+    // commandes, et Entrée n'aurait pas de sens évident dessus. Partout
+    // ailleurs, activer fait quelque chose — basculer le thème, ouvrir les
+    // réglages, prendre la capture.
+    tapEnabled: card.control !== "volume"
     onPrimaryActivated: Search.activate(card.item, "open")
 
     // Le sondage de wpctl ne tourne que tant qu'une carte volume est affichée.

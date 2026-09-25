@@ -229,8 +229,8 @@ Item {
     // MAIN CONTENT
     // ══════════════════════════════════════════════════════════════════════
     // ══ Stage — the disc with the spectrum ringed behind it. Anchored to the
-    // widget's own centre, not stacked in the column, so it lands on the
-    // screen's vertical midline — level with the LeftBar's flake.
+    // widget's own centre, not stacked in the column, so it stays put as the
+    // controls below it grow or shrink.
     Item {
         id: stage
         anchors.horizontalCenter: parent.horizontalCenter

@@ -15,13 +15,13 @@ PanelWindow { // qmllint disable uncreatable-type
     readonly property real minWidth: 180
     readonly property real maxWidth: 600
 
-    // Same layer as the LeftBar so the bar, created first, keeps the screen edge.
+    // Same layer as the TopBar so the bar, created first, keeps the screen edge.
     WlrLayershell.layer: WlrLayer.Top
     WlrLayershell.namespace: "quickshell-rightpanel"
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
 
-    // Opens on the left, alongside the SidePanel — the LeftBar already
-    // reserves its own 44 px, so this stacks just past it.
+    // Opens on the left, alongside the SidePanel — the TopBar already
+    // reserves its own 44 px along the top, so this starts just below it.
     anchors {
         top: true
         left: true
@@ -40,7 +40,7 @@ PanelWindow { // qmllint disable uncreatable-type
     }
 
     // ── Panel surface ────────────────────────────────────────────
-    // Deliberately lighter than the LeftBar's slab: the bar is always on
+    // Deliberately lighter than the TopBar's slab: the bar is always on
     // screen and anchors the edge, the panel only visits.
     Rectangle {
         anchors.fill: parent

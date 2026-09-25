@@ -15,8 +15,8 @@ services/            Singletons transverses
   Search.qml           Agrégateur de recherche + <Type>Source.qml (app, fichier,
                        web, paramètre, conversation), Fuzzy, DefaultApps, Audio
 panels/              Chrome de haut niveau (fenêtres Wayland)
-  BottomBar, SidePanel, RightPanel, SettingsWindow
-  RightDock            Dock au survol du bord droit : navigation + recherche
+  TopBar, SidePanel, RightPanel, SettingsWindow
+  BottomDock           Dock au survol du bord bas : navigation + recherche
   cards/               Cartes du dock, une par type de résultat
 widgets/             Contenu des panneaux
   HardwareStats, NotesWidget, Metronome, Tuner, MusicPlayerWidget,
@@ -35,7 +35,7 @@ Tout le backend est le daemon Rust `anna` : les widgets s'y connectent via un
 **socket Unix** (`$XDG_RUNTIME_DIR/anna.sock`) et échangent du JSON ligne par
 ligne (type `Quickshell.Io.Socket`). Plus aucun script bash/python ni dépendance
 `parec`/`numpy`. L'audio (accordeur, chromagramme, métronome) est natif via
-`cpal` + `rustfft`, à la fréquence réelle du périphérique. (Le dock de droite,
+`cpal` + `rustfft`, à la fréquence réelle du périphérique. (Le dock du bas,
 lui, appelle quelques outils du système — voir *Dépendances externes* plus bas.)
 
 ### Console (widget 5)
@@ -60,8 +60,8 @@ cellules, ce qui relève d'`anna`, pas du QML.
 
 ## Dépendances externes
 
-Le backend des widgets est entièrement `anna` (voir ci-dessus), mais le dock de
-droite (`panels/RightDock.qml`) pilote des outils du système. Ils sont appelés par
+Le backend des widgets est entièrement `anna` (voir ci-dessus), mais le dock du
+bas (`panels/BottomDock.qml`) pilote des outils du système. Ils sont appelés par
 leur nom dans le `$PATH` ; aucun n'est requis pour démarrer le shell, chacun ne
 désactive que sa propre fonction s'il manque.
 

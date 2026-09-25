@@ -6,8 +6,8 @@ import "../services"
 import "../widgets"
 
 // The QuickControls block — volume, audio devices, screenshot, battery and the
-// accent picker — as a popup hung off the LeftBar's bottom buttons, instead of
-// riding along at the top of every side panel.
+// accent picker — as a popup hung off the TopBar's right-hand buttons, instead
+// of riding along at the top of every side panel.
 PanelWindow { // qmllint disable uncreatable-type
     id: popup
 
@@ -34,10 +34,12 @@ PanelWindow { // qmllint disable uncreatable-type
     Rectangle {
         id: card
         // The bar's exclusive zone already shifts this surface clear of it,
-        // so this is just the gutter — same 8 px the side panels use.
-        x: 8
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: 8
+        // so this is just the gutter — same 8 px the side panels use. It hangs
+        // under the volume button, at the bar's right end.
+        anchors.right: parent.right
+        anchors.rightMargin: 8
+        anchors.top: parent.top
+        anchors.topMargin: 8
         width: 320
         height: Math.min(controls.implicitHeight, popup.height - 16)
 
@@ -55,8 +57,8 @@ PanelWindow { // qmllint disable uncreatable-type
             anchors.fill: parent
         }
 
-        // Rises from the bar as it opens.
-        transform: Translate { y: popup.popupOpen ? 0 : 12 }
+        // Drops out of the bar as it opens.
+        transform: Translate { y: popup.popupOpen ? 0 : -12 }
         Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
     }
 }

@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Effects
 
 // A monochrome SVG icon tinted to the theme, the same treatment the NixOS
-// flake gets in the LeftBar: the artwork ships white and is recolored here,
+// flake gets in the TopBar: the artwork ships white and is recolored here,
 // so one file serves both light and dark.
 Item {
     id: root

@@ -13,7 +13,7 @@ ShellRoot {
     property int activeWidget: 0
     property bool rightOpen: false
     property bool controlsOpen: false
-    // Dock de droite maintenu ouvert au clavier (cf. commande IPC "dock").
+    // Dock du bas maintenu ouvert au clavier (cf. commande IPC "dock").
     property bool dockPinned: false
 
     // Toggle a widget. Only one panel is ever open: opening either side
@@ -34,7 +34,7 @@ ShellRoot {
 
     // ── IPC externe via FIFO /tmp/qs-panel.fifo ──────────────────────────
     //   echo "widget:N" > /tmp/qs-panel.fifo   → bascule le widget N
-    //   echo "dock"     > /tmp/qs-panel.fifo   → bascule le dock de droite
+    //   echo "dock"     > /tmp/qs-panel.fifo   → bascule le dock du bas
     //   echo "controls" > /tmp/qs-panel.fifo   → bascule le popup de contrôles
     //   echo "close"    > /tmp/qs-panel.fifo   → ferme le panel
     //   N : 0=Stats  1=IA  2=Notes  3=Pitch  4=Music  5=Console
@@ -87,7 +87,7 @@ ShellRoot {
     Variants {
         model: root.primaryScreens
 
-        LeftBar {
+        TopBar {
             property var modelData
             screen: modelData
             visible: modelData && modelData.name === root.primaryScreen
@@ -137,7 +137,7 @@ ShellRoot {
     Variants {
         model: root.primaryScreens
 
-        RightDock {
+        BottomDock {
             property var modelData
             screen: modelData
             active: modelData && modelData.name === root.primaryScreen

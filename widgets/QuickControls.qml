@@ -149,7 +149,7 @@ Item {
     }
 
     // ── Battery state ──────────────────────────────────────────────────────
-    // Polled by the Battery singleton — the LeftBar shows it too, so it is
+    // Polled by the Battery singleton — the TopBar shows it too, so it is
     // read once and shared rather than polled from both places.
     readonly property bool   batteryPresent: Battery.present
     readonly property int    batteryPercent: Battery.percent
