@@ -42,7 +42,7 @@ Item {
     // socket, send control lines ({"action":…}), and receive {"beat":<n>}.
     Socket {
         id: metroSock
-        path: (Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/1000") + "/anna.sock"
+        path: Anna.socketPath
         parser: SplitParser {
             onRead: (line) => {
                 try {

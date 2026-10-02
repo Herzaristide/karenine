@@ -3,5 +3,6 @@ SidePanel 1.0 SidePanel.qml
 RightPanel 1.0 RightPanel.qml
 SettingsWindow 1.0 SettingsWindow.qml
 ControlsPopup 1.0 ControlsPopup.qml
+CameraPopup 1.0 CameraPopup.qml
 BottomDock 1.0 BottomDock.qml
 CardCarousel 1.0 CardCarousel.qml

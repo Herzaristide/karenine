@@ -1,7 +1,7 @@
 ---
 title: Thème
 group: Fonctionnalités
-summary: services/Theme.qml — état de thème, defaults intégrés et intégration avec le daemon paletted.
+summary: services/Theme.qml — état de thème, defaults intégrés et intégration avec le daemon anna.
 links: [configuration, widgets, panels, architecture]
 ---
 
@@ -12,8 +12,11 @@ partagé par tous les [widgets](#widgets) et [panneaux](#panels).
 
 ## Fonctionnement
 
-- Lit la couleur diffusée par le daemon **`paletted`** quand il tourne, ce qui
-  permet de changer l'accent **à chaud**.
+- Lit `~/.config/accent/state.json`, que le daemon **`anna`** réécrit à chaque
+  changement : l'accent change **à chaud**.
+- Envoie les changements (accent, mode, couleur de palette, reset) via le client
+  `anna`, une commande à la fois : une nouvelle valeur remplace celle qui
+  attendait encore, le daemon n'applique que la plus récente.
 - En son absence, des **valeurs par défaut intégrées** s'appliquent — dont la
   couleur d'accent `#5277c3` (voir [Configuration](#configuration)).
 
@@ -27,5 +30,5 @@ import "../services"
 
 (voir les conventions dans [Architecture](#architecture)).
 
-> Le daemon `paletted` provient de la configuration NixOS qui consomme karenine ;
-> karenine reste fonctionnel sans lui.
+> Le daemon `anna` est construit par ce dépôt (`anna/`, voir [Backend](#backend)) ;
+> karenine reste fonctionnel sans lui, avec les couleurs par défaut.

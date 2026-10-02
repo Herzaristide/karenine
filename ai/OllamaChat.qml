@@ -31,6 +31,34 @@ Item {
     // Internal context for Ollama (includes tool role messages not shown in UI)
     property var conversationContext: []
 
+    // Appel d'outil sensible en attente de l'accord de l'utilisateur :
+    // { name, args, idx } (idx = la bulle d'action), ou null.
+    property var pendingTool: null
+
+    function confirmTool(accept) {
+        var p = root.pendingTool;
+        if (!p)
+            return;
+        if (!accept) {
+            root._declinePending();
+            continueConversation();
+            return;
+        }
+        root.pendingTool = null;
+        messages.setProperty(p.idx, "msgType", "action");
+        llmTools.executeToolCall(p.name, p.args, p.idx);
+    }
+
+    // Refuse l'appel en attente sans relancer le modèle : Ollama attend une
+    // réponse d'outil après chaque tool_call, on lui donne le refus.
+    function _declinePending() {
+        var p = root.pendingTool;
+        root.pendingTool = null;
+        messages.setProperty(p.idx, "msgType", "action");
+        messages.setProperty(p.idx, "content", messages.get(p.idx).content + "  [refusé]");
+        root.conversationContext.push({ role: "tool", content: "L'utilisateur a refusé cette action." });
+    }
+
     Process {
         id: copyProcess
         command: ["wl-copy"]
@@ -165,6 +193,10 @@ Item {
             return;
         }
 
+        // Écrire un nouveau message vaut refus de l'action en attente.
+        if (root.pendingTool)
+            root._declinePending();
+
         inputField.text = "";
         messages.append({ role: "user", content: text, msgType: "text" });
 
@@ -244,6 +276,11 @@ Item {
                                 messages.setProperty(assistantIdx, "content", actionText);
                                 messages.setProperty(assistantIdx, "msgType", "action");
 
+                                if (llmTools.needsConfirmation(toolName, toolArgs)) {
+                                    messages.setProperty(assistantIdx, "msgType", "confirm");
+                                    root.pendingTool = { name: toolName, args: toolArgs, idx: assistantIdx };
+                                    return;
+                                }
                                 llmTools.executeToolCall(toolName, toolArgs, assistantIdx);
                                 return;
                             }
@@ -285,7 +322,7 @@ Item {
         // For screenshots, insert an image bubble in the chat
         if (toolName === "screenshot") {
             var screenshotPath = result.trim();
-            if (screenshotPath !== "")
+            if (screenshotPath.indexOf("/tmp/screenshot-") === 0)
                 messages.append({ role: "assistant", content: screenshotPath, msgType: "screenshot" });
         }
 
@@ -297,6 +334,7 @@ Item {
     }
 
     function clearChat() {
+        root.pendingTool = null;
         messages.clear();
         root.conversationContext = [];
     }
@@ -341,9 +379,12 @@ Item {
                 required property string role
                 required property string content
                 required property string msgType
+                readonly property bool isAction: msgType === "action" || msgType === "confirm"
 
                 width: msgList.width
-                height: msgType === "screenshot" ? screenshotCol.height + 4 : msgRow.height + 4
+                height: msgType === "screenshot"
+                        ? screenshotCol.height + 4
+                        : msgRow.height + (confirmRow.visible ? confirmRow.height + 4 : 0) + 4
 
                 // Screenshot bubble
                 Column {
@@ -381,8 +422,8 @@ Item {
 
                     Text {
                         id: prefixText
-                        text: msgItem.role === "user" ? "> " : (msgItem.msgType === "action" ? "$ " : "  ")
-                        color: msgItem.role === "user" ? Theme.accentColor : (msgItem.msgType === "action" ? Theme.colorAmber : Theme.textInactive)
+                        text: msgItem.role === "user" ? "> " : (msgItem.isAction ? "$ " : "  ")
+                        color: msgItem.role === "user" ? Theme.accentColor : (msgItem.isAction ? Theme.colorAmber : Theme.textInactive)
                         font.family: "JetBrains Mono"
                         font.pixelSize: 12
                     }
@@ -396,7 +437,7 @@ Item {
                               ? "\u258B" : msgItem.content
                         color: {
                             if (msgItem.role === "user") return Theme.accentColor;
-                            if (msgItem.msgType === "action") return Theme.colorAmber;
+                            if (msgItem.isAction) return Theme.colorAmber;
                             return Theme.textBody;
                         }
                         selectionColor: Theme.accentColor
@@ -433,6 +474,43 @@ Item {
                         Timer {
                             id: copyTimer
                             interval: 2000
+                        }
+                    }
+                }
+
+                // Action sensible proposée par le modèle : rien ne part sans un clic.
+                Row {
+                    id: confirmRow
+                    visible: msgItem.msgType === "confirm"
+                    y: msgRow.height + 4
+                    x: prefixText.implicitWidth
+                    spacing: 12
+
+                    Text {
+                        text: "[exécuter]"
+                        color: runMa.containsMouse ? Theme.accentColor : Theme.colorAmber
+                        font.family: "JetBrains Mono"
+                        font.pixelSize: 11
+                        MouseArea {
+                            id: runMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.confirmTool(true)
+                        }
+                    }
+
+                    Text {
+                        text: "[refuser]"
+                        color: refuseMa.containsMouse ? Theme.accentColor : Theme.textSubtle
+                        font.family: "JetBrains Mono"
+                        font.pixelSize: 11
+                        MouseArea {
+                            id: refuseMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.confirmTool(false)
                         }
                     }
                 }

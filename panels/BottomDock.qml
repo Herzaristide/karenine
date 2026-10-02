@@ -12,8 +12,8 @@ import "../ai"
 // déclenche aucun rechargement du shell.
 import "cards" // qmllint disable unused-imports
 
-// Le dock du bas : il se glisse depuis le bord au survol, et sert trois choses
-// sur une même surface.
+// Le dock du bas : il s'ouvre au tap de Super (commande « dock » du FIFO), et
+// sert trois choses sur une même surface.
 //   • requête vide  → navigation, le contenu du dossier courant ;
 //   • requête       → résultats, tous types mélangés et classés par pertinence ;
 //   • mode IA (✦)   → les conversations Claude de la machine, celle du centre
@@ -32,14 +32,24 @@ import "cards" // qmllint disable unused-imports
 // quadrillage n'est pas une autre mécanique : le carrousel découpe alors la
 // liste en colonnes de deux, et la colonne devient le pas du défilement.
 //
-// Deux fenêtres, à dessein. La région d'entrée de la bande de bord ne change
-// jamais, donc son survol est un signal stable ; celle du deck n'apparaît
-// qu'à côté de cette bande, jamais sous un curseur qui s'y trouve.
+// Pas d'ouverture au survol du bord bas : le curseur piloté au doigt par la
+// webcam (anna, module gesture) y passe sans cesse, et le dock s'ouvrait à
+// chaque fois. Le survol du deck ouvert le garde seulement ouvert.
 Scope {
     id: dock
 
+    // L'écran demandé (shell.qml y branche l'écran qui a le focus) et celui
+    // où le dock se trouve vraiment. Le second ne rattrape le premier que dock
+    // refermé : changer d'écran recrée les surfaces, donc un dock ouvert — au
+    // survol comme au clavier — perdrait sa recherche et son focus en route.
     property var screen: null
+    property var shownScreen: null
     property bool active: true
+
+    onScreenChanged: {
+        if (!dock.dockOpen)
+            dock.shownScreen = dock.screen;
+    }
 
     // Ouverture au clavier (« dock » sur le FIFO IPC, câblé sur le tap de
     // Super). Le dock reste alors ouvert sans curseur dessus, jusqu'au tap
@@ -128,7 +138,7 @@ Scope {
     // d'état. Le mode IA prend franchement le bas de l'écran — mais reste
     // borné, pour qu'un petit écran garde de la place ailleurs.
     readonly property int transcriptH: {
-        var h = dock.screen ? dock.screen.height : 1080;
+        var h = dock.shownScreen ? dock.shownScreen.height : 1080;
         return Math.max(220, Math.min(430, Math.round(h * 0.42)));
     }
 
@@ -203,27 +213,25 @@ Scope {
     // ── Open / close state ───────────────────────────────────────
     // Instancie DefaultApps dès le démarrage : la résolution des outils est
     // asynchrone, autant qu'elle soit finie avant la première carte.
-    Component.onCompleted: DefaultApps.refresh()
+    Component.onCompleted: {
+        // onScreenChanged ne voit pas la valeur initiale.
+        dock.shownScreen = dock.screen;
+        DefaultApps.refresh();
+    }
 
     property bool dockOpen: false
-    property bool edgeHovered: false
     property bool deckHovered: false
-    readonly property bool pointerInside: edgeHovered || deckHovered
+    readonly property bool pointerInside: deckHovered
 
     onPointerInsideChanged: {
-        if (pointerInside) {
+        if (pointerInside)
             closeTimer.stop();
-            if (!dockOpen)
-                openTimer.restart();
-        } else {
-            openTimer.stop();
+        else
             closeTimer.restart();
-        }
     }
 
     onPinnedChanged: {
         if (dock.pinned) {
-            openTimer.stop();
             closeTimer.stop();
             dock.dockOpen = true;
         } else if (!dock.pointerInside) {
@@ -244,13 +252,9 @@ Scope {
             // relâchement, le champ garderait le focus clavier et le compositeur
             // continuerait de router les frappes vers une surface invisible.
             searchField.focus = false;
+            // Le focus a pu changer d'écran pendant que le dock était ouvert.
+            dock.shownScreen = dock.screen;
         }
-    }
-
-    Timer {
-        id: openTimer
-        interval: 90
-        onTriggered: dock.dockOpen = true
     }
 
     // La fermeture est différée *et* revérifiée : un couple leave/enter
@@ -452,35 +456,11 @@ Scope {
             Qt.callLater(dock.syncAiFocus);
     }
 
-    // ── Edge strip ───────────────────────────────────────────────
-    PanelWindow { // qmllint disable uncreatable-type
-        id: edge
-
-        screen: dock.screen
-        visible: dock.active
-
-        WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.namespace: "quickshell-dockedge"
-        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-
-        anchors { left: true; right: true; bottom: true }
-        implicitHeight: dock.hotZone
-        exclusiveZone: 0
-        color: "transparent"
-
-        Item {
-            anchors.fill: parent
-            HoverHandler {
-                onHoveredChanged: dock.edgeHovered = hovered
-            }
-        }
-    }
-
     // ── Panel ────────────────────────────────────────────────────
     PanelWindow { // qmllint disable uncreatable-type
         id: panel
 
-        screen: dock.screen
+        screen: dock.shownScreen
         visible: dock.active
 
         WlrLayershell.layer: WlrLayer.Overlay

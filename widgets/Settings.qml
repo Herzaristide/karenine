@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
+import Quickshell
 import "../services"
 
 Item {
@@ -79,6 +80,100 @@ Item {
                 color: Theme.accentDark
                 Layout.bottomMargin: 16
                 visible: root.showInternalHeader
+            }
+
+            // ── ÉCRAN section ──────────────────────────────────
+            // Où s'affichent la barre et les panneaux. Le dock n'est pas
+            // concerné : il suit l'écran qui a le focus.
+            Text {
+                Layout.bottomMargin: 10
+                text: "ÉCRAN"
+                font.family: "JetBrains Mono"
+                font.pixelSize: 10
+                font.letterSpacing: 1.5
+                color: Theme.accentMuted
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.bottomMargin: 12
+                spacing: 6
+
+                // « Auto » en tête : la valeur de la config Nix, puis le
+                // premier écran branché si elle ne correspond à rien.
+                Repeater {
+                    model: [null].concat(Quickshell.screens)
+
+                    delegate: Rectangle {
+                        id: screenRow
+
+                        required property var modelData
+                        readonly property string key: modelData ? Display.screenKey(modelData) : ""
+                        readonly property bool selected: Display.preferred === key
+                        readonly property bool shown: modelData !== null && Display.primary === modelData
+
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 32
+                        radius: 8
+                        color: selected ? Qt.rgba(Theme.accentColor.r, Theme.accentColor.g, Theme.accentColor.b, 0.14)
+                                        : (rowMa.containsMouse ? Theme.hoverOverlay : "transparent")
+                        border.color: selected ? Theme.accentColor : Theme.dividerColor
+                        border.width: 1
+                        Behavior on color { ColorAnimation { duration: 120 } }
+
+                        RowLayout {
+                            anchors { fill: parent; leftMargin: 12; rightMargin: 12 }
+                            spacing: 8
+
+                            Text {
+                                text: screenRow.modelData ? screenRow.modelData.model || screenRow.modelData.name
+                                                          : "Auto"
+                                font.family: "JetBrains Mono"
+                                font.pixelSize: 11
+                                font.weight: screenRow.selected ? Font.Bold : Font.Normal
+                                color: screenRow.selected ? Theme.accentColor : Theme.textPrimary
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+
+                            Text {
+                                text: screenRow.modelData
+                                      ? screenRow.modelData.name + "  " + screenRow.modelData.width
+                                        + "×" + screenRow.modelData.height
+                                      : "défaut : " + (Display.defaultName || "—")
+                                font.family: "JetBrains Mono"
+                                font.pixelSize: 10
+                                color: Theme.textDim
+                            }
+
+                            // L'écran qui porte l'interface en ce moment : en
+                            // « Auto », c'est la seule façon de savoir lequel.
+                            Text {
+                                text: "●"
+                                font.pixelSize: 9
+                                color: Theme.accentColor
+                                opacity: screenRow.shown ? 1.0 : 0.0
+                            }
+                        }
+
+                        MouseArea {
+                            id: rowMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: Display.setPreferred(screenRow.key)
+                        }
+                    }
+                }
+            }
+
+            // ── Separator ─────────────────────────────────────────────────
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 1
+                color: Theme.dividerColor
+                Layout.topMargin: 4
+                Layout.bottomMargin: 16
             }
 
             // ── APPARENCE section ──────────────────────────────

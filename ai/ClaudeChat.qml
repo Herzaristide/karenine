@@ -2,6 +2,7 @@ import QtQuick
 import QtQml
 import QtQuick.Layouts
 import QtQuick.Controls
+import Quickshell
 import Quickshell.Io
 import "../services"
 
@@ -62,7 +63,9 @@ Item {
         running: false
         stdinEnabled: true
 
-        command: ["bash", "-c", root.buildClaudeCommand()]
+        command: root.buildClaudeCommand()
+        // Run from the user's home so file tools resolve sensibly.
+        workingDirectory: Quickshell.env("HOME")
 
         stdout: SplitParser {
             onRead: (line) => root.handleEvent(line)
@@ -92,17 +95,17 @@ Item {
         }
     }
 
+    // Une liste d'arguments, pas une ligne de shell : rien à échapper.
     function buildClaudeCommand() {
-        var args = "claude -p"
-            + " --input-format stream-json"
-            + " --output-format stream-json"
-            + " --include-partial-messages"
-            + " --verbose"
-            + " --permission-mode " + permissionMode;
+        var args = ["claude", "-p",
+            "--input-format", "stream-json",
+            "--output-format", "stream-json",
+            "--include-partial-messages",
+            "--verbose",
+            "--permission-mode", permissionMode];
         if (claudeModel !== "")
-            args += " --model " + claudeModel;
-        // Run from the user's home so file tools resolve sensibly.
-        return "cd \"$HOME\" && exec " + args;
+            args.push("--model", claudeModel);
+        return args;
     }
 
     function ensureStarted() {

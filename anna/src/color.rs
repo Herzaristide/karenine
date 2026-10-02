@@ -49,7 +49,6 @@ impl Color {
     }
 
     /// HSL mutation: S * 0.75, L * 1.35 clamped to 0.75.
-    /// HSL hue-to-RGB channel helper.
     pub fn muted(&self) -> Self {
         let (h, s, l) = self.to_hsl();
         let new_s = s * 0.75;
@@ -165,6 +164,47 @@ mod tests {
         assert_eq!(d.r, (0x52u16 as f64 / 1.8 + 0.5) as u8);
         assert_eq!(d.g, (0x77u16 as f64 / 1.8 + 0.5) as u8);
         assert_eq!(d.b, (0xc3u16 as f64 / 1.8 + 0.5) as u8);
+    }
+
+    #[test]
+    fn accepts_hex_without_hash_and_whitespace() {
+        assert_eq!(Color::from_hex("  5277C3\n").unwrap().to_hex(), "#5277c3");
+        assert!(Color::from_hex("#5277c3ff").is_none());
+        assert!(Color::from_hex("#é277c").is_none());
+    }
+
+    #[test]
+    fn hsl_round_trips() {
+        for hex in [
+            "#5277c3", "#ff0000", "#00ff00", "#0000ff", "#808080", "#000000", "#ffffff", "#c0ffee",
+        ] {
+            let c = Color::from_hex(hex).unwrap();
+            let (h, s, l) = c.to_hsl();
+            let back = Color::from_hsl(h, s, l);
+            for (a, b) in [(c.r, back.r), (c.g, back.g), (c.b, back.b)] {
+                assert!(a.abs_diff(b) <= 1, "{hex} -> {}", back.to_hex());
+            }
+        }
+    }
+
+    #[test]
+    fn variants_keep_the_hue() {
+        let c = Color::from_hex("#5277c3").unwrap();
+        let hue = c.to_hsl().0;
+        for v in [c.muted(), c.arcanum_bright(), c.arcanum_dark()] {
+            assert!((v.to_hsl().0 - hue).abs() < 2.0, "{}", v.to_hex());
+        }
+        let (_, s, l) = c.arcanum_bright().to_hsl();
+        assert!((s - 1.0).abs() < 0.02 && (l - 0.70).abs() < 0.01);
+        assert!(c.muted().to_hsl().2 <= 0.75 + 0.01);
+    }
+
+    #[test]
+    fn string_forms() {
+        let c = Color::from_hex("#0a141e").unwrap();
+        assert_eq!(c.hex_no_hash(), "0a141e");
+        assert_eq!(c.to_rgb_str(), "10,20,30");
+        assert_eq!(c.to_ansi(), "38;2;10;20;30");
     }
 
     #[test]

@@ -326,6 +326,9 @@ Item {
                 result = code === 0
                     ? "Navigateur ouvert : " + pendingMeta
                     : "Erreur lors de l'ouverture du navigateur (code " + code + ")";
+            } else if (pendingToolName === "screenshot") {
+                // Le chemin seul : OllamaChat l'affiche comme image.
+                result = code === 0 ? pendingMeta : "\u00C9chec de la capture (code " + code + ")";
             } else {
                 result = stdoutBuffer.trim() || stderrBuffer.trim() || "(commande terminée, code: " + code + ")";
             }
@@ -352,6 +355,43 @@ Item {
                 pendingAssistantIdx = -1;
             }
         }
+    }
+
+    // ── Garde-fous ────────────────────────────────────────────────────────────
+    // Les arguments viennent du modèle, donc potentiellement d'une injection de
+    // prompt (une page web lue, un fichier…) : on les valide, et on ne les
+    // concatène jamais dans une commande shell.
+    readonly property var screenshotRegions: ["screen", "active", "area", "output"]
+    readonly property var rebuildActions: ["switch", "boot", "test"]
+
+    // Outils qui modifient le système ou exécutent du code arbitraire :
+    // OllamaChat demande une confirmation explicite avant de les lancer.
+    readonly property var confirmedTools: [
+        "run_command", "nixos_rebuild", "nixos_rollback", "nix_gc", "nix_flake_update"
+    ]
+
+    function needsConfirmation(name, args) {
+        if (root.confirmedTools.indexOf(name) >= 0)
+            return true;
+        // `exec` Hyprland lance n'importe quelle ligne de commande : un simple
+        // nom de programme passe directement, tout le reste se confirme.
+        if (name === "open_application")
+            return !/^[A-Za-z0-9._+-]+$/.test(String(args.command || ""));
+        return false;
+    }
+
+    function validWorkspace(id) {
+        var n = Number(id);
+        return Number.isInteger(n) && n >= 1 && n <= 10;
+    }
+
+    // Lance `argv` dans toolProcess ; toolResult part à la fin du process.
+    function runTool(name, assistantIdx, argv, meta) {
+        toolProcess.pendingToolName = name;
+        toolProcess.pendingAssistantIdx = assistantIdx;
+        toolProcess.pendingMeta = meta || "";
+        toolProcess.command = argv;
+        toolProcess.running = true;
     }
 
     // ── Format action label shown in the chat bubble ─────────────────────────
@@ -393,6 +433,10 @@ Item {
 
         switch (name) {
             case "switch_workspace":
+                if (!root.validWorkspace(args.workspace_id)) {
+                    root.toolResult(name, assistantIdx, "Workspace invalide : " + args.workspace_id);
+                    break;
+                }
                 Hyprland.dispatch("workspace " + args.workspace_id);
                 result = "Workspace chang\u00E9 vers " + args.workspace_id;
                 root.toolResult(name, assistantIdx, result);
@@ -416,11 +460,7 @@ Item {
                     root.toolResult(name, assistantIdx, "URL invalide : doit commencer par http:// ou https://");
                     break;
                 }
-                toolProcess.pendingToolName = name;
-                toolProcess.pendingAssistantIdx = assistantIdx;
-                toolProcess.pendingMeta = finalUrl;
-                toolProcess.command = ["xdg-open", finalUrl];
-                toolProcess.running = true;
+                root.runTool(name, assistantIdx, ["xdg-open", finalUrl], finalUrl);
                 break;
             }
 
@@ -431,6 +471,10 @@ Item {
                 break;
 
             case "move_window_to_workspace":
+                if (!root.validWorkspace(args.workspace_id)) {
+                    root.toolResult(name, assistantIdx, "Workspace invalide : " + args.workspace_id);
+                    break;
+                }
                 Hyprland.dispatch("movetoworkspace " + args.workspace_id);
                 result = "Fen\u00EAtre d\u00E9plac\u00E9e vers workspace " + args.workspace_id;
                 root.toolResult(name, assistantIdx, result);
@@ -443,141 +487,119 @@ Item {
                 break;
 
             case "focus_direction":
+                if (["l", "r", "u", "d"].indexOf(args.direction) < 0) {
+                    root.toolResult(name, assistantIdx, "Direction invalide : " + args.direction + " (l, r, u, d)");
+                    break;
+                }
                 Hyprland.dispatch("movefocus " + args.direction);
                 result = "Focus d\u00E9plac\u00E9 vers " + args.direction;
                 root.toolResult(name, assistantIdx, result);
                 break;
 
-            case "set_volume":
-                toolProcess.pendingToolName = name;
-                toolProcess.pendingAssistantIdx = assistantIdx;
-                toolProcess.pendingMeta = "";
-                var vol = Math.max(0, Math.min(100, args.percent)) / 100.0;
-                toolProcess.command = ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", vol.toString()];
-                toolProcess.running = true;
+            case "set_volume": {
+                var vol = Math.max(0, Math.min(100, Number(args.percent) || 0)) / 100.0;
+                root.runTool(name, assistantIdx, ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", vol.toString()]);
                 break;
+            }
 
-            case "set_brightness":
-                toolProcess.pendingToolName = name;
-                toolProcess.pendingAssistantIdx = assistantIdx;
-                toolProcess.pendingMeta = "";
-                toolProcess.command = ["brightnessctl", "set", args.percent + "%"];
-                toolProcess.running = true;
+            case "set_brightness": {
+                var pct = Math.round(Math.max(0, Math.min(100, Number(args.percent) || 0)));
+                root.runTool(name, assistantIdx, ["brightnessctl", "set", pct + "%"]);
                 break;
+            }
 
-            case "screenshot":
-                toolProcess.pendingToolName = name;
-                toolProcess.pendingAssistantIdx = assistantIdx;
-                toolProcess.pendingMeta = "";
+            case "screenshot": {
                 var region = args.region || "screen";
+                if (root.screenshotRegions.indexOf(region) < 0) {
+                    root.toolResult(name, assistantIdx, "Région invalide : " + region
+                        + " (attendu : " + root.screenshotRegions.join(", ") + ")");
+                    break;
+                }
                 var ts = Qt.formatDateTime(new Date(), "yyyyMMdd_HHmmss");
                 var savePath = "/tmp/screenshot-" + ts + ".png";
-                toolProcess.command = ["sh", "-c",
-                    "grimblast copysave " + region + " '" + savePath + "' >/dev/null 2>&1 && echo '" + savePath + "'"];
-                toolProcess.running = true;
+                root.runTool(name, assistantIdx, ["grimblast", "copysave", region, savePath], savePath);
                 break;
+            }
 
             case "send_notification":
-                toolProcess.pendingToolName = name;
-                toolProcess.pendingAssistantIdx = assistantIdx;
-                toolProcess.pendingMeta = "";
-                toolProcess.command = ["notify-send", args.title || "", args.body || ""];
-                toolProcess.running = true;
+                root.runTool(name, assistantIdx, ["notify-send", "--", String(args.title || ""), String(args.body || "")]);
                 break;
 
             case "get_system_info":
-                toolProcess.pendingToolName = name;
-                toolProcess.pendingAssistantIdx = assistantIdx;
-                toolProcess.pendingMeta = "";
-                toolProcess.command = ["sh", "-c",
-                    "echo '=== CPU ===' && head -1 /proc/stat && echo '=== Memory ===' && free -h && echo '=== Uptime ===' && uptime && echo '=== Disk ===' && df -h /"];
-                toolProcess.running = true;
+                root.runTool(name, assistantIdx, ["sh", "-c",
+                    "echo '=== CPU ===' && head -1 /proc/stat && echo '=== Memory ===' && free -h && echo '=== Uptime ===' && uptime && echo '=== Disk ===' && df -h /"]);
                 break;
 
             case "list_windows":
-                toolProcess.pendingToolName = name;
-                toolProcess.pendingAssistantIdx = assistantIdx;
-                toolProcess.pendingMeta = "";
-                toolProcess.command = ["hyprctl", "clients", "-j"];
-                toolProcess.running = true;
+                root.runTool(name, assistantIdx, ["hyprctl", "clients", "-j"]);
                 break;
 
+            // Les outils ci-dessous ne s'exécutent qu'après confirmation de
+            // l'utilisateur (needsConfirmation, appelé par OllamaChat).
             case "run_command":
-                toolProcess.pendingToolName = name;
-                toolProcess.pendingAssistantIdx = assistantIdx;
-                toolProcess.pendingMeta = "";
-                toolProcess.command = ["sh", "-c", args.command];
-                toolProcess.running = true;
+                root.runTool(name, assistantIdx, ["sh", "-c", String(args.command || "")]);
                 break;
 
-            case "nixos_rebuild":
-                toolProcess.pendingToolName = name;
-                toolProcess.pendingAssistantIdx = assistantIdx;
-                toolProcess.pendingMeta = "";
+            case "nixos_rebuild": {
                 var rebuildAction = args.action || "switch";
-                toolProcess.command = ["sh", "-c",
-                    "cd /etc/nixos && sudo nixos-rebuild " + rebuildAction + " --flake .#$(hostname) 2>&1"];
-                toolProcess.running = true;
+                if (root.rebuildActions.indexOf(rebuildAction) < 0) {
+                    root.toolResult(name, assistantIdx, "Action invalide : " + rebuildAction
+                        + " (attendu : " + root.rebuildActions.join(", ") + ")");
+                    break;
+                }
+                // L'action passe en argument positionnel ($1) : jamais interpolée.
+                root.runTool(name, assistantIdx, ["sh", "-c",
+                    "cd /etc/nixos && sudo nixos-rebuild \"$1\" --flake \".#$(hostname)\" 2>&1",
+                    "sh", rebuildAction]);
                 break;
+            }
 
             case "nix_flake_update":
-                toolProcess.pendingToolName = name;
-                toolProcess.pendingAssistantIdx = assistantIdx;
-                toolProcess.pendingMeta = "";
-                toolProcess.command = ["sh", "-c", "cd /etc/nixos && nix flake update 2>&1"];
-                toolProcess.running = true;
+                root.runTool(name, assistantIdx, ["sh", "-c", "cd /etc/nixos && nix flake update 2>&1"]);
                 break;
 
             case "nix_flake_check":
-                toolProcess.pendingToolName = name;
-                toolProcess.pendingAssistantIdx = assistantIdx;
-                toolProcess.pendingMeta = "";
-                toolProcess.command = ["sh", "-c", "cd /etc/nixos && nix flake check 2>&1"];
-                toolProcess.running = true;
+                root.runTool(name, assistantIdx, ["sh", "-c", "cd /etc/nixos && nix flake check 2>&1"]);
                 break;
 
             case "nix_gc":
-                toolProcess.pendingToolName = name;
-                toolProcess.pendingAssistantIdx = assistantIdx;
-                toolProcess.pendingMeta = "";
-                if (args.delete_old)
-                    toolProcess.command = ["sh", "-c", "sudo nix-collect-garbage -d 2>&1"];
-                else
-                    toolProcess.command = ["sh", "-c", "nix-collect-garbage 2>&1"];
-                toolProcess.running = true;
+                root.runTool(name, assistantIdx, args.delete_old
+                    ? ["sudo", "nix-collect-garbage", "-d"]
+                    : ["nix-collect-garbage"]);
                 break;
 
             case "nix_list_generations":
-                toolProcess.pendingToolName = name;
-                toolProcess.pendingAssistantIdx = assistantIdx;
-                toolProcess.pendingMeta = "";
-                toolProcess.command = ["nixos-rebuild", "list-generations"];
-                toolProcess.running = true;
+                root.runTool(name, assistantIdx, ["nixos-rebuild", "list-generations"]);
                 break;
 
             case "nixos_rollback":
-                toolProcess.pendingToolName = name;
-                toolProcess.pendingAssistantIdx = assistantIdx;
-                toolProcess.pendingMeta = "";
-                toolProcess.command = ["sh", "-c", "sudo nixos-rebuild switch --rollback 2>&1"];
-                toolProcess.running = true;
+                root.runTool(name, assistantIdx, ["sudo", "nixos-rebuild", "switch", "--rollback"]);
                 break;
 
             case "start_recording": {
                 if (recordProcess.running) {
-                    root.toolResult(name, assistantIdx, "Un enregistrement est d\u00E9j\u00E0 en cours : " + recordProcess.currentFile);
+                    root.toolResult(name, assistantIdx, "Un enregistrement est déjà en cours : " + recordProcess.currentFile);
                     break;
                 }
                 var now = new Date();
                 var pad = function(n) { return String(n).padStart(2, "0"); };
                 var recTs = now.getFullYear() + "-" + pad(now.getMonth()+1) + "-" + pad(now.getDate()) +
                          "T" + pad(now.getHours()) + "-" + pad(now.getMinutes()) + "-" + pad(now.getSeconds());
-                var fname = (args.filename && args.filename.trim() !== "") ? args.filename.trim() : ("rec_" + recTs);
+                var fname = (args.filename && String(args.filename).trim() !== "") ? String(args.filename).trim() : ("rec_" + recTs);
+                // Un nom de fichier, pas un chemin : ni « / » ni « .. » pour
+                // sortir de /records.
+                if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(fname) || fname.indexOf("..") >= 0) {
+                    root.toolResult(name, assistantIdx, "Nom de fichier invalide : " + fname
+                        + " (lettres, chiffres, . _ - uniquement)");
+                    break;
+                }
                 var outPath = "/records/" + fname + ".wav";
                 recordProcess.currentFile = outPath;
-                recordProcess.command = ["sh", "-c", "mkdir -p /records && arecord -f cd -t wav " + outPath];
+                // `exec` : arecord remplace le shell, donc l'arrêt du Process
+                // (stop_recording) le termine lui, au lieu de le laisser orphelin.
+                recordProcess.command = ["sh", "-c", "mkdir -p /records && exec arecord -f cd -t wav \"$1\"", "sh", outPath];
                 recordProcess.running = true;
-                root.toolResult(name, assistantIdx, "Enregistrement d\u00E9marr\u00E9 : " + outPath);
+                root.toolResult(name, assistantIdx, "Enregistrement démarré : " + outPath);
                 break;
             }
 

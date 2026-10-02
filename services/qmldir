@@ -1,3 +1,4 @@
+singleton Anna 1.0 Anna.qml
 singleton Theme 1.0 Theme.qml
 singleton Battery 1.0 Battery.qml
 singleton Fuzzy 1.0 Fuzzy.qml
@@ -11,3 +12,5 @@ ClaudeSource 1.0 ClaudeSource.qml
 singleton ClaudeSessions 1.0 ClaudeSessions.qml
 singleton DefaultApps 1.0 DefaultApps.qml
 singleton DragState 1.0 DragState.qml
+singleton Display 1.0 Display.qml
+singleton Gesture 1.0 Gesture.qml

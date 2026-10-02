@@ -28,6 +28,6 @@ Le projet est fait de **QML** + **scripts** (bash/python) + assets. Le paquet
 - **Chat IA** : Claude et Ollama (voir [Cluster IA](#ai)).
 - **Outils musicaux** : accordeur, métronome, chromagramme (voir [Outils
   musicaux](#audio-tools)).
-- **Thème dynamique** piloté par le daemon `paletted` (voir [Thème](#theme)).
+- **Thème dynamique** piloté par le daemon `anna` (voir [Thème](#theme)).
 - **Relocalisable** : aucun chemin codé en dur, les backends sont résolus
   relativement (voir [Architecture](#architecture)).

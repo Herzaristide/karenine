@@ -7,7 +7,7 @@ use std::path::PathBuf;
 /// Render all templates and write output files.
 pub fn render_all(state: &AppState) -> io::Result<()> {
     let subs = build_substitutions(state);
-    let home = home_dir();
+    let home = crate::paths::home_dir();
 
     // Fragment-only outputs under ~/.config/accent/fragments/ — referenced by
     // declarative Nix configs via import / dofile / @import. The full app
@@ -19,8 +19,8 @@ pub fn render_all(state: &AppState) -> io::Result<()> {
     //   - konsole.colorscheme    : Konsole reads a full .colorscheme file by name
     //
     // Live-reload triggers for the listed apps are handled either via file
-    // watch (Alacritty, WezTerm) or D-Bus signals (KDE).  Hyprland is reloaded
-    // via direct `hyprctl keyword` calls in `appctl.rs` — no fragment needed.
+    // watch (Alacritty, WezTerm) or D-Bus signals (KDE). Hyprland sources its
+    // fragment and is reloaded with `hyprctl reload` (see `appctl.rs`).
     // Konsole picks up the new colorscheme on the next opened tab.
     let fragments = state.accent_dir.join("fragments");
     let templates: &[(&str, PathBuf)] = &[
@@ -83,6 +83,8 @@ fn build_substitutions(state: &AppState) -> HashMap<String, String> {
     subs.insert("@ACCENT_DARK@".into(), accent.darker().to_hex());
     subs.insert("@ACCENT_MUTED@".into(), accent.muted().to_hex());
     subs.insert("@ACCENT_RGB@".into(), accent.to_rgb_str());
+    subs.insert("@ACCENT_DARK_RGB@".into(), accent.darker().to_rgb_str());
+    subs.insert("@ACCENT_MUTED_RGB@".into(), accent.muted().to_rgb_str());
     subs.insert("@ACCENT_ANSI@".into(), accent.to_ansi());
     subs.insert("@HEX@".into(), accent.hex_no_hash());
 
@@ -113,6 +115,72 @@ fn apply_substitutions(content: &str, subs: &HashMap<String, String>) -> String 
     result
 }
 
-fn home_dir() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/root".into()))
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state() -> AppState {
+        let dir = std::env::temp_dir().join(format!("anna-tmpl-{}", std::process::id()));
+        AppState::load(dir)
+    }
+
+    #[test]
+    fn substitutes_accent_and_palette_tokens() {
+        let mut s = state();
+        s.set_accent("#5277c3").unwrap();
+        let subs = build_substitutions(&s);
+        let out = apply_substitutions(
+            "a=@ACCENT@ rgb=@ACCENT_RGB@ hex=@HEX@ bg=@BASE00@ bg_rgb=@BASE00_RGB@ keep=@define",
+            &subs,
+        );
+        assert_eq!(
+            out,
+            "a=#5277c3 rgb=82,119,195 hex=5277c3 bg=#0d0d0d bg_rgb=13,13,13 keep=@define"
+        );
+    }
+
+    #[test]
+    fn palette_tokens_follow_the_active_mode() {
+        let mut s = state();
+        s.set_mode("light").unwrap();
+        let subs = build_substitutions(&s);
+        assert_eq!(subs["@BASE00@"], s.palette_light["base00"]);
+    }
+
+    /// `@UPPER_CASE@` tokens left in `s` (CSS `@define-color` etc. are not).
+    fn tokens(s: &str) -> Vec<String> {
+        let b = s.as_bytes();
+        let mut out = Vec::new();
+        for (i, &c) in b.iter().enumerate() {
+            if c != b'@' {
+                continue;
+            }
+            let len = b[i + 1..]
+                .iter()
+                .take_while(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || **c == b'_')
+                .count();
+            if len > 0 && b.get(i + 1 + len) == Some(&b'@') {
+                out.push(s[i..i + len + 2].to_string());
+            }
+        }
+        out
+    }
+
+    /// Every `@TOKEN@` used by a shipped template must be substituted —
+    /// otherwise it lands verbatim in the app's config.
+    #[test]
+    fn every_template_token_is_known() {
+        let subs = build_substitutions(&state());
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            let rendered = apply_substitutions(&fs::read_to_string(&path).unwrap(), &subs);
+            let leftover = tokens(&rendered);
+            assert!(
+                leftover.is_empty(),
+                "{}: unknown tokens {leftover:?}",
+                path.display()
+            );
+        }
+    }
 }

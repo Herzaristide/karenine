@@ -17,8 +17,10 @@ PanelWindow { // qmllint disable uncreatable-type
     property int activeWidget: 0
     property bool rightOpen: false
     property bool controlsOpen: false
+    property bool cameraOpen: false
     signal selectWidget(int index)
     signal toggleControls()
+    signal toggleCamera()
 
     // Top layer: the bar must stay painted above the windows, otherwise it
     // disappears behind them while Hyprland animates a workspace switch.
@@ -481,7 +483,111 @@ PanelWindow { // qmllint disable uncreatable-type
             }
         }
 
-        // ── Volume button — opens the controls popup ───────────────
+        // ── Camera button — gesture control (anna) ─────────────────
+        // Dim while gestures are off, full while the camera is running, red
+        // on error. Hidden if the daemon has no gesture module.
+        Item {
+            Layout.alignment: Qt.AlignVCenter
+            Layout.preferredWidth:  window.cell
+            Layout.preferredHeight: window.pillH
+            Layout.leftMargin: 4
+            visible: Gesture.available
+
+            Rectangle {
+                width: window.cell - window.capGap * 2
+                height: parent.height - window.capInset * 2
+                radius: height / 2
+                anchors.centerIn: parent
+                color: window.cameraOpen ? Theme.accentColor : Theme.iconColor
+                opacity: window.cameraOpen ? 1.0 : (camMa.containsMouse ? 0.08 : 0.0)
+                scale: window.cameraOpen ? 1.0 : 0.6
+
+                Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                Behavior on scale {
+                    NumberAnimation { duration: 260; easing.type: Easing.OutBack; easing.overshoot: 1.4 }
+                }
+                Behavior on color { ColorAnimation { duration: 220 } }
+            }
+
+            NixIcon {
+                anchors.centerIn: parent
+                source: Qt.resolvedUrl("../assets/icons/camera.svg")
+                iconSize: 17
+                color: Gesture.error !== "" && !window.cameraOpen ? Theme.colorDanger : Theme.iconColor
+                opacity: window.cameraOpen || Gesture.active ? 1.0
+                         : (camMa.containsMouse ? 0.95 : (Gesture.enabled ? 0.72 : 0.35))
+                scale: camMa.pressed ? 0.82 : 1.0
+
+                Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                Behavior on scale {
+                    NumberAnimation { duration: 240; easing.type: Easing.OutBack; easing.overshoot: 2.0 }
+                }
+            }
+
+            MouseArea {
+                id: camMa
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: window.toggleCamera()
+            }
+        }
+
+        // ── Settings button — opens the settings window ────────────
+        // Screen, appearance (theme, accent), palette. The volume popup next
+        // to it is audio only.
+        Item {
+            Layout.alignment: Qt.AlignVCenter
+            Layout.preferredWidth:  window.cell
+            Layout.preferredHeight: window.pillH
+            Layout.leftMargin: 4
+
+            Rectangle {
+                width: window.cell - window.capGap * 2
+                height: parent.height - window.capInset * 2
+                radius: height / 2
+                anchors.centerIn: parent
+                color: Theme.settingsOpen ? Theme.accentColor : Theme.iconColor
+                opacity: Theme.settingsOpen ? 1.0 : (setMa.containsMouse ? 0.08 : 0.0)
+                scale: Theme.settingsOpen ? 1.0 : 0.6
+
+                Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                Behavior on scale {
+                    NumberAnimation { duration: 260; easing.type: Easing.OutBack; easing.overshoot: 1.4 }
+                }
+                Behavior on color { ColorAnimation { duration: 220 } }
+            }
+
+            NixIcon {
+                anchors.centerIn: parent
+                source: Qt.resolvedUrl("../assets/icons/settings.svg")
+                iconSize: 17
+                color: Theme.iconColor
+                opacity: Theme.settingsOpen ? 1.0 : (setMa.containsMouse ? 0.95 : 0.72)
+                scale: setMa.pressed ? 0.82 : 1.0
+
+                Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                Behavior on scale {
+                    NumberAnimation { duration: 240; easing.type: Easing.OutBack; easing.overshoot: 2.0 }
+                }
+            }
+
+            MouseArea {
+                id: setMa
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    // One overlay at a time: the settings card would sit on
+                    // top of an open volume popup.
+                    if (window.controlsOpen)
+                        window.toggleControls();
+                    Theme.settingsOpen = !Theme.settingsOpen;
+                }
+            }
+        }
+
+        // ── Volume button — opens the audio popup ──────────────────
         Item {
             Layout.alignment: Qt.AlignVCenter
             Layout.preferredWidth:  window.cell

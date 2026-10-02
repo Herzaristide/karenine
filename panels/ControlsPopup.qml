@@ -5,9 +5,9 @@ import Quickshell.Wayland
 import "../services"
 import "../widgets"
 
-// The QuickControls block — volume, audio devices, screenshot, battery and the
-// accent picker — as a popup hung off the TopBar's right-hand buttons, instead
-// of riding along at the top of every side panel.
+// The QuickControls block — audio only: volume, mute, output and input
+// devices — as a popup hung off the TopBar's volume button, instead of riding
+// along at the top of every side panel.
 PanelWindow { // qmllint disable uncreatable-type
     id: popup
 

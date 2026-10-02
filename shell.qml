@@ -13,6 +13,8 @@ ShellRoot {
     property int activeWidget: 0
     property bool rightOpen: false
     property bool controlsOpen: false
+    // Popup caméra / gestes (bouton caméra de la barre).
+    property bool cameraOpen: false
     // Dock du bas maintenu ouvert au clavier (cf. commande IPC "dock").
     property bool dockPinned: false
 
@@ -36,6 +38,7 @@ ShellRoot {
     //   echo "widget:N" > /tmp/qs-panel.fifo   → bascule le widget N
     //   echo "dock"     > /tmp/qs-panel.fifo   → bascule le dock du bas
     //   echo "controls" > /tmp/qs-panel.fifo   → bascule le popup de contrôles
+    //   echo "camera"   > /tmp/qs-panel.fifo   → bascule le popup caméra/gestes
     //   echo "close"    > /tmp/qs-panel.fifo   → ferme le panel
     //   N : 0=Stats  1=IA  2=Notes  3=Pitch  4=Music  5=Console
     Process {
@@ -58,10 +61,15 @@ ShellRoot {
                     root.dockPinned = !root.dockPinned;
                 } else if (msg === "controls") {
                     root.controlsOpen = !root.controlsOpen;
+                } else if (msg === "camera") {
+                    root.cameraOpen = !root.cameraOpen;
+                    if (root.cameraOpen)
+                        root.controlsOpen = false;
                 } else if (msg === "close") {
                     root.panelOpen = false;
                     root.rightOpen = false;
                     root.controlsOpen = false;
+                    root.cameraOpen = false;
                     root.dockPinned = false;
                 }
             }
@@ -69,20 +77,24 @@ ShellRoot {
         onExited: Qt.callLater(function() { ipcListener.running = true; }) // qmllint disable signal-handler-parameters
     }
 
-    property string primaryScreen: "eDP-1"
+    // Écran par défaut de l'interface. La config Nix substitue cette ligne
+    // (« DP-1 » est la valeur standalone, comme dans lock.qml) : le réglage
+    // « Écran » de la fenêtre de paramètres passe devant, et à défaut des deux
+    // Display retombe sur le premier écran branché (cf. services/Display.qml).
+    property string primaryScreen: "DP-1"
 
-    // Only the primary screen. Feeding this (instead of Quickshell.screens) to
-    // the Variants below means the panels are instantiated ONCE, not once per
-    // monitor — otherwise the hidden per-screen variants still run their
-    // backends (metronome player, hardware polling…) for nothing.
-    readonly property var primaryScreens: {
-        var out = [];
-        var ss = Quickshell.screens;
-        for (var i = 0; i < ss.length; i++)
-            if (ss[i] && ss[i].name === primaryScreen)
-                out.push(ss[i]);
-        return out;
+    Binding {
+        target: Display
+        property: "defaultName"
+        value: root.primaryScreen
     }
+
+    // Only the interface screen. Feeding this (instead of Quickshell.screens)
+    // to the Variants below means the panels are instantiated ONCE, not once
+    // per monitor — otherwise the hidden per-screen variants still run their
+    // backends (metronome player, hardware polling…) for nothing. Changing the
+    // screen swaps the model, so the panels are rebuilt on the new one.
+    readonly property var primaryScreens: Display.primary ? [Display.primary] : []
 
     Variants {
         model: root.primaryScreens
@@ -90,13 +102,23 @@ ShellRoot {
         TopBar {
             property var modelData
             screen: modelData
-            visible: modelData && modelData.name === root.primaryScreen
             panelOpen: root.panelOpen
             activeWidget: root.activeWidget
             rightOpen: root.rightOpen
             controlsOpen: root.controlsOpen
+            cameraOpen: root.cameraOpen
             onSelectWidget: (idx) => root.activateWidget(idx)
-            onToggleControls: root.controlsOpen = !root.controlsOpen
+            // Les deux popups de la barre s'excluent : ils tombent au même endroit.
+            onToggleControls: {
+                root.controlsOpen = !root.controlsOpen;
+                if (root.controlsOpen)
+                    root.cameraOpen = false;
+            }
+            onToggleCamera: {
+                root.cameraOpen = !root.cameraOpen;
+                if (root.cameraOpen)
+                    root.controlsOpen = false;
+            }
         }
     }
 
@@ -106,8 +128,19 @@ ShellRoot {
         ControlsPopup {
             property var modelData
             screen: modelData
-            popupOpen: root.controlsOpen && modelData && modelData.name === root.primaryScreen
+            popupOpen: root.controlsOpen
             onDismissed: root.controlsOpen = false
+        }
+    }
+
+    Variants {
+        model: root.primaryScreens
+
+        CameraPopup {
+            property var modelData
+            screen: modelData
+            popupOpen: root.cameraOpen
+            onDismissed: root.cameraOpen = false
         }
     }
 
@@ -117,7 +150,6 @@ ShellRoot {
         SidePanel {
             property var modelData
             screen: modelData
-            visible: modelData && modelData.name === root.primaryScreen
             panelOpen: root.panelOpen
             activeWidget: root.activeWidget
         }
@@ -129,21 +161,17 @@ ShellRoot {
         RightPanel {
             property var modelData
             screen: modelData
-            visible: modelData && modelData.name === root.primaryScreen
             panelOpen: root.rightOpen
         }
     }
 
-    Variants {
-        model: root.primaryScreens
-
-        BottomDock {
-            property var modelData
-            screen: modelData
-            active: modelData && modelData.name === root.primaryScreen
-            pinned: root.dockPinned
-            onCloseRequested: root.dockPinned = false
-        }
+    // Le dock n'est pas lié à l'écran de l'interface : une seule instance, qui
+    // suit l'écran ayant le focus (cf. BottomDock, qui ne change d'écran que
+    // refermé).
+    BottomDock {
+        screen: Display.focused
+        pinned: root.dockPinned
+        onCloseRequested: root.dockPinned = false
     }
 
     Variants {
@@ -152,7 +180,7 @@ ShellRoot {
         SettingsWindow {
             property var modelData
             screen: modelData
-            visible: modelData && modelData.name === root.primaryScreen && Theme.settingsOpen
+            visible: Theme.settingsOpen
         }
     }
 }

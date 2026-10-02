@@ -68,7 +68,8 @@ QtObject {
         writeProc.running = true;
     }
 
-    function up()         { _run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%+"]); }
+    // Capped at 100 %: past it PipeWire amplifies in software and clips.
+    function up()         { _run(["wpctl", "set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", "5%+"]); }
     function down()       { _run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"]); }
     function toggleMute() { _run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]); }
 }

@@ -442,7 +442,11 @@ fn read_num(path: &str) -> Option<u64> {
 
 /// Parse the leading run of ASCII digits (e.g. "100G" → 100).
 fn parse_leading_u64(s: &str) -> u64 {
-    let digits: String = s.trim().chars().take_while(|c| c.is_ascii_digit()).collect();
+    let digits: String = s
+        .trim()
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
     digits.parse().unwrap_or(0)
 }
 

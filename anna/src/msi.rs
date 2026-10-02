@@ -20,7 +20,7 @@ use std::process::Command;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
-use tokio::time::{Instant, sleep_until};
+use tokio::time::{sleep_until, Instant};
 
 const DEBOUNCE: Duration = Duration::from_millis(200);
 const COOLDOWN: Duration = Duration::from_secs(2);
@@ -37,7 +37,7 @@ struct State {
 }
 
 pub async fn run() {
-    let socket = crate::socket_path();
+    let socket = crate::paths::socket_path();
     let cache = cache_path();
     let setter = std::env::var("MSI_RGB_SET").unwrap_or_else(|_| "msi-rgb-set".into());
 
@@ -134,4 +134,32 @@ fn apply(setter: &str, cache: &str, rgb: &str) {
 
 fn cache_path() -> String {
     std::env::var("MSI_RGB_CACHE").unwrap_or_else(|_| "/var/lib/msi-rgb/last-color".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_accent_from_watch_events() {
+        let ev = r##"{"event":"changed","state":{"accent":"#aa3366","mode":"dark"}}"##;
+        assert_eq!(parse_accent(ev).as_deref(), Some("#aa3366"));
+        let initial = r##"{"ok":true,"state":{"accent":"#5277c3"}}"##;
+        assert_eq!(parse_accent(initial).as_deref(), Some("#5277c3"));
+        assert_eq!(parse_accent(r#"{"ok":false,"error":"x"}"#), None);
+        assert_eq!(parse_accent("garbage"), None);
+    }
+
+    #[test]
+    fn deadline_debounces_and_respects_cooldown() {
+        let before = Instant::now();
+        let first = next_deadline(None);
+        assert!(first >= before + DEBOUNCE);
+        // Just applied: the cooldown dominates the debounce.
+        let after_apply = next_deadline(Some(Instant::now()));
+        assert!(after_apply >= before + COOLDOWN);
+        // Applied long ago: back to the plain debounce.
+        let long_ago = Instant::now() - COOLDOWN * 2;
+        assert!(next_deadline(Some(long_ago)) < Instant::now() + COOLDOWN);
+    }
 }

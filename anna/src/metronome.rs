@@ -124,11 +124,11 @@ struct Gen {
     running: Arc<AtomicBool>,
     start_flag: Arc<AtomicBool>,
     beat_tx: Sender<i32>,
-    pos: usize,           // samples elapsed in the current beat
-    spb: usize,           // samples per beat (recomputed each boundary)
-    beat_index: i32,      // current beat within the bar
+    pos: usize,      // samples elapsed in the current beat
+    spb: usize,      // samples per beat (recomputed each boundary)
+    beat_index: i32, // current beat within the bar
     click_is_accent: bool,
-    click_cursor: usize,  // index into the active click buffer
+    click_cursor: usize, // index into the active click buffer
 }
 
 impl Gen {
@@ -262,7 +262,14 @@ fn build_output_stream(
 /// Synthesize a click: a sine at `freq` over `dur_s` with linear attack/release
 /// ramps, scaled by `gain` (linear amplitude). Mirrors the sox-generated clicks
 /// the shell backend used (1760 Hz accent, 880 Hz tick).
-fn synth_click(sample_rate: u32, freq: f32, dur_s: f32, attack_s: f32, release_s: f32, gain: f32) -> Vec<f32> {
+fn synth_click(
+    sample_rate: u32,
+    freq: f32,
+    dur_s: f32,
+    attack_s: f32,
+    release_s: f32,
+    gain: f32,
+) -> Vec<f32> {
     let n = (sample_rate as f32 * dur_s) as usize;
     let atk = (sample_rate as f32 * attack_s).max(1.0);
     let rel = (sample_rate as f32 * release_s).max(1.0);

@@ -7,19 +7,22 @@ links: [widgets, audio-tools, ai, architecture]
 
 # Backend (`anna`)
 
-Tout le backend est un **daemon Rust unique**, `anna` (dossier `anna/`). Il n'y a
-plus de scripts bash/python : les widgets parlent à `anna` via un **socket Unix**
+Tout le backend est un **daemon Rust unique**, `anna` (dossier `anna/`). Un seul
+daemon par session : s'il trouve le socket déjà servi, il refuse de démarrer au
+lieu de le voler. Plus de backend bash/python : les widgets parlent à `anna` via
+un **socket Unix**
 (`$XDG_RUNTIME_DIR/anna.sock`) en JSON, une ligne par message.
 
 ## Services exposés
 
 | Service | Commande | Rôle |
 | --- | --- | --- |
-| thème | `set` / `mode` / `palette-color` / `get` / `watch` | Accent + palette base16, rendu des templates, live-reload. |
+| thème | `set` / `mode` / `palette-color` / `reset` / `get` / `watch` | Accent + palette base16, rendu des templates, live-reload. Les rafales (glisser, arc-en-ciel) sont fusionnées : seul l'état le plus récent est appliqué. |
 | hwstats | `hwstats_get` / `hwstats_watch` | Stats matérielles (CPU/RAM/GPU/disques). |
 | tuner | `tuner_watch` | Détection de hauteur — `{"pitch":<hz>}` par frame. |
 | chroma | `chroma_watch` | Chromagramme 12 classes — `{"chroma":[…],"top":[…]}`. |
-| metronome | `metronome` | Session de clic sample-accurate, `{"beat":<n>}`. |
+| metronome | `metronome` | Session de clic sample-accurate, `{"beat":<n>}`. BPM bornés à 20–300, temps par mesure à 1–16. |
+| gestes | `gesture_get` / `gesture_set` / `gesture_toggle` / `gesture_watch` / `gesture_cameras` / `gesture_set_camera` | Contrôle par webcam (curseur, saisie de fenêtre, changement de workspace). **Désactivé par défaut**. |
 
 ## Audio natif
 

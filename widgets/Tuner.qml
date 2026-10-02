@@ -43,7 +43,7 @@ Item {
     // captured by anna only while this connection is open (i.e. while active).
     Socket {
         id: tunerSock
-        path: (Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/1000") + "/anna.sock"
+        path: Anna.socketPath
         parser: SplitParser {
             onRead: (line) => {
                 try {

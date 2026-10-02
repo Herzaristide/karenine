@@ -11,11 +11,14 @@ configuration NixOS qui consomme ce dépôt comme *input de flake*.
 ```
 shell.qml            Point d'entrée Quickshell (barre + panneaux, IPC via FIFO)
 services/            Singletons transverses
-  Theme.qml            État de thème (lit le daemon paletted, defaults intégrés)
+  Anna.qml             Chemin du socket du daemon anna (partagé par les widgets)
+  Theme.qml            État de thème (lit state.json écrit par anna, defaults intégrés)
+  Display.qml          Choix de l'écran de l'interface (persisté) + workspaces qui le suivent
+  Gesture.qml          Contrôle gestuel par webcam (piloté par anna)
   Search.qml           Agrégateur de recherche + <Type>Source.qml (app, fichier,
                        web, paramètre, conversation), Fuzzy, DefaultApps, Audio
 panels/              Chrome de haut niveau (fenêtres Wayland)
-  TopBar, SidePanel, RightPanel, SettingsWindow
+  TopBar, SidePanel, RightPanel, SettingsWindow, ControlsPopup, CameraPopup
   BottomDock           Dock au survol du bord bas : navigation + recherche
   cards/               Cartes du dock, une par type de résultat
 widgets/             Contenu des panneaux
@@ -23,8 +26,11 @@ widgets/             Contenu des panneaux
   QuickControls, ChromaGraph, MiniGraph, Settings, ConsoleWidget
 ai/                  Cluster chat IA
   AIPanel (sélecteur), ClaudeChat, OllamaChat, OllamaTools
-anna/                Daemon Rust unique — thème, hwstats, tuner, chroma, métronome
-assets/              nixos.svg
+lock/                Écran de verrouillage (lock.qml) : horloge, musique, stats
+anna/                Daemon Rust unique — thème, hwstats, tuner, chroma, métronome,
+                     gestes webcam
+tests/               Tests QML (qmltestrunner) — `tests/run.sh`
+assets/              nixos.svg, icons/
 ```
 
 Chaque sous-dossier a un `qmldir`. Les composants sont importés par chemin relatif
@@ -33,8 +39,9 @@ Chaque sous-dossier a un `qmldir`. Les composants sont importés par chemin rela
 
 Tout le backend est le daemon Rust `anna` : les widgets s'y connectent via un
 **socket Unix** (`$XDG_RUNTIME_DIR/anna.sock`) et échangent du JSON ligne par
-ligne (type `Quickshell.Io.Socket`). Plus aucun script bash/python ni dépendance
-`parec`/`numpy`. L'audio (accordeur, chromagramme, métronome) est natif via
+ligne (type `Quickshell.Io.Socket`). Plus de backend bash/python ni de dépendance
+`parec`/`numpy` (seuls restent deux petits scripts d'indexation des sessions
+Claude, `services/claude-*.sh`). L'audio (accordeur, chromagramme, métronome) est natif via
 `cpal` + `rustfft`, à la fréquence réelle du périphérique. (Le dock du bas,
 lui, appelle quelques outils du système — voir *Dépendances externes* plus bas.)
 
@@ -80,11 +87,13 @@ sur le premier candidat connu trouvé dans le `$PATH`.
 
 ## Configuration
 
-Deux réglages sont codés en dur (pas de placeholder de build) :
+Deux valeurs par défaut sont codées en dur :
 
-- Écran de la barre : `primaryScreen: "DP-1"` dans `shell.qml`.
+- Écran de la barre par défaut : `primaryScreen: "DP-1"` dans `shell.qml` (substitué
+  par la config Nix). Le réglage « Écran » de la fenêtre de paramètres passe devant
+  et est persisté dans `~/.local/share/quickshell/by-shell/<id>/display.json`.
 - Couleur d'accent par défaut : `#5277c3` dans `services/Theme.qml` (surchargée à
-  chaud par le daemon `paletted` quand il tourne ; sans lui, les defaults intégrés
+  chaud par le daemon `anna` quand il tourne ; sans lui, les defaults intégrés
   s'appliquent).
 
 ## Installation
@@ -106,6 +115,10 @@ sous-dossiers), builder `anna` (`cargo build --release` dans `anna/`, nécessite
 
 ## Développement
 
-- `nix build .#default` (ou `nix flake check`) : valide que le layout s'assemble.
-- `nix fmt` : formate le `flake.nix`.
-- La CI build le daemon `anna` (`cargo`) et `nix build` le layout.
+- `nix flake check` : assemble le layout, passe tout le QML à qmllint (zéro
+  warning toléré) et lance les tests QML (`tests/run.sh`, qmltestrunner).
+- `cd anna && cargo test` : tests du daemon (thème, protocole, client, DSP de
+  l'accordeur et du chromagramme, reconnaissance des gestes…).
+- `nix fmt` : formate le `flake.nix` ; `cargo fmt` dans `anna/`.
+- La CI vérifie `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`
+  et `nix flake check`.

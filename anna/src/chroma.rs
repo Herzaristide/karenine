@@ -108,7 +108,11 @@ fn chroma_json(ema: &[f32; 12]) -> String {
     let values: Vec<String> = ema.iter().map(|v| format!("{v:.3}")).collect();
 
     let mut order: Vec<usize> = (0..12).collect();
-    order.sort_by(|&a, &b| ema[b].partial_cmp(&ema[a]).unwrap_or(std::cmp::Ordering::Equal));
+    order.sort_by(|&a, &b| {
+        ema[b]
+            .partial_cmp(&ema[a])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let top: Vec<String> = order
         .iter()
         .take(3)
@@ -120,4 +124,69 @@ fn chroma_json(ema: &[f32; 12]) -> String {
         values.join(","),
         top.join(",")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::testbench::{run as bench, sine};
+
+    fn parse(line: &str) -> (Vec<f64>, Vec<String>) {
+        let v: serde_json::Value = serde_json::from_str(line).unwrap();
+        let chroma = v["chroma"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x.as_f64().unwrap())
+            .collect();
+        let top = v["top"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x.as_str().unwrap().into())
+            .collect();
+        (chroma, top)
+    }
+
+    #[test]
+    fn a440_lights_up_a() {
+        let lines = bench(run, 48_000, sine(440.0, 48_000, 1.0));
+        let (chroma, top) = parse(lines.last().unwrap());
+        assert_eq!(chroma.len(), 12);
+        assert_eq!(top[0], "A");
+        assert!(chroma[9] > 0.5, "A bin = {}", chroma[9]);
+    }
+
+    #[test]
+    fn c_major_triad_tops_are_c_e_g() {
+        let sr = 44_100;
+        let (c, e, g) = (
+            sine(261.63, sr, 1.0),
+            sine(329.63, sr, 1.0),
+            sine(392.0, sr, 1.0),
+        );
+        let mix: Vec<f32> = (0..c.len()).map(|i| (c[i] + e[i] + g[i]) / 3.0).collect();
+        let (_, mut top) = parse(bench(run, sr, mix).last().unwrap());
+        top.sort();
+        assert_eq!(top, ["C", "E", "G"]);
+    }
+
+    #[test]
+    fn silence_decays_and_still_reports() {
+        let lines = bench(run, 48_000, vec![0.0; 48_000]);
+        assert!(!lines.is_empty());
+        let (chroma, _) = parse(lines.last().unwrap());
+        assert!(chroma.iter().all(|&v| v == 0.0));
+    }
+
+    #[test]
+    fn json_is_valid_and_sorted() {
+        let mut ema = [0.0f32; 12];
+        ema[4] = 0.5; // E
+        ema[0] = 0.3; // C
+        ema[7] = 0.2; // G
+        let (chroma, top) = parse(&chroma_json(&ema));
+        assert_eq!(top, ["E", "C", "G"]);
+        assert!((chroma[4] - 0.5).abs() < 1e-9);
+    }
 }

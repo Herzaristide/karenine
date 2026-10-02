@@ -5,28 +5,13 @@ import QtQuick.Controls
 import Quickshell.Io
 import "../services"
 
+// Audio only: volume, mute, output and input devices. Everything else lives
+// elsewhere — theme, accent and palette in the settings window (the TopBar's
+// gear button), battery in the TopBar itself, screenshots on Print.
 Item {
     id: root
 
     implicitHeight: controlsCol.implicitHeight + 16
-
-    // ── Accent color picker state ──────────────────────────────────────────
-    property bool colorPickerOpen: false
-    property bool rainbowActive:   false
-    property real rainbowHue:      0.0
-
-    Timer {
-        id: rainbowTimer
-        interval: 100
-        repeat:   true
-        running:  root.rainbowActive
-        onTriggered: {
-            root.rainbowHue = (root.rainbowHue + 0.025) % 1.0
-            accentPicker.pickerH = root.rainbowHue
-            accentFieldCanvas.requestPaint()
-            accentPicker.updateAccent()
-        }
-    }
 
     // ── State ──────────────────────────────────────────────────────────────
     property real  volumeLevel: 0.0
@@ -36,7 +21,7 @@ Item {
     // ── wpctl get-volume ───────────────────────────────────────────────────
     Process {
         id: getVolProc
-        command: ["sh", "-c", "wpctl get-volume @DEFAULT_AUDIO_SINK@"]
+        command: ["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"]
         stdout: StdioCollector { id: getVolOut }
         onRunningChanged: {
             if (!running) {
@@ -57,38 +42,19 @@ Item {
     // ── wpctl set-volume ───────────────────────────────────────────────────
     Process {
         id: setVolProc
-        property string pendingCmd: ""
-        command: ["sh", "-c", pendingCmd]
+        property var pendingArgs: []
+        command: ["wpctl"].concat(pendingArgs)
         onRunningChanged: {
             if (!running && !getVolProc.running) getVolProc.running = true;
         }
     }
 
-    function volumeUp()   { setVolProc.pendingCmd = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+";    setVolProc.running = true; }
-    function volumeDown() { setVolProc.pendingCmd = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-";    setVolProc.running = true; }
-    function toggleMute() { setVolProc.pendingCmd = "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle";   setVolProc.running = true; }
-
-    // ── grimblast screenshot ───────────────────────────────────────────────
-    Process {
-        id: shotProc
-        property string pendingCmd: ""
-        command: ["sh", "-c", pendingCmd]
-        onRunningChanged: {
-            if (!running) notifyProc.running = true;
-        }
-    }
-
-    Process {
-        id: notifyProc
-        command: ["notify-send", "-i", "camera-photo", "Screenshot", "Saved to /tmp/"]
-    }
-
-    function takeScreenshot(region) {
-        var ts   = Qt.formatDateTime(new Date(), "yyyyMMdd_HHmmss");
-        var path = "/tmp/screenshot-" + ts + ".png";
-        shotProc.pendingCmd = "grimblast copysave " + region + " '" + path + "'";
-        shotProc.running    = true;
-    }
+    // Capped at 100 % (-l 1.0): past it PipeWire amplifies in software, and
+    // the output clips.
+    function _wpctl(args) { setVolProc.pendingArgs = args; setVolProc.running = true; }
+    function volumeUp()   { root._wpctl(["set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", "5%+"]); }
+    function volumeDown() { root._wpctl(["set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"]); }
+    function toggleMute() { root._wpctl(["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]); }
 
     // ── wpctl status → parse sinks + sources ──────────────────────────────
     property var    sinks:           []
@@ -126,7 +92,7 @@ Item {
 
     Process {
         id: setDefaultProc
-        command: ["sh", "-c", "wpctl set-default \"$1\"", "--", root.pendingDeviceId]
+        command: ["wpctl", "set-default", root.pendingDeviceId]
         onRunningChanged: {
             if (!running && !statusProc.running) statusProc.running = true;
         }
@@ -146,19 +112,6 @@ Item {
         var next = (cur + dir + list.length) % list.length;
         root.pendingDeviceId = list[next].id;
         setDefaultProc.running = true;
-    }
-
-    // ── Battery state ──────────────────────────────────────────────────────
-    // Polled by the Battery singleton — the TopBar shows it too, so it is
-    // read once and shared rather than polled from both places.
-    readonly property bool   batteryPresent: Battery.present
-    readonly property int    batteryPercent: Battery.percent
-    readonly property string batteryStatus:  Battery.status
-
-    function batteryString() {
-        return batteryPresent
-            ? "bat  " + Battery.symbol + " " + batteryPercent + "%"
-            : "";
     }
 
     // ── Refresh timer ──────────────────────────────────────────────────────
@@ -191,7 +144,7 @@ Item {
             spacing: 6
 
             Text {
-                text:            "CONTRÔLES"
+                text:            "AUDIO"
                 font.family:     "JetBrains Mono"
                 font.pixelSize:  12
                 font.bold:       true
@@ -199,49 +152,6 @@ Item {
             }
 
             Item { Layout.fillWidth: true }
-
-            // Dark / Light mode toggle pill
-            Rectangle {
-                id: themePill
-                Layout.preferredWidth: 32; Layout.preferredHeight: 16; radius: 8
-                color: Theme.darkMode ? Theme.accentDark : Theme.accentColor
-                Behavior on color { ColorAnimation { duration: 200 } }
-                Rectangle {
-                    width: 10; height: 10; radius: 5
-                    anchors.verticalCenter: parent.verticalCenter
-                    x: Theme.darkMode ? 18 : 4
-                    color: Theme.iconColor
-                    Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                }
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: Theme.toggleTheme()
-                }
-            }
-
-            // Accent color square
-            Rectangle {
-                id: accentSquare
-                Layout.preferredWidth: 16; Layout.preferredHeight: 16; radius: 3
-                color: Theme.accentColor
-                border.color: accentSquareHover.containsMouse
-                              ? Qt.rgba(Theme.iconColor.r, Theme.iconColor.g, Theme.iconColor.b, 0.6)
-                              : Qt.rgba(Theme.iconColor.r, Theme.iconColor.g, Theme.iconColor.b, 0.25)
-                border.width: 1
-                Behavior on border.color { ColorAnimation { duration: 100 } }
-                MouseArea {
-                    id:           accentSquareHover
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape:  Qt.PointingHandCursor
-                    onClicked: {
-                        root.colorPickerOpen = !root.colorPickerOpen
-                        if (root.colorPickerOpen)
-                            accentPicker.initFromColor(Theme.accentColor)
-                    }
-                }
-            }
 
             // Volume buttons
             Repeater {
@@ -268,248 +178,6 @@ Item {
                     }
                 }
             }
-
-            // Settings button
-            Text {
-                text:        "[⚙]"
-                font.family: "JetBrains Mono"
-                font.pixelSize: 11
-                color: Theme.settingsOpen
-                       ? Theme.accentColor
-                       : (settingsBtnHover.containsMouse ? Theme.accentColor : Theme.textInactive)
-                Behavior on color { ColorAnimation { duration: 100 } }
-                MouseArea {
-                    id:           settingsBtnHover
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape:  Qt.PointingHandCursor
-                    onClicked:    Theme.settingsOpen = !Theme.settingsOpen
-                }
-            }
-        }
-
-        // ── Accent color picker (collapsible) ────────────────────────────
-        Item {
-            id: accentPicker
-            Layout.fillWidth: true
-            Layout.preferredHeight: root.colorPickerOpen ? 162 : 0
-            clip: true
-            visible: root.colorPickerOpen
-
-            Behavior on Layout.preferredHeight { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-
-            // ── Internal HSV state ─────────────────────────────────────
-            property real pickerH: 0.667
-            property real pickerS: 0.5
-            property real pickerV: 0.56
-
-            Component.onCompleted: initFromColor(Theme.accentColor)
-
-            function initFromColor(c) {
-                var hsv = rgbToHsv(c.r, c.g, c.b)
-                pickerH = hsv.h; pickerS = hsv.s; pickerV = hsv.v
-            }
-            function rgbToHsv(r, g, b) {
-                var max = Math.max(r, g, b), min = Math.min(r, g, b)
-                var delta = max - min, h = 0, s = 0, v = max
-                if (max > 0) s = delta / max
-                if (delta > 0) {
-                    if (max === r)      h = ((g - b) / delta) % 6
-                    else if (max === g) h = (b - r) / delta + 2
-                    else               h = (r - g) / delta + 4
-                    h /= 6; if (h < 0) h += 1
-                }
-                return { h: h, s: s, v: v }
-            }
-            function hsvToHex(h, s, v) {
-                var i = Math.floor(h * 6), f = h * 6 - i
-                var p = v*(1-s), q = v*(1-f*s), t = v*(1-(1-f)*s)
-                var r, g, b
-                switch (i % 6) {
-                    case 0: r=v; g=t; b=p; break; case 1: r=q; g=v; b=p; break
-                    case 2: r=p; g=v; b=t; break; case 3: r=p; g=q; b=v; break
-                    case 4: r=t; g=p; b=v; break; case 5: r=v; g=p; b=q; break
-                }
-                function x2h(n) { var s = Math.round(n*255).toString(16); return s.length===1?"0"+s:s }
-                return "#" + x2h(r) + x2h(g) + x2h(b)
-            }
-            function updateAccent() {
-                Theme.setAccentColor(hsvToHex(pickerH, pickerS, pickerV))
-            }
-
-            property bool userInteracting: false
-            Connections {
-                target: Theme
-                function onAccentColorChanged() {
-                    if (!accentPicker.userInteracting && !root.rainbowActive)
-                        accentPicker.initFromColor(Theme.accentColor)
-                }
-            }
-
-            ColumnLayout {
-                anchors.fill: parent
-                spacing: 4
-
-                // Saturation / brightness field ──────────────────────────
-                Canvas {
-                    id: accentFieldCanvas
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 100
-
-                    Connections {
-                        target: accentPicker
-                        function onPickerHChanged() { accentFieldCanvas.requestPaint() }
-                    }
-                    onPaint: {
-                        var ctx = getContext("2d"), w = width, h = height
-                        ctx.fillStyle = accentPicker.hsvToHex(accentPicker.pickerH, 1.0, 1.0)
-                        ctx.fillRect(0, 0, w, h)
-                        var wg = ctx.createLinearGradient(0,0,w,0)
-                        wg.addColorStop(0.0,"rgba(255,255,255,1)"); wg.addColorStop(1.0,"rgba(255,255,255,0)")
-                        ctx.fillStyle=wg; ctx.fillRect(0,0,w,h)
-                        var bg = ctx.createLinearGradient(0,0,0,h)
-                        bg.addColorStop(0.0,"rgba(0,0,0,0)"); bg.addColorStop(1.0,"rgba(0,0,0,1)")
-                        ctx.fillStyle=bg; ctx.fillRect(0,0,w,h)
-                    }
-                    // Crosshair
-                    Rectangle {
-                        x: accentPicker.pickerS * accentFieldCanvas.width  - width/2
-                        y: (1-accentPicker.pickerV) * accentFieldCanvas.height - height/2
-                        width:14; height:14; radius:7; color:"transparent"
-                        border.color:Theme.iconColor; border.width:2; antialiasing:true
-                        Rectangle { anchors.centerIn:parent; width:6; height:6; radius:3
-                            color:"transparent"; border.color:Qt.rgba(0,0,0,0.55); border.width:1 }
-                    }
-                    MouseArea {
-                        anchors.fill: parent; cursorShape: Qt.CrossCursor
-                        function pick(m) {
-                            accentPicker.pickerS = Math.max(0, Math.min(1, m.x/width))
-                            accentPicker.pickerV = Math.max(0, Math.min(1, 1-m.y/height))
-                            accentPicker.updateAccent()
-                        }
-                        onPressed:  (m) => { accentPicker.userInteracting=true; pick(m) }
-                        onReleased: accentPicker.userInteracting=false
-                        onPositionChanged: (m) => { if(pressed) pick(m) }
-                    }
-                }
-
-                // Hue strip ──────────────────────────────────────────────
-                Item {
-                    id: accentHueRow
-                    Layout.fillWidth: true; Layout.preferredHeight: 12
-                    Canvas {
-                        id: accentHueCanvas
-                        anchors.fill: parent
-                        onPaint: {
-                            var ctx=getContext("2d"), grad=ctx.createLinearGradient(0,0,width,0)
-                            for(var i=0;i<=12;i++) grad.addColorStop(i/12,"hsl("+Math.round(i/12*360)+",100%,50%)")
-                            var r=4
-                            ctx.beginPath(); ctx.moveTo(r,0); ctx.lineTo(width-r,0)
-                            ctx.arcTo(width,0,width,r,r); ctx.lineTo(width,height-r)
-                            ctx.arcTo(width,height,width-r,height,r); ctx.lineTo(r,height)
-                            ctx.arcTo(0,height,0,height-r,r); ctx.lineTo(0,r)
-                            ctx.arcTo(0,0,r,0,r); ctx.closePath()
-                            ctx.fillStyle=grad; ctx.fill()
-                        }
-                        MouseArea {
-                            anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                            function pick(m) {
-                                accentPicker.pickerH=Math.max(0,Math.min(0.9999,m.x/width))
-                                accentFieldCanvas.requestPaint(); accentPicker.updateAccent()
-                            }
-                            onPressed:  (m)=>{ accentPicker.userInteracting=true; pick(m) }
-                            onReleased: accentPicker.userInteracting=false
-                            onPositionChanged: (m)=>{ if(pressed) pick(m) }
-                        }
-                    }
-                    // Thumb
-                    Rectangle {
-                        x: accentPicker.pickerH * accentHueRow.width - width/2; y: -2
-                        width:5; height:accentHueRow.height+4; radius:2.5
-                        color:Theme.iconColor; border.color:Qt.rgba(0,0,0,0.45); border.width:1; antialiasing:true
-                    }
-                }
-
-                // Hex input + rainbow row ────────────────────────────────
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 6
-
-                    TextField {
-                        id: accentHexField
-                        Layout.fillWidth: true
-                        text: Theme.accentColor.toString().toUpperCase()
-                        font.family: "JetBrains Mono"; font.pixelSize: 11
-                        color: Theme.textPrimary
-                        leftPadding: 6; rightPadding: 6; topPadding: 3; bottomPadding: 3
-                        selectByMouse: true
-                        background: Rectangle {
-                            color: Theme.bgInput; radius: 4
-                            border.color: Theme.accentDark; border.width: 1
-                        }
-                        Connections {
-                            target: Theme
-                            function onAccentColorChanged() {
-                                if (!accentHexField.activeFocus)
-                                    accentHexField.text = Theme.accentColor.toString().toUpperCase()
-                            }
-                        }
-                        onEditingFinished: {
-                            var t = text.trim()
-                            if (!t.startsWith("#")) t = "#" + t
-                            if (/^#[0-9a-fA-F]{6}$/.test(t) || /^#[0-9a-fA-F]{3}$/.test(t)) {
-                                accentPicker.initFromColor(Qt.color(t))
-                                Theme.setAccentColor(t.toLowerCase())
-                            } else {
-                                text = Theme.accentColor.toString().toUpperCase()
-                            }
-                        }
-                    }
-
-                    // Rainbow toggle button
-                    Item {
-                        Layout.preferredWidth: 72; Layout.preferredHeight: 22
-                        Canvas {
-                            anchors.fill: parent
-                            onPaint: {
-                                var ctx=getContext("2d"), grad=ctx.createLinearGradient(0,0,width,0)
-                                for(var i=0;i<=12;i++) grad.addColorStop(i/12,"hsl("+Math.round(i/12*360)+",90%,55%)")
-                                var r=5
-                                ctx.beginPath(); ctx.moveTo(r,0); ctx.lineTo(width-r,0)
-                                ctx.arcTo(width,0,width,r,r); ctx.lineTo(width,height-r)
-                                ctx.arcTo(width,height,width-r,height,r); ctx.lineTo(r,height)
-                                ctx.arcTo(0,height,0,height-r,r); ctx.lineTo(0,r)
-                                ctx.arcTo(0,0,r,0,r); ctx.closePath()
-                                ctx.fillStyle=grad; ctx.fill()
-                            }
-                        }
-                        Rectangle {
-                            anchors.fill: parent; radius: 5; color: Theme.bgDeep
-                            opacity: root.rainbowActive ? 0.10 : 0.45
-                            Behavior on opacity { NumberAnimation { duration: 200 } }
-                        }
-                        Rectangle {
-                            anchors.fill: parent; radius: 5; color: "transparent"
-                            border.color: Theme.iconColor; border.width: 1
-                            opacity: root.rainbowActive ? 0.8 : 0.0
-                            Behavior on opacity { NumberAnimation { duration: 200 } }
-                        }
-                        Text {
-                            anchors.centerIn: parent
-                            text: root.rainbowActive ? "stop" : "rainbow"
-                            font.family: "JetBrains Mono"; font.pixelSize: 10
-                            color: Theme.iconColor
-                        }
-                        MouseArea {
-                            anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                if (!root.rainbowActive) root.rainbowHue = accentPicker.pickerH
-                                root.rainbowActive = !root.rainbowActive
-                            }
-                        }
-                    }
-                }
-            }
         }
 
         // Volume readout ─────────────────────────────────────────────────
@@ -518,62 +186,6 @@ Item {
             font.family:    "JetBrains Mono"
             font.pixelSize: 11
             color:          root.isMuted ? Theme.textDim : Theme.textInactive
-        }
-
-        // Battery readout ────────────────────────────────────────────────
-        Text {
-            visible:        root.batteryPresent
-            text:           root.batteryString()
-            font.family:    "JetBrains Mono"
-            font.pixelSize: 11
-            color: {
-                if (!root.batteryPresent) return Theme.textInactive;
-                if (root.batteryStatus === "Charging" || root.batteryStatus === "Full")
-                    return Theme.accentColor;
-                if (root.batteryPercent <= 15) return Theme.colorDanger;
-                if (root.batteryPercent <= 30) return Theme.textDim;
-                return Theme.textInactive;
-            }
-        }
-
-        // Screenshot row ─────────────────────────────────────────────────
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 6
-
-            Text {
-                text:           "CAPTURE"
-                font.family:    "JetBrains Mono"
-                font.pixelSize: 11
-                font.bold:      true
-                color:          Theme.textInactive
-            }
-
-            Item { Layout.fillWidth: true }
-
-            Repeater {
-                model: [
-                    { label: "[screenshot]", region: "screen" },
-                    { label: "[zone]",       region: "area"   }
-                ]
-
-                delegate: Text {
-                    id: shotBtn
-                    required property var modelData
-                    text:           modelData.label
-                    font.family:    "JetBrains Mono"
-                    font.pixelSize: 11
-                    color:          shotBtnHover.containsMouse ? Theme.accentColor : Theme.textInactive
-                    Behavior on color { ColorAnimation { duration: 100 } }
-                    MouseArea {
-                        id:           shotBtnHover
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape:  Qt.PointingHandCursor
-                        onClicked:    root.takeScreenshot(shotBtn.modelData.region)
-                    }
-                }
-            }
         }
 
         // Output device row ────────────────────────────────────────────────

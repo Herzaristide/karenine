@@ -82,7 +82,7 @@
               log=$(${qt}/bin/qmllint \
                 -I ${qt}/lib/qt-6/qml \
                 -I ${qs}/lib/qt-6/qml \
-                $(find ${self} -name '*.qml') 2>&1) || true
+                $(find ${self} -name '*.qml' -not -path '*/tests/*') 2>&1) || true
               if printf '%s\n' "$log" | grep -qE '^(Warning|Error)'; then
                 printf '%s\n' "$log"
                 echo "qmllint a signalé des problèmes (voir ci-dessus)" >&2
@@ -90,6 +90,19 @@
               fi
               touch $out
             '';
+
+          # Tests QML (qmltestrunner, plateforme offscreen) — voir tests/run.sh.
+          qmltest =
+            pkgs.runCommand "karenine-qmltest"
+              {
+                nativeBuildInputs = [ pkgs.qt6.qtdeclarative ];
+                QT_PLUGIN_PATH = "${pkgs.qt6.qtbase}/${pkgs.qt6.qtbase.qtPluginPrefix}";
+              }
+              ''
+                export HOME=$TMPDIR
+                sh ${self}/tests/run.sh ${pkgs.qt6.qtdeclarative}/lib/qt-6/qml
+                touch $out
+              '';
         }
       );
 

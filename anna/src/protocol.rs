@@ -22,6 +22,8 @@ pub enum Command {
         color: String,
         mode: Option<String>,
     },
+    /// Restore the default accent and the active mode's default palette.
+    ResetTheme,
     GetState,
     /// Keep connection open; daemon pushes `Event` messages on every state change.
     Watch,
@@ -45,6 +47,25 @@ pub enum Command {
     /// `{"action":"beats","value":4}`) and the daemon pushes `{"beat":<n>}`
     /// events, driving a sample-accurate cpal output stream.
     Metronome,
+
+    // ── gesture control (webcam) ──────────────────────────────────────────
+    /// Print the gesture status once: `{"enabled","active","mode","fps","error"}`.
+    GestureGet,
+    /// Enable/disable the camera (persisted), then print the status.
+    GestureSet {
+        enabled: bool,
+    },
+    /// Flip the enabled flag, then print the status.
+    GestureToggle,
+    /// List capture devices: `[{"path":"/dev/video0","name":"HD Webcam"}, …]`.
+    GestureCameras,
+    /// Switch capture device (persisted, applied live), then print the status.
+    GestureSetCamera {
+        device: String,
+    },
+    /// Keep connection open; daemon pushes the status on every change
+    /// (mode, fps once per second, enable/disable, errors).
+    GestureWatch,
 }
 
 // ── Shared state payload ──────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 pragma Singleton
 import QtQuick
 import QtCore
+import Quickshell
 import Quickshell.Io
 
 QtObject {
@@ -120,8 +121,9 @@ QtObject {
 
     property Process wallpaperProcess: Process {
         property string pendingVariant: "dark"
-        command: ["sh", "-c",
-                  "awww img $HOME/.config/wallpaper-" + pendingVariant + " --transition-type=fade --transition-duration 0.1 --transition-fps 255"]
+        command: ["awww", "img", Quickshell.env("HOME") + "/.config/wallpaper-" + pendingVariant,
+                  "--transition-type=fade", "--transition-duration", "0.1",
+                  "--transition-fps", "255"]
     }
 
     function toggleTheme() {
@@ -133,8 +135,7 @@ QtObject {
         // Delegate mode change to the daemon — it re-renders all templates,
         // fires live-reload signals, and writes the updated state.json which
         // this FileView will pick up automatically.
-        accentModeProcess._pendingMode = newMode
-        accentModeProcess.running = true
+        themeRoot._anna("mode", ["mode", newMode])
     }
 
     // ── Preset palette ─────────────────────────────────────────────────────
@@ -147,46 +148,36 @@ QtObject {
     ]
 
     // ── IPC with the anna daemon ───────────────────────────────────────────
-    // Both processes send a JSON command to the Unix socket via the `anna`
-    // CLI client.  state.json is updated by the daemon on completion and
-    // picked up by _stateFile's watchChanges.
+    // Commands go through the `anna` CLI client. state.json is updated by the
+    // daemon on completion and picked up by _stateFile's watchChanges.
 
-    property Process accentSetProcess: Process {
-        property string pendingColor: ""
-        command: ["anna", "set", pendingColor]
+    // Une commande `anna` à la fois, dans l'ordre. Lancer un Process déjà en
+    // cours ne fait rien : sans file, la dernière couleur d'un glisser (ou d'un
+    // pas d'arc-en-ciel) était perdue dès que la précédente n'avait pas fini.
+    // Chaque commande occupe un « slot » ("accent", "mode", "palette:base08"…) :
+    // une nouvelle valeur remplace celle qui attendait encore dans le même slot,
+    // le daemon n'applique donc que la plus récente.
+    property var _annaQueue: []
+
+    property Process annaProcess: Process {
+        onExited: Qt.callLater(themeRoot._runNextAnna) // qmllint disable signal-handler-parameters
     }
 
-    property Process accentModeProcess: Process {
-        property string _pendingMode: "dark"
-        command: ["anna", "mode", _pendingMode]
+    function _anna(slot, args) {
+        var q = themeRoot._annaQueue.filter(function (e) { return e.slot !== slot })
+        q.push({ slot: slot, args: args })
+        themeRoot._annaQueue = q
+        if (!annaProcess.running)
+            themeRoot._runNextAnna()
     }
 
-    property Process paletteColorProcess: Process {
-        property string pendingKey:   ""
-        property string pendingColor: ""
-        command: ["anna", "palette-color", pendingKey, pendingColor]
-    }
-
-    property Process resetProcess: Process {
-        command: ["sh", "-c",
-            "anna set '#5277c3' && " +
-            "anna palette-color base00 '#0d0d0d' && " +
-            "anna palette-color base01 '#1a1a1a' && " +
-            "anna palette-color base02 '#2a2a2a' && " +
-            "anna palette-color base03 '#5a6080' && " +
-            "anna palette-color base04 '#8a90b0' && " +
-            "anna palette-color base05 '#e0e0ff' && " +
-            "anna palette-color base06 '#f0f0ff' && " +
-            "anna palette-color base07 '#ffffff' && " +
-            "anna palette-color base08 '#cc4444' && " +
-            "anna palette-color base09 '#cc8844' && " +
-            "anna palette-color base0a '#ccaa44' && " +
-            "anna palette-color base0b '#44aa88' && " +
-            "anna palette-color base0c '#7ebae4' && " +
-            "anna palette-color base0d '#5277c3' && " +
-            "anna palette-color base0e '#4488cc' && " +
-            "anna palette-color base0f '#cc5566'"
-        ]
+    function _runNextAnna() {
+        if (annaProcess.running || themeRoot._annaQueue.length === 0)
+            return
+        var next = themeRoot._annaQueue[0]
+        themeRoot._annaQueue = themeRoot._annaQueue.slice(1)
+        annaProcess.command = ["anna"].concat(next.args)
+        annaProcess.running = true
     }
 
     // ── Palette accessor ───────────────────────────────────────────────────
@@ -198,8 +189,7 @@ QtObject {
         // Optimistic update: apply instantly to accentHex for immediate
         // visual feedback; the daemon confirms by writing state.json.
         themeRoot._state = Object.assign({}, themeRoot._state, { accent: str })
-        accentSetProcess.pendingColor = str
-        accentSetProcess.running = true
+        themeRoot._anna("accent", ["set", str])
     }
 
     function setPaletteColor(key, colorStr) {
@@ -207,24 +197,20 @@ QtObject {
         var newPalette = Object.assign({}, themeRoot._state.palette)
         newPalette[key] = colorStr
         themeRoot._state = Object.assign({}, themeRoot._state, { palette: newPalette })
-        paletteColorProcess.pendingKey   = key
-        paletteColorProcess.pendingColor = colorStr
-        paletteColorProcess.running = true
+        // Mode explicite : un changement de mode encore en file ne doit pas
+        // rediriger la couleur vers l'autre palette.
+        themeRoot._anna("palette:" + key,
+                        ["palette-color", key, colorStr, themeRoot._state.mode])
     }
 
+    // Pas de mise à jour optimiste : les valeurs par défaut dépendent du mode
+    // (palette claire ou sombre), le daemon les connaît, et state.json revient
+    // par _stateFile dès qu'il a fini.
     function resetToDefaults() {
-        var defaults = {
-            accent: "#5277c3", accent_dark: "#2d4370", accent_muted: "#6a87cc",
-            accent_rgb: "82,119,195", accent_ansi: "38;2;82;119;195",
-            mode: themeRoot._state.mode,
-            palette: {
-                base00: "#0d0d0d", base01: "#1a1a1a", base02: "#2a2a2a", base03: "#5a6080",
-                base04: "#8a90b0", base05: "#e0e0ff", base06: "#f0f0ff", base07: "#ffffff",
-                base08: "#cc4444", base09: "#cc8844", base0a: "#ccaa44", base0b: "#44aa88",
-                base0c: "#7ebae4", base0d: "#5277c3", base0e: "#4488cc", base0f: "#cc5566"
-            }
-        }
-        themeRoot._state = defaults
-        resetProcess.running = true
+        // Le reset écrase accent et palette : les valeurs en attente n'ont plus lieu d'être.
+        themeRoot._annaQueue = themeRoot._annaQueue.filter(function (e) {
+            return e.slot === "mode"
+        })
+        themeRoot._anna("reset", ["reset"])
     }
 }

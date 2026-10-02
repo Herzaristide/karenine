@@ -57,7 +57,15 @@ pub fn run(sample_rate: u32, audio_rx: Receiver<Vec<f32>>, out: Sender<String>) 
         hop_count = 0;
 
         let freq = detect_pitch(
-            &buf, &window, n, lag_min, lag_max, sr, &fft_fwd, &fft_inv, &mut scratch,
+            &buf,
+            &window,
+            n,
+            lag_min,
+            lag_max,
+            sr,
+            &fft_fwd,
+            &fft_inv,
+            &mut scratch,
         );
 
         let emitted = if freq > 0.0 {
@@ -72,7 +80,10 @@ pub fn run(sample_rate: u32, audio_rx: Receiver<Vec<f32>>, out: Sender<String>) 
             0.0
         };
 
-        if out.blocking_send(format!("{{\"pitch\":{emitted:.2}}}")).is_err() {
+        if out
+            .blocking_send(format!("{{\"pitch\":{emitted:.2}}}"))
+            .is_err()
+        {
             return; // socket closed
         }
     }
@@ -126,10 +137,9 @@ fn detect_pitch(
     // Peak of the autocorrelation within the plausible lag range.
     let mut peak = lag_min;
     let mut best = scratch[lag_min].re;
-    for lag in (lag_min + 1)..hi {
-        let v = scratch[lag].re;
-        if v > best {
-            best = v;
+    for (lag, c) in scratch.iter().enumerate().take(hi).skip(lag_min + 1) {
+        if c.re > best {
+            best = c.re;
             peak = lag;
         }
     }
@@ -158,5 +168,41 @@ fn detect_pitch(
         freq
     } else {
         0.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::audio::testbench::{run as bench, sine};
+
+    fn last_pitch(lines: &[String]) -> f32 {
+        let v: serde_json::Value = serde_json::from_str(lines.last().expect("no output")).unwrap();
+        v["pitch"].as_f64().unwrap() as f32
+    }
+
+    #[test]
+    fn detects_pure_tones_at_any_sample_rate() {
+        for sr in [44_100, 48_000] {
+            for f in [82.41, 110.0, 196.0, 440.0, 1000.0] {
+                let got = last_pitch(&bench(super::run, sr, sine(f, sr, 0.5)));
+                assert!((got - f).abs() / f < 0.01, "sr={sr} f={f} got={got}");
+            }
+        }
+    }
+
+    #[test]
+    fn silence_reports_zero() {
+        let lines = bench(super::run, 48_000, vec![0.0; 24_000]);
+        assert!(!lines.is_empty());
+        assert_eq!(last_pitch(&lines), 0.0);
+    }
+
+    #[test]
+    fn out_of_range_tone_reports_zero() {
+        // 30 Hz is below FMIN (A1 = 55 Hz).
+        assert_eq!(
+            last_pitch(&bench(super::run, 48_000, sine(30.0, 48_000, 0.5))),
+            0.0
+        );
     }
 }

@@ -161,3 +161,62 @@ pub fn hann(n: usize) -> Vec<f32> {
         .map(|i| 0.5 - 0.5 * (2.0 * std::f32::consts::PI * i as f32 / (n as f32 - 1.0)).cos())
         .collect()
 }
+
+/// Test bench for the mic DSP loops (`tuner::run`, `chroma::run`): feed them a
+/// synthetic signal in capture-sized chunks and collect every line they emit.
+#[cfg(test)]
+pub mod testbench {
+    pub type Dsp = fn(u32, std::sync::mpsc::Receiver<Vec<f32>>, tokio::sync::mpsc::Sender<String>);
+
+    pub fn run(dsp: Dsp, sample_rate: u32, signal: Vec<f32>) -> Vec<String> {
+        let (audio_tx, audio_rx) = std::sync::mpsc::channel();
+        let (line_tx, mut line_rx) = tokio::sync::mpsc::channel(1024);
+        let worker = std::thread::spawn(move || dsp(sample_rate, audio_rx, line_tx));
+        for chunk in signal.chunks(480) {
+            audio_tx.send(chunk.to_vec()).unwrap();
+        }
+        drop(audio_tx); // the DSP returns once the capture "stops"
+        let mut lines = Vec::new();
+        while let Some(l) = line_rx.blocking_recv() {
+            lines.push(l);
+        }
+        worker.join().unwrap();
+        lines
+    }
+
+    /// `secs` of a sine at `freq` Hz, amplitude 0.5.
+    pub fn sine(freq: f32, sample_rate: u32, secs: f32) -> Vec<f32> {
+        let n = (sample_rate as f32 * secs) as usize;
+        (0..n)
+            .map(|i| {
+                0.5 * (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate as f32).sin()
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn next_pow2_rounds_up() {
+        assert_eq!(next_pow2(0), 1);
+        assert_eq!(next_pow2(1), 1);
+        assert_eq!(next_pow2(1000), 1024);
+        assert_eq!(next_pow2(1024), 1024);
+        assert_eq!(next_pow2(1025), 2048);
+    }
+
+    #[test]
+    fn hann_is_symmetric_and_zero_at_edges() {
+        let w = hann(64);
+        assert_eq!(w.len(), 64);
+        assert!(w[0].abs() < 1e-6 && w[63].abs() < 1e-6);
+        for i in 0..32 {
+            assert!((w[i] - w[63 - i]).abs() < 1e-5);
+        }
+        assert_eq!(hann(1), vec![1.0]);
+        assert!(hann(0).is_empty());
+    }
+}

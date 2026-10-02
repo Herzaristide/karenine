@@ -11,22 +11,32 @@
 //!   anna mode dark|light client: switch palette mode
 //!   anna palette-color <key> "#rrggbb" [mode]
 //!                        client: set a base16 palette entry
+//!   anna reset           client: default accent + active mode's default palette
 //!   anna get             client: print current theme state as JSON
 //!   anna watch           client: stream theme changes as JSON lines
 //!   anna msi-rgb-watch   reflect the accent color onto the MSI RGB keyboard
+//!   anna gesture on|off|toggle|status|watch|cameras|camera /dev/videoN
+//!                        client: webcam gesture control
+//!   anna gesture debug [--dry]
+//!                        run the gesture engine in the foreground with
+//!                        per-second diagnostics (disable the daemon's first:
+//!                        the camera is exclusive); --dry performs no action
 //!
 //! Services exposed over `$XDG_RUNTIME_DIR/anna.sock`:
 //!   - theme    : accent/palette (set/mode/palette-color/get/watch)
 //!   - hwstats  : hardware stats (hwstats_get / hwstats_watch)
+//!   - gesture  : webcam control (gesture_get/set/toggle/watch)
 
 mod appctl;
 mod audio;
 mod chroma;
 mod client;
 mod color;
+mod gesture;
 mod hwstats;
 mod metronome;
 mod msi;
+mod paths;
 mod protocol;
 mod state;
 mod templates;
@@ -35,7 +45,6 @@ mod tuner;
 use appctl::{reload_all, AppCtlOptions};
 use protocol::{Command, Response};
 use state::AppState;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -50,7 +59,26 @@ async fn main() {
 
     match args.get(1).map(String::as_str) {
         // Client subcommands: connect to the running daemon and print the reply.
-        Some("set") | Some("mode") | Some("palette-color") | Some("get") | Some("watch") => {
+        Some("set" | "mode" | "palette-color" | "reset" | "get" | "watch") => {
+            client::run(&args);
+        }
+        Some("gesture") if args.get(2).map(String::as_str) == Some("debug") => {
+            // Foreground engine, forced on, with diagnostics on stderr.
+            let dry = args.iter().any(|a| a == "--dry");
+            let dir = std::env::temp_dir().join("anna-gesture-debug");
+            let _ = std::fs::create_dir_all(&dir);
+            // Same camera/direction settings as the daemon, without touching its file.
+            let _ = std::fs::copy(
+                paths::accent_dir().join("gesture.json"),
+                dir.join("gesture.json"),
+            );
+            let g = gesture::Gesture::start(&dir, true, dry);
+            g.set_enabled(true);
+            loop {
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+            }
+        }
+        Some("gesture") => {
             client::run(&args);
         }
         // Reflect the accent color onto the MSI RGB keyboard (long-lived).
@@ -60,7 +88,7 @@ async fn main() {
         // One-shot render used by the home-manager activation.
         Some("init") => {
             let no_hyprctl = args.iter().any(|a| a == "--no-hyprctl");
-            let app_state = AppState::load(accent_dir());
+            let app_state = AppState::load(paths::accent_dir());
             run_init(&app_state, &AppCtlOptions { no_hyprctl });
         }
         // Default: run the daemon. A bare leading flag (e.g. `--no-hyprctl`,
@@ -74,7 +102,7 @@ async fn main() {
         Some(other) => {
             eprintln!("anna: unknown command '{other}'");
             eprintln!(
-                "Usage: anna [daemon|init|set|mode|palette-color|get|watch|msi-rgb-watch]"
+                "Usage: anna [daemon|init|set|mode|palette-color|reset|get|watch|gesture|msi-rgb-watch]"
             );
             std::process::exit(2);
         }
@@ -100,11 +128,16 @@ async fn run_daemon(args: &[String]) {
         i += 1;
     }
 
-    let app_state = AppState::load(accent_dir());
+    let app_state = AppState::load(paths::accent_dir());
     let opts = AppCtlOptions { no_hyprctl };
 
-    let socket = socket_override.unwrap_or_else(socket_path);
-    // Remove stale socket from a previous run.
+    let socket = socket_override.unwrap_or_else(paths::socket_path);
+    // A socket that still accepts connections belongs to a live daemon: taking
+    // it over would silently orphan that one. Otherwise it is stale — remove it.
+    if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
+        eprintln!("anna: another daemon is already listening on {socket}");
+        std::process::exit(1);
+    }
     let _ = std::fs::remove_file(&socket);
 
     let listener = match UnixListener::bind(&socket) {
@@ -119,20 +152,31 @@ async fn run_daemon(args: &[String]) {
     // Initial render so all config files are up to date on daemon start.
     run_init(&app_state, &opts);
 
-    // Shared theme state behind a mutex — modified when set_* commands arrive.
-    let shared = Arc::new(Mutex::new(app_state));
-
     // Broadcast channel for theme Watch subscribers.
     let (tx, _) = broadcast::channel::<String>(32);
-    let tx = Arc::new(tx);
+
+    // Webcam gesture engine: its own thread, idle while disabled.
+    // ANNA_GESTURE_DEBUG=1 logs the same diagnostics as `anna gesture debug`.
+    let verbose = std::env::var_os("ANNA_GESTURE_DEBUG").is_some();
+    let gesture = gesture::Gesture::start(&paths::accent_dir(), verbose, false);
+
+    let ctx = Arc::new(Ctx {
+        theme: Mutex::new(Versioned {
+            state: app_state,
+            version: 0,
+        }),
+        applied: tokio::sync::Mutex::new(0),
+        tx,
+        gesture,
+        opts,
+    });
 
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
-                let shared = Arc::clone(&shared);
-                let tx = Arc::clone(&tx);
+                let ctx = Arc::clone(&ctx);
                 tokio::spawn(async move {
-                    handle_connection(stream, shared, tx, no_hyprctl).await;
+                    handle_connection(stream, ctx).await;
                 });
             }
             Err(e) => eprintln!("anna: accept error: {e}"),
@@ -140,14 +184,75 @@ async fn run_daemon(args: &[String]) {
     }
 }
 
+/// State shared by every connection.
+struct Ctx {
+    /// Theme state + its version. Only held for in-memory reads/updates —
+    /// never across I/O.
+    theme: Mutex<Versioned>,
+    /// Serializes applies end to end (save + render + reload), so files never
+    /// land out of order; holds the version last written to disk.
+    applied: tokio::sync::Mutex<u64>,
+    /// Theme Watch subscribers.
+    tx: broadcast::Sender<String>,
+    gesture: Arc<gesture::Gesture>,
+    opts: AppCtlOptions,
+}
+
+struct Versioned {
+    state: AppState,
+    /// Bumped on every accepted change.
+    version: u64,
+}
+
+impl Ctx {
+    /// Lock the theme state. A panic while it was held can't leave it half
+    /// written (updates are single assignments), so poisoning is ignored
+    /// rather than taking every later request down with it.
+    fn theme(&self) -> std::sync::MutexGuard<'_, Versioned> {
+        self.theme.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Apply `update` to the theme, then persist, render and live-reload it on
+    /// a blocking thread (file writes, icon recoloring, `hyprctl reload`…)
+    /// without holding the state lock, so reads stay instant meanwhile.
+    ///
+    /// Bursts coalesce: a color-picker drag or the rainbow mode send several
+    /// changes per second, while one apply takes about as long. A change that
+    /// waited for the previous apply finds that the next one (which includes
+    /// it) already went through, and returns without redoing the work.
+    async fn change_theme(
+        &self,
+        update: impl FnOnce(&mut AppState) -> Result<(), String>,
+    ) -> Result<protocol::PaletteState, String> {
+        let mine = {
+            let mut t = self.theme();
+            update(&mut t.state)?;
+            t.version += 1;
+            t.version
+        };
+        let mut applied = self.applied.lock().await;
+        let (snapshot, version) = {
+            let t = self.theme();
+            (t.state.clone(), t.version)
+        };
+        if *applied >= mine {
+            return Ok(snapshot.to_palette_state());
+        }
+        let opts = self.opts;
+        let result = tokio::task::spawn_blocking(move || apply_change(&snapshot, &opts))
+            .await
+            .map_err(|e| format!("apply task failed: {e}"))?;
+        if result.is_ok() {
+            *applied = version;
+        }
+        result
+    }
+}
+
 // ── Connection handler ──────────────────────────────────────────────────────
 
-async fn handle_connection(
-    stream: UnixStream,
-    shared: Arc<Mutex<AppState>>,
-    tx: Arc<broadcast::Sender<String>>,
-    no_hyprctl: bool,
-) {
+async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
+    let gesture = &ctx.gesture;
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
 
@@ -167,74 +272,47 @@ async fn handle_connection(
 
     match cmd {
         Command::GetState => {
-            let state_snapshot = shared.lock().unwrap().to_palette_state();
+            let state_snapshot = ctx.theme().state.to_palette_state();
             let resp = Response::ok(state_snapshot);
             let _ = write_response(&mut writer, &resp).await;
         }
 
         Command::SetAccent { color } => {
-            let result = {
-                let mut state = shared.lock().unwrap();
-                match crate::color::Color::from_hex(&color) {
-                    Some(c) => {
-                        state.accent = c;
-                        apply_change(&state, no_hyprctl)
-                    }
-                    None => Err(format!("invalid hex color: {color}")),
-                }
-            };
-            respond_theme(&mut writer, &tx, result).await;
+            let result = ctx.change_theme(|state| state.set_accent(&color)).await;
+            respond_theme(&mut writer, &ctx.tx, result).await;
         }
 
         Command::SetMode { mode } => {
-            let result = {
-                let mut state = shared.lock().unwrap();
-                if mode != "dark" && mode != "light" {
-                    Err(format!("invalid mode: {mode} (expected dark or light)"))
-                } else {
-                    state.mode = mode;
-                    apply_change(&state, no_hyprctl)
-                }
-            };
-            respond_theme(&mut writer, &tx, result).await;
+            let result = ctx.change_theme(|state| state.set_mode(&mode)).await;
+            respond_theme(&mut writer, &ctx.tx, result).await;
+        }
+
+        Command::ResetTheme => {
+            let result = ctx
+                .change_theme(|state| {
+                    state.reset();
+                    Ok(())
+                })
+                .await;
+            respond_theme(&mut writer, &ctx.tx, result).await;
         }
 
         Command::SetPaletteColor { key, color, mode } => {
-            const VALID_KEYS: &[&str] = &[
-                "base00", "base01", "base02", "base03", "base04", "base05", "base06", "base07",
-                "base08", "base09", "base0a", "base0b", "base0c", "base0d", "base0e", "base0f",
-            ];
-            let result = {
-                let mut state = shared.lock().unwrap();
-                if !VALID_KEYS.contains(&key.as_str()) {
-                    Err(format!("invalid palette key: {key}"))
-                } else {
-                    match crate::color::Color::from_hex(&color) {
-                        Some(c) => {
-                            let target = mode.as_deref().unwrap_or(&state.mode).to_string();
-                            if target == "light" {
-                                state.palette_light.insert(key, c.to_hex());
-                            } else {
-                                state.palette_dark.insert(key, c.to_hex());
-                            }
-                            apply_change(&state, no_hyprctl)
-                        }
-                        None => Err(format!("invalid hex color: {color}")),
-                    }
-                }
-            };
-            respond_theme(&mut writer, &tx, result).await;
+            let result = ctx
+                .change_theme(|state| state.set_palette_color(&key, &color, mode.as_deref()))
+                .await;
+            respond_theme(&mut writer, &ctx.tx, result).await;
         }
 
         Command::Watch => {
-            // Send current state immediately, then forward broadcasts.
-            let state_snapshot = shared.lock().unwrap().to_palette_state();
+            // Subscribe first so a change racing the snapshot isn't lost.
+            let mut rx = ctx.tx.subscribe();
+            let state_snapshot = ctx.theme().state.to_palette_state();
             let initial = serde_json::to_string(&Response::ok(state_snapshot)).unwrap_or_default();
             if write_line(&mut writer, &initial).await.is_err() {
                 return;
             }
 
-            let mut rx = tx.subscribe();
             loop {
                 match rx.recv().await {
                     Ok(msg) => {
@@ -250,34 +328,26 @@ async fn handle_connection(
 
         // ── hwstats service ──────────────────────────────────────────────
         Command::HwstatsGet => {
-            let collector = Arc::new(Mutex::new(hwstats::Collector::new()));
             // Prime once, wait a beat, then sample so the CPU delta is meaningful.
-            {
-                let c = Arc::clone(&collector);
-                let _ = tokio::task::spawn_blocking(move || c.lock().unwrap().sample()).await;
-            }
+            let Some((collector, _)) = sample_hwstats(hwstats::Collector::new()).await else {
+                return;
+            };
             tokio::time::sleep(Duration::from_millis(250)).await;
-            let c = Arc::clone(&collector);
-            let snap = tokio::task::spawn_blocking(move || c.lock().unwrap().sample())
-                .await
-                .ok();
-            if let Some(snap) = snap {
+            if let Some((_, snap)) = sample_hwstats(collector).await {
                 let json = serde_json::to_string(&snap).unwrap_or_default();
                 let _ = write_line(&mut writer, &json).await;
             }
         }
 
         Command::HwstatsWatch => {
-            let collector = Arc::new(Mutex::new(hwstats::Collector::new()));
+            let mut collector = hwstats::Collector::new();
             let mut interval = tokio::time::interval(Duration::from_secs(1));
             loop {
                 interval.tick().await;
-                let c = Arc::clone(&collector);
-                let snap = match tokio::task::spawn_blocking(move || c.lock().unwrap().sample()).await
-                {
-                    Ok(s) => s,
-                    Err(_) => break,
+                let Some((c, snap)) = sample_hwstats(collector).await else {
+                    break;
                 };
+                collector = c;
                 let json = serde_json::to_string(&snap).unwrap_or_default();
                 if write_line(&mut writer, &json).await.is_err() {
                     break; // socket closed
@@ -296,6 +366,47 @@ async fn handle_connection(
 
         Command::Metronome => {
             run_metronome(&mut writer, &mut lines).await;
+        }
+
+        // ── gesture control ──────────────────────────────────────────────
+        Command::GestureGet => {
+            write_gesture_status(&mut writer, &gesture.status()).await;
+        }
+
+        Command::GestureSet { enabled } => {
+            gesture.set_enabled(enabled);
+            write_gesture_status(&mut writer, &gesture.status()).await;
+        }
+
+        Command::GestureToggle => {
+            gesture.set_enabled(!gesture.enabled());
+            write_gesture_status(&mut writer, &gesture.status()).await;
+        }
+
+        Command::GestureCameras => {
+            let json = serde_json::to_string(&gesture::cameras()).unwrap_or_default();
+            let _ = write_line(&mut writer, &json).await;
+        }
+
+        Command::GestureSetCamera { device } => {
+            if device.starts_with("/dev/video") {
+                gesture.set_camera(&device);
+                write_gesture_status(&mut writer, &gesture.status()).await;
+            } else {
+                let resp = Response::err(format!("not a V4L2 device: {device}"));
+                let _ = write_response(&mut writer, &resp).await;
+            }
+        }
+
+        Command::GestureWatch => {
+            let mut rx = gesture.subscribe();
+            loop {
+                let status = rx.borrow_and_update().clone();
+                let json = serde_json::to_string(&status).unwrap_or_default();
+                if write_line(&mut writer, &json).await.is_err() || rx.changed().await.is_err() {
+                    break;
+                }
+            }
         }
     }
 }
@@ -387,31 +498,49 @@ async fn run_metronome(
     // `handle` drops here → output stream stops.
 }
 
-/// Apply one metronome control line: `{"action":"start","bpm":120}`,
-/// `{"action":"stop"}`, `{"action":"bpm","value":130}`,
-/// `{"action":"beats","value":4}`.
-fn apply_metro_control(handle: &metronome::MetroHandle, line: &str) {
-    let v: serde_json::Value = match serde_json::from_str(line) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-    match v.get("action").and_then(|a| a.as_str()).unwrap_or("") {
+/// One metronome control line, already range-checked.
+#[derive(Debug, PartialEq)]
+enum MetroAction {
+    Start(u32),
+    Stop,
+    Bpm(u32),
+    Beats(u32),
+}
+
+/// Same tempo range as the UI (widgets/Metronome.qml).
+const BPM_RANGE: (u64, u64) = (20, 300);
+const BEATS_RANGE: (u64, u64) = (1, 16);
+
+fn clamp_u32(v: u64, (lo, hi): (u64, u64)) -> u32 {
+    v.clamp(lo, hi) as u32
+}
+
+/// Parse a control line: `{"action":"start","bpm":120}`, `{"action":"stop"}`,
+/// `{"action":"bpm","value":130}`, `{"action":"beats","value":4}`. Values are
+/// clamped (a huge number must not wrap around when narrowed to u32); anything
+/// malformed or unknown yields `None` and is ignored.
+fn parse_metro_control(line: &str) -> Option<MetroAction> {
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    let value = || v.get("value").and_then(|b| b.as_u64());
+    match v.get("action")?.as_str()? {
         "start" => {
-            let bpm = v.get("bpm").and_then(|b| b.as_u64()).unwrap_or(120) as u32;
-            handle.start(bpm);
+            let bpm = v.get("bpm").and_then(|b| b.as_u64()).unwrap_or(120);
+            Some(MetroAction::Start(clamp_u32(bpm, BPM_RANGE)))
         }
-        "stop" => handle.stop_playing(),
-        "bpm" => {
-            if let Some(b) = v.get("value").and_then(|b| b.as_u64()) {
-                handle.set_bpm(b as u32);
-            }
-        }
-        "beats" => {
-            if let Some(b) = v.get("value").and_then(|b| b.as_u64()) {
-                handle.set_beats(b as u32);
-            }
-        }
-        _ => {}
+        "stop" => Some(MetroAction::Stop),
+        "bpm" => Some(MetroAction::Bpm(clamp_u32(value()?, BPM_RANGE))),
+        "beats" => Some(MetroAction::Beats(clamp_u32(value()?, BEATS_RANGE))),
+        _ => None,
+    }
+}
+
+fn apply_metro_control(handle: &metronome::MetroHandle, line: &str) {
+    match parse_metro_control(line) {
+        Some(MetroAction::Start(bpm)) => handle.start(bpm),
+        Some(MetroAction::Stop) => handle.stop_playing(),
+        Some(MetroAction::Bpm(bpm)) => handle.set_bpm(bpm),
+        Some(MetroAction::Beats(n)) => handle.set_beats(n),
+        None => {}
     }
 }
 
@@ -440,10 +569,10 @@ async fn respond_theme(
 
 /// Save state to disk, render all templates, and fire live-reload signals.
 /// Returns the serializable state snapshot on success.
-fn apply_change(state: &AppState, no_hyprctl: bool) -> Result<protocol::PaletteState, String> {
+fn apply_change(state: &AppState, opts: &AppCtlOptions) -> Result<protocol::PaletteState, String> {
     state.save().map_err(|e| format!("save failed: {e}"))?;
     templates::render_all(state).map_err(|e| format!("render failed: {e}"))?;
-    reload_all(state, &AppCtlOptions { no_hyprctl });
+    reload_all(state, opts);
     Ok(state.to_palette_state())
 }
 
@@ -461,8 +590,7 @@ async fn write_response(
     writer: &mut tokio::net::unix::OwnedWriteHalf,
     resp: &Response,
 ) -> std::io::Result<()> {
-    let json = serde_json::to_string(resp)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let json = serde_json::to_string(resp).map_err(std::io::Error::other)?;
     write_line(writer, &json).await
 }
 
@@ -475,14 +603,82 @@ async fn write_line(
     writer.write_all(b"\n").await
 }
 
-fn accent_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-    PathBuf::from(home).join(".config/accent")
+async fn write_gesture_status(
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    status: &gesture::Status,
+) {
+    let json = serde_json::to_string(status).unwrap_or_default();
+    let _ = write_line(writer, &json).await;
 }
 
-/// Path to the anna control socket. Shared by the daemon, the CLI client, and
-/// the MSI RGB watcher so they always agree.
-pub(crate) fn socket_path() -> String {
-    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".into());
-    format!("{runtime_dir}/anna.sock")
+/// Take one hardware sample on a blocking thread (it reads sysfs and may spawn
+/// `lspci`), handing the collector back for the next delta-based sample.
+async fn sample_hwstats(
+    mut collector: hwstats::Collector,
+) -> Option<(hwstats::Collector, hwstats::HwStats)> {
+    tokio::task::spawn_blocking(move || {
+        let snap = collector.sample();
+        (collector, snap)
+    })
+    .await
+    .ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metro_parses_every_action() {
+        assert_eq!(
+            parse_metro_control(r#"{"action":"start","bpm":90}"#),
+            Some(MetroAction::Start(90))
+        );
+        assert_eq!(
+            parse_metro_control(r#"{"action":"stop"}"#),
+            Some(MetroAction::Stop)
+        );
+        assert_eq!(
+            parse_metro_control(r#"{"action":"bpm","value":130}"#),
+            Some(MetroAction::Bpm(130))
+        );
+        assert_eq!(
+            parse_metro_control(r#"{"action":"beats","value":3}"#),
+            Some(MetroAction::Beats(3))
+        );
+    }
+
+    #[test]
+    fn metro_start_defaults_to_120() {
+        assert_eq!(
+            parse_metro_control(r#"{"action":"start"}"#),
+            Some(MetroAction::Start(120))
+        );
+    }
+
+    #[test]
+    fn metro_clamps_instead_of_wrapping() {
+        // 2^32 + 5 used to wrap to 5 when narrowed with `as u32`.
+        assert_eq!(
+            parse_metro_control(r#"{"action":"bpm","value":4294967301}"#),
+            Some(MetroAction::Bpm(300))
+        );
+        assert_eq!(
+            parse_metro_control(r#"{"action":"bpm","value":0}"#),
+            Some(MetroAction::Bpm(20))
+        );
+        assert_eq!(
+            parse_metro_control(r#"{"action":"beats","value":0}"#),
+            Some(MetroAction::Beats(1))
+        );
+    }
+
+    #[test]
+    fn metro_ignores_garbage() {
+        assert_eq!(parse_metro_control("not json"), None);
+        assert_eq!(parse_metro_control(r#"{"action":"dance"}"#), None);
+        assert_eq!(parse_metro_control(r#"{"action":"bpm"}"#), None);
+        assert_eq!(parse_metro_control(r#"{"action":"bpm","value":-4}"#), None);
+        assert_eq!(parse_metro_control(r#"{"bpm":120}"#), None);
+    }
 }
