@@ -9,38 +9,26 @@ import "services"
 ShellRoot {
     id: root
 
-    property bool panelOpen: false
-    property int activeWidget: 0
-    property bool rightOpen: false
-    property bool controlsOpen: false
-    // Popup caméra / gestes (bouton caméra de la barre).
-    property bool cameraOpen: false
-    // Dock du bas maintenu ouvert au clavier (cf. commande IPC "dock").
-    property bool dockPinned: false
+    // Super montre ou renvoie la barre de conversation ; c'est elle qui sait
+    // si elle est là (cf. ConversationBar.toggle).
+    signal barToggled()
+    signal barClosed()
 
-    // Toggle a widget. Only one panel is ever open: opening either side
-    // closes the other. Shared by the FIFO listener and the bar's buttons.
-    function activateWidget(idx) {
-        if (idx === 0) {
-            rightOpen = !rightOpen;
-            if (rightOpen)
-                panelOpen = false;
-        } else if (panelOpen && activeWidget === idx) {
-            panelOpen = false;
-        } else {
-            activeWidget = idx;
-            panelOpen = true;
-            rightOpen = false;
-        }
-    }
+    // Les anciens numéros de widget (widget:N) des raccourcis existants.
+    readonly property var legacyWidgets: ({ 0: "stats", 1: "sessions", 3: "metronome", 4: "musique" })
 
     // ── IPC externe via FIFO /tmp/qs-panel.fifo ──────────────────────────
-    //   echo "widget:N" > /tmp/qs-panel.fifo   → bascule le widget N
-    //   echo "dock"     > /tmp/qs-panel.fifo   → bascule le dock du bas
-    //   echo "controls" > /tmp/qs-panel.fifo   → bascule le popup de contrôles
-    //   echo "camera"   > /tmp/qs-panel.fifo   → bascule le popup caméra/gestes
-    //   echo "close"    > /tmp/qs-panel.fifo   → ferme le panel
-    //   N : 0=Stats  1=IA  2=Notes  3=Pitch  4=Music  5=Console
+    //   echo "widget:NOM[:ACTION]" > /tmp/qs-panel.fifo → ouvre / ferme / bascule
+    //        un widget flottant (cf. services/Widgets.qml ; c'est ce qu'écrit anna)
+    //   echo "dock"     > /tmp/qs-panel.fifo   → fait monter (ou renvoie) la barre de conversation
+    //   echo "savoir"   > /tmp/qs-panel.fifo   → ouvre le dock IA sur le savoir
+    //   echo "voix"     > /tmp/qs-panel.fifo   → parle au pilote (comme `anna voice`)
+    //   echo "controls" > /tmp/qs-panel.fifo   → bascule le widget du son
+    //   echo "camera"   > /tmp/qs-panel.fifo   → bascule le widget caméra/gestes
+    //   echo "close"    > /tmp/qs-panel.fifo   → ferme tout
+    //   NOM : stats, musique, metronome, son, camera, reglages, sessions, tout
+    //   ACTION : ouvrir, fermer, basculer (le défaut)
+    //   « widget:N » reste compris : 0=stats 1=sessions 3=metronome 4=musique
     Process {
         id: ipcListener
         command: [
@@ -54,23 +42,25 @@ ShellRoot {
             onRead: (data) => {
                 var msg = data.trim();
                 if (msg.startsWith("widget:")) {
-                    var idx = parseInt(msg.substring(7));
-                    if (!isNaN(idx))
-                        root.activateWidget(idx);
+                    var parts = msg.substring(7).split(":");
+                    var name = parts[0];
+                    if (/^[0-9]+$/.test(name))
+                        name = root.legacyWidgets[parseInt(name)] || "";
+                    Widgets.apply(name, parts[1] || "basculer");
                 } else if (msg === "dock") {
-                    root.dockPinned = !root.dockPinned;
+                    root.barToggled();
+                } else if (msg === "voix") {
+                    ClaudeLive.voiceToggle();
+                } else if (msg === "savoir") {
+                    Widgets.apply("sessions", "ouvrir");
+                    aiDock.openKnowledge();
                 } else if (msg === "controls") {
-                    root.controlsOpen = !root.controlsOpen;
+                    Widgets.apply("son", "basculer");
                 } else if (msg === "camera") {
-                    root.cameraOpen = !root.cameraOpen;
-                    if (root.cameraOpen)
-                        root.controlsOpen = false;
+                    Widgets.apply("camera", "basculer");
                 } else if (msg === "close") {
-                    root.panelOpen = false;
-                    root.rightOpen = false;
-                    root.controlsOpen = false;
-                    root.cameraOpen = false;
-                    root.dockPinned = false;
+                    Widgets.closeAll();
+                    root.barClosed();
                 }
             }
         }
@@ -96,82 +86,69 @@ ShellRoot {
     // screen swaps the model, so the panels are rebuilt on the new one.
     readonly property var primaryScreens: Display.primary ? [Display.primary] : []
 
+    // La barre de conversation, en bas au centre : le flocon (la voix) et le
+    // champ qui parle au pilote, sa réponse au-dessus.
     Variants {
         model: root.primaryScreens
 
-        TopBar {
+        ConversationBar {
+            id: conversationBar
             property var modelData
             screen: modelData
-            panelOpen: root.panelOpen
-            activeWidget: root.activeWidget
-            rightOpen: root.rightOpen
-            controlsOpen: root.controlsOpen
-            cameraOpen: root.cameraOpen
-            onSelectWidget: (idx) => root.activateWidget(idx)
-            // Les deux popups de la barre s'excluent : ils tombent au même endroit.
-            onToggleControls: {
-                root.controlsOpen = !root.controlsOpen;
-                if (root.controlsOpen)
-                    root.cameraOpen = false;
-            }
-            onToggleCamera: {
-                root.cameraOpen = !root.cameraOpen;
-                if (root.cameraOpen)
-                    root.controlsOpen = false;
+
+            Connections {
+                target: root
+                function onBarToggled() { conversationBar.toggle(); }
+                function onBarClosed() { conversationBar.dismiss(); }
             }
         }
     }
 
+    // Les widgets flottants (système, musique, métronome, son, gestes),
+    // qu'anna ouvre à la demande.
     Variants {
         model: root.primaryScreens
 
-        ControlsPopup {
+        FloatingWidgets {
             property var modelData
             screen: modelData
-            popupOpen: root.controlsOpen
-            onDismissed: root.controlsOpen = false
         }
     }
 
+    // Alertes des sessions Claude Code (attente, long tour terminé), dans le
+    // coin haut droit de l'écran de l'interface.
     Variants {
         model: root.primaryScreens
 
-        CameraPopup {
+        SessionToast {
             property var modelData
             screen: modelData
-            popupOpen: root.cameraOpen
-            onDismissed: root.cameraOpen = false
         }
     }
 
+    // La barre des sessions, bande noire contre le bord gauche, toujours là : un point par
+    // session Claude. Un point ouvre le dock IA sur sa session, ✦ le bascule.
     Variants {
         model: root.primaryScreens
 
-        SidePanel {
+        SessionBar {
             property var modelData
             screen: modelData
-            panelOpen: root.panelOpen
-            activeWidget: root.activeWidget
+            openId: aiDock.open && !aiDock.overlay ? aiDock.selectedId : ""
+            onPicked: (id) => aiDock.openOn(id)
+            onToggled: Widgets.apply("sessions", "basculer")
         }
     }
 
-    Variants {
-        model: root.primaryScreens
-
-        RightPanel {
-            property var modelData
-            screen: modelData
-            panelOpen: root.rightOpen
-        }
-    }
-
-    // Le dock n'est pas lié à l'écran de l'interface : une seule instance, qui
-    // suit l'écran ayant le focus (cf. BottomDock, qui ne change d'écran que
-    // refermé).
-    BottomDock {
-        screen: Display.focused
-        pinned: root.dockPinned
-        onCloseRequested: root.dockPinned = false
+    // Le panneau des sessions, qui sort de leur barre : lancer, suivre et
+    // reprendre les sessions Claude, revoir leur travail, le savoir. C'est le
+    // widget « sessions » : un point de la barre, Super+P
+    // (widget:sessions:basculer sur la FIFO) ou anna l'ouvrent.
+    AiDock {
+        id: aiDock
+        screen: Display.primary
+        open: Widgets.opened.sessions === true
+        onCloseRequested: Widgets.apply("sessions", "fermer")
     }
 
     Variants {

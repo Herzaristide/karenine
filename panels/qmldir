@@ -1,8 +1,9 @@
-TopBar 1.0 TopBar.qml
-SidePanel 1.0 SidePanel.qml
-RightPanel 1.0 RightPanel.qml
 SettingsWindow 1.0 SettingsWindow.qml
-ControlsPopup 1.0 ControlsPopup.qml
-CameraPopup 1.0 CameraPopup.qml
 BottomDock 1.0 BottomDock.qml
 CardCarousel 1.0 CardCarousel.qml
+SessionToast 1.0 SessionToast.qml
+AiDock 1.0 AiDock.qml
+ConversationBar 1.0 ConversationBar.qml
+FloatingWidgets 1.0 FloatingWidgets.qml
+WidgetCard 1.0 WidgetCard.qml
+SessionBar 1.0 SessionBar.qml

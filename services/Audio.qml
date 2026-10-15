@@ -71,5 +71,14 @@ QtObject {
     // Capped at 100 %: past it PipeWire amplifies in software and clips.
     function up()         { _run(["wpctl", "set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", "5%+"]); }
     function down()       { _run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"]); }
+    // Un niveau absolu (0–1), pour un curseur. Seul le dernier compte : ceux
+    // encore en file sont remplacés, sinon un glisser empilerait des dizaines
+    // d'appels à wpctl. Le niveau affiché suit tout de suite.
+    function set(v) {
+        v = Math.max(0, Math.min(1, v));
+        root.level = v;
+        root._queue = root._queue.filter(a => a[1] !== "set-volume");
+        _run(["wpctl", "set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", v.toFixed(2)]);
+    }
     function toggleMute() { _run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]); }
 }

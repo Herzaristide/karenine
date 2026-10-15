@@ -137,13 +137,22 @@ QtObject {
                 // Les correspondances sur le nom priment sur celles du chemin :
                 // le repli doit donc rester sous le plus faible score de nom,
                 // qui est celui d'une sous-séquence (150).
-                score:    Fuzzy.score(src.runQuery, name) || 100,
+                score:    src._rank(Fuzzy.score(src.runQuery, name) || 100, path),
                 payload:  { path: path, isDir: isDir, suffix: suffix }
             });
         }
 
         out.sort(function (a, b) { return b.score - a.score; });
         src.produced(seq, out.slice(0, src.limit));
+    }
+
+    // Un fichier caché ou enfoui est rarement celui qu'on cherche : `fd -H`
+    // remonte ~/.local, ~/.mozilla… qui noyaient les vrais résultats.
+    function _rank(score, path) {
+        var rel = path.indexOf(src.home) === 0 ? path.substring(src.home.length) : path;
+        var depth = rel.split("/").length - 2;
+        var hidden = /\/\./.test(rel);
+        return Math.max(1, score - (hidden ? 250 : 0) - Math.min(depth, 8) * 15);
     }
 
     readonly property var tones: [

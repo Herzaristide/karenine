@@ -11,7 +11,7 @@ QtObject {
 
     readonly property string type:  "setting"
     readonly property string label: "Paramètres"
-    readonly property int    limit: 4
+    readonly property int    limit: 5
 
     signal produced(int seq, var items)
 
@@ -35,6 +35,10 @@ QtObject {
         {
             key: "screenshot", title: "Capture d'écran", control: "shot", adjust: false,
             keywords: "capture screenshot écran image grim"
+        },
+        {
+            key: "screen", title: "Écran d'affichage", control: "screens", adjust: false,
+            keywords: "écran ecran moniteur affichage display screen interface barre"
         }
     ]
 
@@ -44,6 +48,7 @@ QtObject {
         case "theme":      return Theme.darkMode ? "sombre" : "clair";
         case "accent":     return Theme.accentHex;
         case "screenshot": return "région ou écran entier";
+        case "screen":     return Display.screenKey(Display.primary);
         }
         return "";
     }
@@ -109,6 +114,14 @@ QtObject {
                 src._stepAccent(1);
             else if (actionId === "down")
                 src._stepAccent(-1);
+            break;
+        case "screen":
+            // Ouvrir, c'est passer à l'écran suivant ; « Auto » fait partie du tour.
+            if (actionId === "open") {
+                var keys = [""].concat(Quickshell.screens.map(s => Display.screenKey(s)));
+                var at = keys.indexOf(Display.preferred);
+                Display.setPreferred(keys[(at + 1) % keys.length]);
+            }
             break;
         case "screenshot":
             var region = actionId === "full" ? "screen" : "area";

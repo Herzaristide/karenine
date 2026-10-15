@@ -39,15 +39,13 @@ QtObject {
     property SettingSource settingSource: SettingSource {
         onProduced: (seq, items) => root._collect(seq, "setting", items)
     }
-    property ClaudeSource claudeSource: ClaudeSource {
-        onProduced: (seq, items) => root._collect(seq, "conversation", items)
-    }
+    // Pas de sessions Claude : elles ont leur dock (AiDock), la recherche de
+    // la barre reste sur ce qu'on ouvre.
     property WebSource webSource: WebSource {
         onProduced: (seq, items) => root._collect(seq, "web", items)
     }
 
-    readonly property var sources: [appSource, fileSource, settingSource,
-                                    claudeSource, webSource]
+    readonly property var sources: [appSource, fileSource, settingSource, webSource]
 
     // Le débounce protège la seule source coûteuse (fd) sans se faire sentir
     // sur les autres, qui répondent en moins d'une milliseconde.
@@ -87,20 +85,51 @@ QtObject {
         root._rebuild();
     }
 
-    readonly property int maxResults: 24
+    readonly property int maxResults: 12
+
+    // À correspondance égale, ce qu'on lance le plus souvent passe devant :
+    // sans ce bonus, un dossier « fish » battait l'application Firefox sur
+    // « fi », simplement parce que son nom est plus court.
+    readonly property var typeBonus: ({ app: 120, setting: 60, file: 0, web: 0 })
+
+    // Écart toléré sous le meilleur résultat local. Les paliers de Fuzzy sont
+    // espacés d'environ 300 : on garde le palier du meilleur et le haut du
+    // suivant, pas les fragments en milieu de mot quand un préfixe existe.
+    readonly property int cutoff: 350
+
+    // Dès qu'il y a ce nombre de résultats locaux, le web se réduit à une ligne.
+    readonly property int webWhenFew: 3
 
     function _rebuild() {
-        var out = [];
+        var local = [];
+        var web = [];
 
         for (var i = 0; i < root.sources.length; i++) {
             var items = root._buckets[root.sources[i].type];
             if (!items)
                 continue;
-            for (var j = 0; j < items.length; j++)
-                out.push(items[j]);
+            for (var j = 0; j < items.length; j++) {
+                var it = items[j];
+                it.rank = it.score + (root.typeBonus[it.type] || 0);
+                (it.type === "web" ? web : local).push(it);
+            }
         }
 
-        out.sort(function (a, b) { return b.score - a.score; });
+        var byRank = function (a, b) { return b.rank - a.rank; };
+        local.sort(byRank);
+        web.sort(byRank);
+
+        if (local.length > 0) {
+            var floor = local[0].rank - root.cutoff;
+            local = local.filter(function (it) { return it.rank >= floor; });
+        }
+
+        // Le web échappe au seuil : c'est le recours quand rien ne colle.
+        if (local.length >= root.webWhenFew)
+            web = web.slice(0, 1);
+
+        var out = local.concat(web);
+        out.sort(byRank);
         root.results = out.slice(0, root.maxResults);
     }
 

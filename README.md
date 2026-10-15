@@ -9,7 +9,7 @@ configuration NixOS qui consomme ce dépôt comme *input de flake*.
 ## Architecture
 
 ```
-shell.qml            Point d'entrée Quickshell (barre + panneaux, IPC via FIFO)
+shell.qml            Point d'entrée Quickshell (barre de conversation + widgets, IPC via FIFO)
 services/            Singletons transverses
   Anna.qml             Chemin du socket du daemon anna (partagé par les widgets)
   Theme.qml            État de thème (lit state.json écrit par anna, defaults intégrés)
@@ -18,17 +18,21 @@ services/            Singletons transverses
   Search.qml           Agrégateur de recherche + <Type>Source.qml (app, fichier,
                        web, paramètre, conversation), Fuzzy, DefaultApps, Audio
 panels/              Chrome de haut niveau (fenêtres Wayland)
-  TopBar, SidePanel, RightPanel, SettingsWindow, ControlsPopup, CameraPopup
-  BottomDock           Dock au survol du bord bas : navigation + recherche
+  ConversationBar      Barre du bas : flocon (voix) + champ qui parle au pilote, réponse au-dessus
+  FloatingWidgets      Widgets flottants (WidgetCard), ouverts par anna (outil `widget`)
+  SettingsWindow, SessionToast (alertes des sessions Claude)
+  AiDock               Dock IA (widget « sessions ») : sessions Claude, conversation, revue
+  BottomDock           Ancien dock du bas (navigation + recherche), mis de côté
   cards/               Cartes du dock, une par type de résultat
-widgets/             Contenu des panneaux
+widgets/             Contenu des widgets flottants
   HardwareStats, NotesWidget, Metronome, Tuner, MusicPlayerWidget,
-  QuickControls, ChromaGraph, MiniGraph, Settings, ConsoleWidget
+  QuickControls, GestureControls, ChromaGraph, MiniGraph, Settings
 ai/                  Cluster chat IA
   AIPanel (sélecteur), ClaudeChat, OllamaChat, OllamaTools
 lock/                Écran de verrouillage (lock.qml) : horloge, musique, stats
 anna/                Daemon Rust unique — thème, hwstats, tuner, chroma, métronome,
-                     gestes webcam
+                     gestes webcam, sessions Claude Code (barre, permissions, dock IA),
+                     pilote (outils du bureau servis en MCP), voix (whisper.cpp)
 tests/               Tests QML (qmltestrunner) — `tests/run.sh`
 assets/              nixos.svg, icons/
 ```
@@ -44,26 +48,6 @@ ligne (type `Quickshell.Io.Socket`). Plus de backend bash/python ni de dépendan
 Claude, `services/claude-*.sh`). L'audio (accordeur, chromagramme, métronome) est natif via
 `cpal` + `rustfft`, à la fréquence réelle du périphérique. (Le dock du bas,
 lui, appelle quelques outils du système — voir *Dépendances externes* plus bas.)
-
-### Console (widget 5)
-
-`ConsoleWidget` est une **console de commandes**, pas un émulateur de terminal.
-`Quickshell.Io.Process` est un `QProcess` — des tubes, pas de pty — donc les
-commandes sortiraient sans couleurs et sans largeur connue. Le pty est obtenu en
-passant par `script` (util-linux), qui en alloue un vrai même quand ses propres
-entrée et sortie sont des tubes. La commande voyage dans `QS_CMD` plutôt que
-d'être interpolée dans le wrapper : rien à échapper. Le wrapper dimensionne le
-pty (`stty cols`) depuis la largeur du panneau, restaure le répertoire courant,
-puis émet `\001<code>\001<cwd>\001` — c'est ainsi que `cd` persiste d'une
-commande à l'autre et que le code de retour remonte.
-
-Seul le SGR est interprété (couleurs 16 / 256 / 24 bits mappées sur la palette
-base16, gras, italique, souligné) ; les autres séquences sont reconnues pour
-être proprement ignorées. Il n'y a pas d'entrée standard ni d'adressage du
-curseur : les programmes plein écran (`vim`, `htop`, `less`) ne fonctionnent pas
-— `PAGER=cat` évite que les plus courants s'y invitent par accident, et `[stop]`
-règle le reste. Un vrai terminal demande une machine à états VT et une grille de
-cellules, ce qui relève d'`anna`, pas du QML.
 
 ## Dépendances externes
 

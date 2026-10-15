@@ -1,7 +1,7 @@
 ---
 title: Panneaux
 group: Structure
-summary: Le chrome de haut niveau — TopBar, BottomDock, SidePanel, RightPanel, SettingsWindow.
+summary: Le chrome de haut niveau — barre de conversation, widgets flottants, dock IA, réglages.
 links: [shell, widgets, ai, theme]
 ---
 
@@ -12,11 +12,13 @@ Elles hébergent les [widgets](#widgets) et sont pilotées par [le shell](#shell
 
 | Fichier | Rôle |
 | --- | --- |
-| `TopBar.qml` | La barre supérieure horizontale (point d'ancrage principal). |
+| `ConversationBar.qml` | La barre du bas, centrée, cachée par défaut : elle monte quand on dit « Karénine » ou qu'on tape Super, et repart une fois la réponse lue. Une capsule de verre (floutée par Hyprland) qui s'étire sur un ressort, le flocon NixOS (il saute et s'allume quand karenine écoute) et le champ qui parle au pilote. Écoute et réflexion l'entourent d'un halo irisé (surface `quickshell-conversation-glow`, sans flou). La réponse s'affiche au-dessus, en grand, sur un voile flouté. |
+| `FloatingWidgets.qml` | Une surface plein écran, cliquable seulement sur ses cartes (`WidgetCard.qml`) : les widgets flottants, déplaçables par leur en-tête, ouverts par anna. |
+| `SessionToast.qml` | La bulle des sessions Claude Code (permissions, attentes, tours finis), en haut à droite. |
+| `SessionBar.qml` | La barre des sessions, une bande toute noire contre le bord gauche, toujours visible, avec un point par session Claude (couleur = état), qui ouvre le dock IA. Elle réserve sa place aux fenêtres. |
+| `AiDock.qml` | Le dock IA (widget « sessions »), qui sort de la barre des sessions : conversation, revue, savoir, dans le verre de la barre de conversation. |
 | `BottomDock.qml` | Le dock du bas : carrousel horizontal de navigation, recherche, et mode IA. |
 | `CardCarousel.qml` | Le carrousel lui-même — la mécanique, partagée par les trois vues. |
-| `SidePanel.qml` | Le panneau latéral qui affiche le widget actif (Stats, IA, Notes, Pitch, Music). |
-| `RightPanel.qml` | Le panneau de droite (`rightOpen`). |
 | `SettingsWindow.qml` | La fenêtre de réglages (héberge le widget `Settings`). |
 
 ## Les trois vues du dock

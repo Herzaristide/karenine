@@ -43,11 +43,15 @@ QtObject {
     }
 
     // Meilleur score parmi plusieurs champs, le premier champ étant le plus
-    // significatif (titre) et les suivants pénalisés.
+    // significatif (titre) et les suivants pénalisés. Une sous-séquence ne
+    // compte que sur le titre : dans une description longue, presque toute
+    // requête courte en trouve une, et c'est de là que venait le bruit.
     function best(query, fields) {
         var top = 0;
         for (var i = 0; i < fields.length; i++) {
             var s = score(query, fields[i]);
+            if (i > 0 && s <= 150)
+                continue;
             if (s > 0)
                 s = Math.max(1, s - i * 60);
             if (s > top)
