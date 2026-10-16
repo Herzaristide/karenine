@@ -1,11 +1,14 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
-import "../services"
+import "../auth"
 
-// Visuel du lockscreen. Purement présentation : l'authentification vit dans
-// lock.qml, cette surface se contente d'émettre `submitted(password)` et
-// d'afficher l'état que le parent lui repasse.
+// Visuel du lockscreen : le fond commun et la carte centrale (auth/AuthCard),
+// complétée sur l'écran primaire par la musique et les stats matérielles.
+//
+// Purement présentation : l'authentification vit dans lock.qml, cette surface
+// se contente d'émettre `submitted(password)` et d'afficher l'état que le
+// parent lui repasse.
 Item {
     id: surface
 
@@ -15,170 +18,88 @@ Item {
     required property bool busy
     required property string userName
 
-    // Le bandeau musique/stats n'est monté que sur l'écran primaire :
+    // Musique et stats ne sont montées que sur l'écran primaire :
     // WlSessionLock instancie une surface par moniteur, et chaque LockStats
     // ouvrirait sinon son propre abonnement au socket anna.
     required property bool showWidgets
 
+    // Vidéo de fond (le fond d'écran de la session), vide pour un fond uni.
+    property string wallpaper: ""
+
     signal submitted(password: string)
+
+    // La vidéo s'arrête après un moment sans souris ni clavier — hypridle
+    // éteint l'écran peu après le verrouillage, inutile de décoder pour un
+    // écran noir — et repart au moindre mouvement.
+    property bool idle: false
+
+    function wake(): void {
+        surface.idle = false;
+        idleTimer.restart();
+    }
+
+    Timer {
+        id: idleTimer
+        interval: 90 * 1000
+        running: true
+        onTriggered: surface.idle = true
+    }
+
+    MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.NoButton
+        hoverEnabled: true
+        onPositionChanged: surface.wake()
+    }
 
     // Vidé par lock.qml après chaque tentative.
     function clearPassword(): void {
-        passwordInput.text = "";
+        card.clearPassword();
     }
 
     function focusPassword(): void {
-        passwordInput.forceActiveFocus();
+        card.focusPassword();
     }
 
-    Rectangle {
+    AuthBackdrop {
         anchors.fill: parent
-        color: Theme.bgDeep
+        z: -1
+        videoSource: surface.wallpaper
+        playing: !surface.idle
     }
 
-    // ── Bloc central : horloge, salutation, mot de passe ──────────────────
-    ColumnLayout {
+    AuthCard {
+        id: card
+
         anchors.centerIn: parent
-        spacing: 28
 
-        LockClock {
-            Layout.alignment: Qt.AlignHCenter
+        userName: surface.userName
+        subtitle: "Session verrouillée"
+        message: surface.message
+        messageIsError: surface.messageIsError
+        busy: surface.busy
+
+        onSubmitted: (user, secret) => surface.submitted(secret)
+        onActivity: surface.wake()
+
+        CardRule {
+            visible: music.visible
         }
-
-        Text {
-            Layout.alignment: Qt.AlignHCenter
-            text: "Bonjour, " + surface.userName + "."
-            color: Theme.textSecondary
-            font.family: "JetBrains Mono"
-            font.pixelSize: 16
-        }
-
-        // Champ mot de passe
-        Rectangle {
-            Layout.alignment: Qt.AlignHCenter
-            Layout.preferredWidth: 340
-            Layout.preferredHeight: 52
-
-            radius: 8
-            color: Theme.bgInput
-            border.width: 2
-            border.color: surface.messageIsError ? Theme.colorDanger : (passwordInput.activeFocus ? Theme.accentColor : Theme.dividerColor)
-
-            Behavior on border.color {
-                ColorAnimation {
-                    duration: 150
-                }
-            }
-
-            // Secousse sur échec d'authentification.
-            SequentialAnimation {
-                id: shake
-                loops: 2
-                NumberAnimation {
-                    target: shakeTransform
-                    property: "x"
-                    to: 8
-                    duration: 45
-                }
-                NumberAnimation {
-                    target: shakeTransform
-                    property: "x"
-                    to: -8
-                    duration: 45
-                }
-                NumberAnimation {
-                    target: shakeTransform
-                    property: "x"
-                    to: 0
-                    duration: 45
-                }
-            }
-
-            transform: Translate {
-                id: shakeTransform
-            }
-
-            Connections {
-                target: surface
-                function onMessageIsErrorChanged(): void {
-                    if (surface.messageIsError)
-                        shake.start();
-                }
-            }
-
-            TextInput {
-                id: passwordInput
-
-                anchors.fill: parent
-                anchors.leftMargin: 16
-                anchors.rightMargin: 16
-
-                verticalAlignment: TextInput.AlignVCenter
-                echoMode: TextInput.Password
-                passwordCharacter: "•"
-                enabled: !surface.busy
-
-                color: Theme.textPrimary
-                selectionColor: Theme.accentColor
-                selectedTextColor: Theme.selectedTextColor
-                font.family: "JetBrains Mono"
-                font.pixelSize: 15
-
-                onAccepted: {
-                    if (!surface.busy && text.length > 0)
-                        surface.submitted(text);
-                }
-
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "Mot de passe…"
-                    color: Theme.placeholderColor
-                    font: passwordInput.font
-                    visible: passwordInput.text.length === 0 && !surface.busy
-                }
-            }
-
-            // Indicateur d'authentification en cours.
-            Text {
-                anchors.right: parent.right
-                anchors.rightMargin: 16
-                anchors.verticalCenter: parent.verticalCenter
-                text: "…"
-                color: Theme.accentColor
-                font.family: "JetBrains Mono"
-                font.pixelSize: 15
-                visible: surface.busy
-            }
-        }
-
-        // Message PAM (« Mauvais mot de passe », etc.)
-        Text {
-            Layout.alignment: Qt.AlignHCenter
-            Layout.preferredHeight: 18
-            text: surface.message
-            color: surface.messageIsError ? Theme.colorDanger : Theme.textDim
-            font.family: "JetBrains Mono"
-            font.pixelSize: 12
-        }
-    }
-
-    // ── Bandeau bas : musique à gauche, stats à droite ────────────────────
-    Item {
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        anchors.margins: 36
-        height: 56
-        visible: surface.showWidgets
 
         LockMusic {
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
+            id: music
+            Layout.fillWidth: true
+            visible: surface.showWidgets && music.hasPlayer
+        }
+
+        CardRule {
+            visible: stats.visible
         }
 
         LockStats {
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
+            id: stats
+            Layout.fillWidth: true
+            visible: surface.showWidgets
         }
     }
 }

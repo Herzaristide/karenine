@@ -8,6 +8,7 @@ AppSource 1.0 AppSource.qml
 FileSource 1.0 FileSource.qml
 WebSource 1.0 WebSource.qml
 SettingSource 1.0 SettingSource.qml
+WallpaperSource 1.0 WallpaperSource.qml
 ClaudeSource 1.0 ClaudeSource.qml
 singleton ClaudeSessions 1.0 ClaudeSessions.qml
 singleton ClaudeLive 1.0 ClaudeLive.qml

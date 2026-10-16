@@ -596,6 +596,8 @@ PanelWindow { // qmllint disable uncreatable-type
             return Quickshell.iconPath("text-x-generic", true);
         case "web":
             return DefaultApps.browser ? DefaultApps.browser.icon : "";
+        case "wallpaper":
+            return Quickshell.iconPath("preferences-desktop-wallpaper", true);
         case "setting":
             switch (p.key) {
             case "volume":     return Quickshell.iconPath("audio-volume-high", true);
@@ -609,7 +611,8 @@ PanelWindow { // qmllint disable uncreatable-type
 
     readonly property var imageSuffixes: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]
     readonly property var typeLabels: ({
-        "app": "app", "file": "fichier", "setting": "réglage", "web": "web"
+        "app": "app", "file": "fichier", "setting": "réglage", "web": "web",
+        "wallpaper": "fond"
     })
 
     // ── Le dernier tour du pilote ────────────────────────────────

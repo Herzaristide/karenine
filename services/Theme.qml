@@ -32,9 +32,12 @@ QtObject {
         }
     })
 
+    // KARENINE_THEME_STATE remplace ce chemin : le greeter tourne sous un
+    // autre utilisateur, sans ~/.config/accent, et reçoit de Nix un état figé.
     property FileView _stateFile: FileView {
-        path: StandardPaths.writableLocation(StandardPaths.HomeLocation)
-              + "/.config/accent/state.json"
+        path: Quickshell.env("KARENINE_THEME_STATE")
+              || (StandardPaths.writableLocation(StandardPaths.HomeLocation)
+                  + "/.config/accent/state.json")
         watchChanges: true
         printErrors: false
         onLoaded:      themeRoot._parseState()
@@ -117,26 +120,19 @@ QtObject {
         _state.palette ? _state.palette.base0c : "#7ebae4"
     ]
 
-    // ── Theme side-effects (GTK color-scheme + wallpaper) ──────────────────
+    // ── Theme side-effects (GTK color-scheme) ──────────────────────────────
+    // Le fond d'écran ne suit plus le thème : c'est une vidéo choisie à part
+    // (WallpaperSource, commande `wallpaper`).
     property Process gtkProcess: Process {
         property string pendingScheme: ""
         command: ["gsettings", "set", "org.gnome.desktop.interface",
                   "color-scheme", pendingScheme]
     }
 
-    property Process wallpaperProcess: Process {
-        property string pendingVariant: "dark"
-        command: ["awww", "img", Quickshell.env("HOME") + "/.config/wallpaper-" + pendingVariant,
-                  "--transition-type=fade", "--transition-duration", "0.1",
-                  "--transition-fps", "255"]
-    }
-
     function toggleTheme() {
         var newMode = darkMode ? "light" : "dark"
         gtkProcess.pendingScheme = darkMode ? "prefer-light" : "prefer-dark"
         gtkProcess.running = true
-        wallpaperProcess.pendingVariant = newMode
-        wallpaperProcess.running = true
         // Delegate mode change to the daemon — it re-renders all templates,
         // fires live-reload signals, and writes the updated state.json which
         // this FileView will pick up automatically.

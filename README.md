@@ -30,7 +30,9 @@ widgets/             Contenu des widgets flottants
   QuickControls, GestureControls, ChromaGraph, MiniGraph, Settings
 ai/                  Cluster chat IA
   AIPanel (sélecteur), ClaudeChat, OllamaChat, OllamaTools
-lock/                Écran de verrouillage (lock.qml) : horloge, musique, stats
+auth/                Carte centrale commune au lock et au greeter : fond, horloge, utilisateur, saisie
+lock/                Écran de verrouillage (lock.qml) : la carte + musique et stats
+greeter/             Écran de connexion greetd (greeter.qml) : la carte + session et alimentation
 anna/                Daemon Rust unique — thème, hwstats, réseau (Tailscale + ssh), tuner, chroma, métronome,
                      gestes webcam, sessions Claude Code (barre, permissions, dock IA),
                      pilote (outils du bureau servis en MCP), voix (whisper.cpp)

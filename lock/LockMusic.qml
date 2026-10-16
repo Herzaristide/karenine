@@ -52,7 +52,7 @@ RowLayout {
     }
 
     ColumnLayout {
-        Layout.maximumWidth: 220
+        Layout.fillWidth: true
         spacing: 2
 
         Text {

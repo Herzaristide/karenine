@@ -39,13 +39,17 @@ QtObject {
     property SettingSource settingSource: SettingSource {
         onProduced: (seq, items) => root._collect(seq, "setting", items)
     }
+    property WallpaperSource wallpaperSource: WallpaperSource {
+        onProduced: (seq, items) => root._collect(seq, "wallpaper", items)
+    }
     // Pas de sessions Claude : elles ont leur dock (AiDock), la recherche de
     // la barre reste sur ce qu'on ouvre.
     property WebSource webSource: WebSource {
         onProduced: (seq, items) => root._collect(seq, "web", items)
     }
 
-    readonly property var sources: [appSource, fileSource, settingSource, webSource]
+    readonly property var sources: [appSource, fileSource, settingSource,
+                                    wallpaperSource, webSource]
 
     // Le débounce protège la seule source coûteuse (fd) sans se faire sentir
     // sur les autres, qui répondent en moins d'une milliseconde.

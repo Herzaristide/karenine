@@ -45,7 +45,7 @@
             installPhase = ''
               runHook preInstall
               mkdir -p "$out"
-              cp -r shell.qml lock.qml services panels widgets ai lock assets "$out"/
+              cp -r shell.qml lock.qml greeter.qml services panels widgets ai auth lock greeter assets "$out"/
               runHook postInstall
             '';
 
@@ -82,6 +82,7 @@
               log=$(${qt}/bin/qmllint \
                 -I ${qt}/lib/qt-6/qml \
                 -I ${qs}/lib/qt-6/qml \
+                -I ${pkgs.qt6.qtmultimedia}/lib/qt-6/qml \
                 $(find ${self} -name '*.qml' -not -path '*/tests/*') 2>&1) || true
               if printf '%s\n' "$log" | grep -qE '^(Warning|Error)'; then
                 printf '%s\n' "$log"
@@ -116,7 +117,7 @@
               pkgs.quickshell
             ];
             # Pour `qmllint -E` / `qmlls -E` et le confort en ligne de commande.
-            QML_IMPORT_PATH = "${pkgs.qt6.qtdeclarative}/lib/qt-6/qml:${pkgs.quickshell}/lib/qt-6/qml";
+            QML_IMPORT_PATH = "${pkgs.qt6.qtdeclarative}/lib/qt-6/qml:${pkgs.quickshell}/lib/qt-6/qml:${pkgs.qt6.qtmultimedia}/lib/qt-6/qml";
           };
         }
       );

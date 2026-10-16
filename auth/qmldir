@@ -1,0 +1,6 @@
+AuthBackdrop 1.0 AuthBackdrop.qml
+AuthCard 1.0 AuthCard.qml
+AuthClock 1.0 AuthClock.qml
+CardRule 1.0 CardRule.qml
+PasswordField 1.0 PasswordField.qml
+AuthVideo 1.0 AuthVideo.qml

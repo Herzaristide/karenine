@@ -15,7 +15,7 @@ import "../widgets"
 RowLayout {
     id: statsRoot
 
-    spacing: 28
+    spacing: 20
 
     readonly property int histLen: 40
 
@@ -92,9 +92,11 @@ RowLayout {
         required property color seriesColor
         required property list<int> history
 
+        Layout.fillWidth: true
         spacing: 4
 
         RowLayout {
+            Layout.fillWidth: true
             spacing: 8
 
             Text {
@@ -115,7 +117,7 @@ RowLayout {
         }
 
         MiniGraph {
-            Layout.preferredWidth: 120
+            Layout.fillWidth: true
             Layout.preferredHeight: 28
             values: stat.history
             lineColor: stat.seriesColor

@@ -25,6 +25,10 @@ ShellRoot {
     readonly property string userName: Quickshell.env("USER") || "utilisateur"
     readonly property string primaryScreen: "DP-1"
 
+    // Vidéo de fond, posée par le lanceur (lock-session côté NixOS). Absente,
+    // le fond reste uni.
+    readonly property string wallpaper: Quickshell.env("KARENINE_WALLPAPER") || ""
+
     // Repassé aux surfaces : l'échec vient de PAM, mais le message d'accueil
     // par défaut vient d'ici.
     property string message: ""
@@ -120,6 +124,7 @@ ShellRoot {
                 message: root.message
                 messageIsError: root.messageIsError
                 busy: root.busy
+                wallpaper: root.wallpaper
                 showWidgets: surfaceWindow.screen !== null && surfaceWindow.screen.name === root.primaryScreen
 
                 onSubmitted: (password) => {

@@ -3,13 +3,13 @@ import QtQuick
 import Quickshell
 import "../services"
 
-// Grande horloge + date du lockscreen.
-// SystemClock ne tourne qu'à la minute : l'écran verrouillé n'affiche pas les
-// secondes, inutile de réveiller le CPU 60 fois par minute pour rien.
+// Grande horloge + date de la carte d'authentification.
+// SystemClock ne tourne qu'à la minute : pas de secondes affichées, inutile de
+// réveiller le CPU 60 fois par minute pour rien.
 Column {
     id: clockRoot
 
-    spacing: 4
+    spacing: 2
 
     readonly property date now: clock.date
 
@@ -23,19 +23,20 @@ Column {
         text: Qt.formatDateTime(clockRoot.now, "HH:mm")
         color: Theme.textPrimary
         font.family: "JetBrains Mono"
-        font.pixelSize: 96
+        font.pixelSize: 84
         font.weight: Font.Light
     }
 
     Text {
         anchors.horizontalCenter: parent.horizontalCenter
-        // Locale FR : "jeudi 17 juillet".
+        // Locale FR forcée : "Vendredi 17 octobre", même si LANG est en anglais
+        // (c'est le cas du greeter, et souvent de la session).
         text: {
-            const d = Qt.formatDateTime(clockRoot.now, "dddd d MMMM");
+            const d = Qt.locale("fr_FR").toString(clockRoot.now, "dddd d MMMM");
             return d.charAt(0).toUpperCase() + d.slice(1);
         }
         color: Theme.textSecondary
         font.family: "JetBrains Mono"
-        font.pixelSize: 18
+        font.pixelSize: 15
     }
 }
