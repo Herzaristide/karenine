@@ -19,13 +19,13 @@ import Quickshell
 Singleton {
     id: widgets
 
-    readonly property var names: ["stats", "serveurs", "musique", "metronome", "accordeur", "son", "camera", "reglages", "sessions"]
+    readonly property var names: ["stats", "network", "musique", "metronome", "accordeur", "son", "camera", "reglages", "sessions"]
 
     // Les onglets des widgets, dans l'ordre de la barre d'onglets.
-    readonly property var hubTabs: ["stats", "serveurs", "musique", "metronome", "accordeur", "reglages"]
+    readonly property var hubTabs: ["stats", "network", "musique", "metronome", "accordeur", "reglages"]
     readonly property var hubLabels: ({
         stats: "Système",
-        serveurs: "Serveurs",
+        network: "Network",
         musique: "Musique",
         metronome: "Métronome",
         accordeur: "Accordeur",
@@ -33,7 +33,7 @@ Singleton {
     })
     readonly property var hubIcons: ({
         stats: "stats.svg",
-        serveurs: "server.svg",
+        network: "server.svg",
         musique: "music.svg",
         metronome: "metronome.svg",
         accordeur: "tuner.svg",

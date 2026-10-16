@@ -289,11 +289,6 @@ Item {
                         }
                     }
                 }
-
-                // ── SERVEURS section ───────────────────────────────
-                ServerSettings {
-                    Layout.fillWidth: true
-                }
             }
 
             ColumnLayout {

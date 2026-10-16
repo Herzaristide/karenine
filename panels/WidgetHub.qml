@@ -17,7 +17,7 @@ import "../widgets"
 //   │                                                │
 //   │      le widget de l'onglet, à l'horizontale     │  fondu croisé et léger
 //   │                                                │  glissement d'un onglet
-//   │  ▦ Système  ▤ Serveurs  ▶ Musique  △ Métronome…  │  à l'autre
+//   │  ▦ Système  ▤ Network  ▶ Musique  △ Métronome…   │  à l'autre
 //   │ ────────────────────────────────────────────── │
 //   │ ❄  Demander à Karénine…                     🎤 │  le champ, inchangé
 //   ╰────────────────────────────────────────────────╯
@@ -43,7 +43,7 @@ Item {
     // La hauteur de chaque widget, à l'horizontale.
     readonly property var heights: ({
         stats: 196,
-        serveurs: 196,
+        network: 196,
         musique: 210,
         metronome: 150,
         accordeur: 150,
@@ -106,9 +106,13 @@ Item {
                 width: content.width
                 height: hub.heights[page.modelData] || 200
                 active: hub.expand > 0 && (page.isCurrent || page.opacity > 0)
+                // Créé par petits morceaux, entre les images : les gros widgets
+                // (musique, réglages) ne figent plus le début de l'ouverture.
+                asynchronous: true
 
                 // Fondu croisé, et un léger glissement du côté de l'onglet.
-                opacity: page.isCurrent ? 1 : 0
+                // Le nouvel onglet n'apparaît qu'une fois prêt, en fondu.
+                opacity: page.isCurrent && page.status === Loader.Ready ? 1 : 0
                 Behavior on opacity { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
                 transform: Translate {
                     x: page.isCurrent ? 0 : (page.index < hub.current ? -28 : 28)
@@ -116,7 +120,7 @@ Item {
                 }
 
                 sourceComponent: page.modelData === "stats" ? statsPage
-                               : page.modelData === "serveurs" ? serversPage
+                               : page.modelData === "network" ? serversPage
                                : page.modelData === "musique" ? musicPage
                                : page.modelData === "metronome" ? metronomePage
                                : page.modelData === "accordeur" ? tunerPage

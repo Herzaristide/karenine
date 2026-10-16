@@ -4,13 +4,14 @@ import QtQuick.Layouts
 import Quickshell.Io
 import "../services"
 
-// Les serveurs suivis par anna (anna/src/servers.rs) : une tuile chacun, en
-// largeur. anna les interroge par ssh toutes les 3 s, sans rien installer sur
-// eux. Les ajouter ou les retirer se fait dans les réglages (ServerSettings),
-// ou avec `anna servers add <nom> [hôte]`.
+// L'onglet « Network » : les autres appareils du réseau Tailscale, une tuile
+// chacun, en largeur (anna/src/servers.rs). La liste est celle de Tailscale,
+// relue toutes les 3 s : un appareil qui rejoint le réseau apparaît seul.
+// Les Linux en ligne sont interrogés par ssh, sans rien installer sur eux ;
+// les autres (téléphone…) montrent leur état, leur système et leur adresse.
 //
-//   ╭ ● gary         45°C ╮ ╭ ● kafka             ╮
-//   │ gary · actif 3 j    │ │ injoignable         │
+//   ╭ ● gary         45°C ╮ ╭ ● Pixel 9a          ╮
+//   │ gary · actif 3 j    │ │ android · 100.71…   │
 //   │ Processeur  ▬▬── 12%│ │                     │
 //   │ Mémoire     ▬▬▬─ 3 Go│ │                     │
 //   │ Disque      ▬─── 24%│ │                     │
@@ -58,7 +59,7 @@ Item {
     onVisibleChanged: if (!visible) watchSock.connected = false
 
 
-    // Les fichiers d'un serveur : Dolphin sait parler sftp.
+    // Les fichiers d'un appareil : Dolphin sait parler sftp.
     Process {
         id: filesProc
         property string target: ""
@@ -88,6 +89,35 @@ Item {
         return "actif " + h + " h " + m + " min";
     }
 
+    // Depuis quand un appareil hors ligne n'a pas été vu.
+    function formatSeen(iso) {
+        var t = Date.parse(iso || "");
+        if (isNaN(t) || t <= 0)
+            return "";
+        var s = Math.max(0, (Date.now() - t) / 1000);
+        if (s < 3600)
+            return "vu il y a " + Math.max(1, Math.round(s / 60)) + " min";
+        if (s < 86400)
+            return "vu il y a " + Math.round(s / 3600) + " h";
+        return "vu il y a " + Math.round(s / 86400) + " j";
+    }
+
+    // Prêt à montrer ses relevés : en ligne, et ssh a répondu.
+    function measured(srv) {
+        return srv.online && srv.ssh && !srv.error;
+    }
+
+    // La ligne sous le nom.
+    function subtitle(srv) {
+        if (root.measured(srv))
+            return [srv.hostname, root.formatUptime(srv.uptime_s)].filter(t => t).join("  ·  ");
+        if (!srv.online)
+            return ["Hors ligne", root.formatSeen(srv.last_seen)].filter(t => t).join("  ·  ");
+        if (srv.error)
+            return root.explain(srv);
+        return [srv.os, srv.ip].filter(t => t).join("  ·  ");
+    }
+
     // Les erreurs de ssh les plus courantes, dites simplement.
     function explain(srv) {
         var e = srv.error || "";
@@ -96,7 +126,7 @@ Item {
         if (e.indexOf("No route to host") >= 0 || e.indexOf("timed out") >= 0 || e === "délai dépassé")
             return "Injoignable : éteint ou hors du réseau.";
         if (e.indexOf("Could not resolve") >= 0)
-            return "Hôte inconnu : vérifie le nom ou ~/.ssh/config.";
+            return "Hôte inconnu : vérifie que MagicDNS est actif.";
         if (e.indexOf("Host key verification failed") >= 0)
             return "Empreinte inconnue : lance « ssh " + srv.host + " » une fois pour l'accepter.";
         return e || "Injoignable.";
@@ -172,6 +202,9 @@ Item {
             id: tile
             required property var modelData
             readonly property var disk: root.mainDisk(tile.modelData)
+            readonly property bool measured: root.measured(tile.modelData)
+            // En ligne pour Tailscale, mais ssh a échoué : son erreur à la place.
+            readonly property bool failed: tile.modelData.online && tile.modelData.error !== ""
 
             width: root.tileW
             height: list.height
@@ -194,7 +227,8 @@ Item {
                         width: 8
                         height: 8
                         radius: 4
-                        color: tile.modelData.online ? Theme.colorSuccess : Theme.colorDanger
+                        color: !tile.modelData.online ? Theme.colorDanger
+                             : tile.failed ? Theme.colorWarning : Theme.colorSuccess
                         Behavior on color { ColorAnimation { duration: 300 } }
                     }
                     Text {
@@ -207,7 +241,7 @@ Item {
                         elide: Text.ElideRight
                     }
                     Text {
-                        text: tile.modelData.temp > 0 ? tile.modelData.temp + "°C" : ""
+                        text: tile.measured && tile.modelData.temp > 0 ? tile.modelData.temp + "°C" : ""
                         font.family: "Inter"
                         font.pixelSize: 11
                         color: Theme.textDim
@@ -216,34 +250,31 @@ Item {
 
                 Text {
                     Layout.fillWidth: true
-                    text: tile.modelData.online
-                          ? [tile.modelData.hostname, root.formatUptime(tile.modelData.uptime_s)]
-                                .filter(t => t).join("  ·  ")
-                          : root.explain(tile.modelData)
+                    text: root.subtitle(tile.modelData)
                     font.family: "Inter"
                     font.pixelSize: 11
-                    color: tile.modelData.online ? Theme.textDim : Theme.colorDanger
+                    color: tile.failed ? Theme.colorDanger : Theme.textDim
                     elide: Text.ElideRight
-                    maximumLineCount: tile.modelData.online ? 1 : 3
-                    wrapMode: tile.modelData.online ? Text.NoWrap : Text.Wrap
+                    maximumLineCount: tile.failed ? 3 : 1
+                    wrapMode: tile.failed ? Text.Wrap : Text.NoWrap
                 }
 
                 Meter {
-                    visible: tile.modelData.online
+                    visible: tile.measured
                     label: "Processeur" + (tile.modelData.cores > 0 ? " · " + tile.modelData.cores + " cœurs" : "")
                     value: tile.modelData.cpu_usage + " %"
                     ratio: tile.modelData.cpu_usage / 100
                     tone: Theme.accentColor
                 }
                 Meter {
-                    visible: tile.modelData.online
+                    visible: tile.measured
                     label: "Mémoire"
                     value: root.formatBytes(tile.modelData.ram_used) + " / " + root.formatBytes(tile.modelData.ram_total)
                     ratio: tile.modelData.ram_total > 0 ? tile.modelData.ram_used / tile.modelData.ram_total : 0
                     tone: Theme.colorRam
                 }
                 Meter {
-                    visible: tile.modelData.online && tile.disk !== null
+                    visible: tile.measured && tile.disk !== null
                     label: "Disque"
                     value: tile.disk ? root.formatBytes(tile.disk.used) + " / " + root.formatBytes(tile.disk.size) : ""
                     ratio: tile.disk && tile.disk.size > 0 ? tile.disk.used / tile.disk.size : 0
@@ -257,7 +288,7 @@ Item {
                     implicitHeight: 28
                     fontSize: 11
                     text: "Fichiers"
-                    visible: tile.modelData.online
+                    visible: tile.measured
                     onClicked: {
                         filesProc.target = tile.modelData.host;
                         filesProc.running = true;
@@ -267,11 +298,11 @@ Item {
         }
     }
 
-    // Aucun serveur : dire où en ajouter.
+    // Seul sur le réseau, ou Tailscale arrêté.
     Text {
         anchors.centerIn: parent
         visible: root.loaded && root.servers.length === 0
-        text: "Aucun serveur suivi : ajoute-en un dans les réglages."
+        text: "Aucun autre appareil sur le réseau Tailscale."
         font.family: "Inter"
         font.pixelSize: 12
         color: Theme.textSecondary

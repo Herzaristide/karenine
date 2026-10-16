@@ -30,7 +30,7 @@
 //! Services exposed over `$XDG_RUNTIME_DIR/anna.sock`:
 //!   - theme    : accent/palette (set/mode/palette-color/get/watch)
 //!   - hwstats  : hardware stats (hwstats_get / hwstats_watch)
-//!   - servers  : remote servers over ssh (servers_watch / servers_add / …)
+//!   - servers  : tailnet devices, stats over ssh (servers_watch / servers_list)
 //!   - gesture  : webcam control (gesture_get/set/toggle/watch)
 //!   - claude   : live Claude Code sessions (claude_hook/list/watch/focus)
 
@@ -399,7 +399,7 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             }
         }
 
-        // ── remote servers ───────────────────────────────────────────────
+        // ── tailnet devices ──────────────────────────────────────────────
         Command::ServersWatch => {
             let mut memory = servers::CpuMemory::new();
             let mut interval = tokio::time::interval(Duration::from_secs(3));
@@ -416,16 +416,8 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
         }
 
         Command::ServersList => {
-            let json = serde_json::to_string(&servers::load()).unwrap_or_default();
+            let json = serde_json::to_string(&servers::load().await).unwrap_or_default();
             let _ = write_line(&mut writer, &json).await;
-        }
-
-        Command::ServersAdd { name, host } => {
-            write_servers_result(&mut writer, servers::add(&name, &host)).await;
-        }
-
-        Command::ServersRemove { name } => {
-            write_servers_result(&mut writer, servers::remove(&name)).await;
         }
 
         // ── audio services ───────────────────────────────────────────────
@@ -1140,18 +1132,6 @@ async fn write_gesture_status(
     status: &gesture::Status,
 ) {
     let json = serde_json::to_string(status).unwrap_or_default();
-    let _ = write_line(writer, &json).await;
-}
-
-/// The server list after an add/remove, or `{"ok":false,"error"}`.
-async fn write_servers_result(
-    writer: &mut tokio::net::unix::OwnedWriteHalf,
-    result: Result<Vec<servers::Server>, String>,
-) {
-    let json = match result {
-        Ok(list) => serde_json::to_string(&list).unwrap_or_default(),
-        Err(error) => serde_json::json!({ "ok": false, "error": error }).to_string(),
-    };
     let _ = write_line(writer, &json).await;
 }
 

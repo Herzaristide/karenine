@@ -64,13 +64,17 @@ QtObject {
         // suffit à les distinguer des fichiers dans la sortie.
         // `shift` laisse toutes les racines dans "$@" : une seule commande, quel
         // que soit leur nombre.
+        // Les gros arbres sans fichier qu'on chercherait (caches, chaînes
+        // d'outils, builds) restent hors du parcours : à chaque requête, fd
+        // les traversait pour rien.
+        var excl = "--exclude .git --exclude .cache --exclude node_modules " +
+                   "--exclude .cargo --exclude .rustup --exclude .npm --exclude target " +
+                   "--exclude .direnv --exclude .local/share/Trash --exclude .local/share/Steam ";
         src.fdProc.command = [
             "sh", "-c",
             "q=\"$1\"; shift; " +
-            "fd -HFi --max-results 12 --type d " +
-            "--exclude .git --exclude .cache --exclude node_modules -- \"$q\" \"$@\"; " +
-            "fd -HFi --max-results 24 --type f " +
-            "--exclude .git --exclude .cache --exclude node_modules -- \"$q\" \"$@\"",
+            "fd -HFi --max-results 12 --type d " + excl + "-- \"$q\" \"$@\"; " +
+            "fd -HFi --max-results 24 --type f " + excl + "-- \"$q\" \"$@\"",
             "--", q
         ].concat(src.roots);
         src.fdProc.running = true;

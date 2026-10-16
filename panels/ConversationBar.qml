@@ -178,13 +178,18 @@ PanelWindow { // qmllint disable uncreatable-type
     // -1 : pas encore mesurée.
     property real closest: -1
 
+    // Un `hyprctl` par mesure : quatre par seconde suffisent pour sentir la
+    // souris partir, et aucun tant qu'elle survole la barre (la distance y
+    // est nulle).
     Timer {
-        interval: 120
+        interval: 250
         repeat: true
         running: bar.typing && !Gesture.active
         onRunningChanged: bar.closest = -1
         onTriggered: {
-            if (!cursorProbe.running)
+            if (bar.pointerInside)
+                bar.closest = 0;
+            else if (!cursorProbe.running)
                 cursorProbe.running = true;
         }
     }
@@ -742,79 +747,87 @@ PanelWindow { // qmllint disable uncreatable-type
                 width: flick.width
                 spacing: 8
 
-                // Une ombre douce sous les lettres : lisibles même là où le
-                // voile s'éclaircit.
-                layer.enabled: true
-                layer.effect: MultiEffect {
-                    shadowEnabled: true
-                    shadowColor: Theme.darkMode ? "#000000" : "#ffffff"
-                    shadowBlur: 0.8
-                    shadowOpacity: 0.8
-                    shadowHorizontalOffset: 0
-                    shadowVerticalOffset: 1
-                }
-
-                Text {
+                // Le texte seul, sous son ombre ; les points animés restent
+                // dehors, sinon l'ombre se recalculerait à chaque image tant que
+                // le pilote réfléchit.
+                Column {
                     width: parent.width
-                    visible: answer.notice.length > 0
-                    text: answer.notice
-                    wrapMode: Text.Wrap
-                    font.family: bar.uiFont
-                    font.pixelSize: 18
-                    color: Theme.colorDanger
-                }
+                    spacing: 8
 
-                // Ce qui a été demandé — ou compris, pour vérifier la voix.
-                Text {
-                    width: parent.width
-                    visible: answer.notice.length === 0 && bar.turn !== null
-                    text: "› " + (bar.turn ? bar.turn.heard : "")
-                    wrapMode: Text.Wrap
-                    maximumLineCount: 3
-                    elide: Text.ElideRight
-                    font.family: bar.uiFont
-                    font.pixelSize: 12
-                    color: Theme.textSecondary
-                }
+                    // Une ombre douce sous les lettres : lisibles même là où le
+                    // voile s'éclaircit.
+                    layer.enabled: true
+                    layer.effect: MultiEffect {
+                        shadowEnabled: true
+                        shadowColor: Theme.darkMode ? "#000000" : "#ffffff"
+                        shadowBlur: 0.8
+                        shadowOpacity: 0.8
+                        shadowHorizontalOffset: 0
+                        shadowVerticalOffset: 1
+                    }
 
-                // Ce que le pilote a fait, en une ligne discrète.
-                Text {
-                    width: parent.width
-                    visible: text.length > 0
-                    text: answer.notice.length === 0 && bar.turn
-                          ? bar.turn.actions.map(a => "· " + a).join("   ") : ""
-                    wrapMode: Text.Wrap
-                    maximumLineCount: 2
-                    elide: Text.ElideRight
-                    font.family: "JetBrains Mono"
-                    font.pixelSize: 11
-                    color: Theme.accentMuted
-                }
+                    Text {
+                        width: parent.width
+                        visible: answer.notice.length > 0
+                        text: answer.notice
+                        wrapMode: Text.Wrap
+                        font.family: bar.uiFont
+                        font.pixelSize: 18
+                        color: Theme.colorDanger
+                    }
 
-                Text {
-                    width: parent.width
-                    visible: answer.notice.length === 0 && bar.turn !== null && bar.turn.reply.length > 0
-                    text: bar.turn ? bar.turn.reply : ""
-                    textFormat: Text.MarkdownText
-                    wrapMode: Text.Wrap
-                    // Une confirmation courte s'affiche en grand, une longue
-                    // réponse un peu moins pour tenir à l'écran.
-                    font.family: bar.uiFont
-                    font.pixelSize: text.length > 220 ? 17 : 22
-                    font.weight: Font.Medium
-                    lineHeight: 1.15
-                    color: bar.turn && bar.turn.failed ? Theme.colorDanger : Theme.textPrimary
-                    linkColor: Theme.accentColor
-                    onLinkActivated: (link) => Qt.openUrlExternally(link)
-                }
+                    // Ce qui a été demandé — ou compris, pour vérifier la voix.
+                    Text {
+                        width: parent.width
+                        visible: answer.notice.length === 0 && bar.turn !== null
+                        text: "› " + (bar.turn ? bar.turn.heard : "")
+                        wrapMode: Text.Wrap
+                        maximumLineCount: 3
+                        elide: Text.ElideRight
+                        font.family: bar.uiFont
+                        font.pixelSize: 12
+                        color: Theme.textSecondary
+                    }
 
-                // Le pilote attend une réponse : on la tape dans la barre.
-                Text {
-                    visible: bar.asking && answer.notice.length === 0
-                    text: "↵ réponds dans la barre"
-                    font.family: "JetBrains Mono"
-                    font.pixelSize: 11
-                    color: Theme.accentColor
+                    // Ce que le pilote a fait, en une ligne discrète.
+                    Text {
+                        width: parent.width
+                        visible: text.length > 0
+                        text: answer.notice.length === 0 && bar.turn
+                              ? bar.turn.actions.map(a => "· " + a).join("   ") : ""
+                        wrapMode: Text.Wrap
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
+                        font.family: "JetBrains Mono"
+                        font.pixelSize: 11
+                        color: Theme.accentMuted
+                    }
+
+                    Text {
+                        width: parent.width
+                        visible: answer.notice.length === 0 && bar.turn !== null && bar.turn.reply.length > 0
+                        text: bar.turn ? bar.turn.reply : ""
+                        textFormat: Text.MarkdownText
+                        wrapMode: Text.Wrap
+                        // Une confirmation courte s'affiche en grand, une longue
+                        // réponse un peu moins pour tenir à l'écran.
+                        font.family: bar.uiFont
+                        font.pixelSize: text.length > 220 ? 17 : 22
+                        font.weight: Font.Medium
+                        lineHeight: 1.15
+                        color: bar.turn && bar.turn.failed ? Theme.colorDanger : Theme.textPrimary
+                        linkColor: Theme.accentColor
+                        onLinkActivated: (link) => Qt.openUrlExternally(link)
+                    }
+
+                    // Le pilote attend une réponse : on la tape dans la barre.
+                    Text {
+                        visible: bar.asking && answer.notice.length === 0
+                        text: "↵ réponds dans la barre"
+                        font.family: "JetBrains Mono"
+                        font.pixelSize: 11
+                        color: Theme.accentColor
+                    }
                 }
 
                 // Le pilote réfléchit : trois points qui respirent.
@@ -1067,46 +1080,60 @@ PanelWindow { // qmllint disable uncreatable-type
         mask: Region {} // qmllint disable unqualified
 
         // L'ombre portée de la capsule, découpée à sa forme : elle ne
-        // passe jamais sous le verre.
+        // passe jamais sous le verre. Ses calques ont la taille de la
+        // capsule et de la marge du flou, pas de la surface ; la capsule qui
+        // monte les déplace (Translate) sans les redessiner ni les reflouter.
         Item {
-            id: shadowShape
-            anchors.fill: parent
-            visible: false
-            layer.enabled: true
-            Rectangle {
-                x: (parent.width - pill.width) / 2
-                y: parent.height - bar.gap - pill.height + 6 + bar.lift
-                width: pill.width
-                height: pill.height
-                radius: bar.barH / 2
-                color: "#000000"
+            id: shadowBox
+            // Le flou (blurMax) et le décalage de l'ombre y tiennent.
+            readonly property int margin: 40
+            x: (parent.width - pill.width) / 2 - margin
+            y: parent.height - bar.gap - pill.height - margin
+            width: pill.width + 2 * margin
+            height: pill.height + 2 * margin
+            transform: Translate { y: bar.lift }
+
+            Item {
+                id: shadowShape
+                anchors.fill: parent
+                visible: false
+                layer.enabled: true
+                Rectangle {
+                    x: shadowBox.margin
+                    y: shadowBox.margin + 6
+                    width: pill.width
+                    height: pill.height
+                    radius: bar.barH / 2
+                    color: "#000000"
+                }
             }
-        }
-        Item {
-            id: pillShape
-            anchors.fill: parent
-            visible: false
-            layer.enabled: true
-            Rectangle {
-                x: (parent.width - pill.width) / 2
-                y: parent.height - bar.gap - pill.height + bar.lift
-                width: pill.width
-                height: pill.height
-                radius: bar.barH / 2
-                color: "#000000"
+            Item {
+                id: pillShape
+                anchors.fill: parent
+                visible: false
+                layer.enabled: true
+                Rectangle {
+                    x: shadowBox.margin
+                    y: shadowBox.margin
+                    width: pill.width
+                    height: pill.height
+                    radius: bar.barH / 2
+                    color: "#000000"
+                }
             }
-        }
-        MultiEffect {
-            anchors.fill: parent
-            source: shadowShape
-            autoPaddingEnabled: false
-            blurEnabled: true
-            blur: 1.0
-            blurMax: 32
-            opacity: (Theme.darkMode ? 0.55 : 0.22) * pill.opacity
-            maskEnabled: true
-            maskSource: pillShape
-            maskInverted: true
+            MultiEffect {
+                anchors.fill: parent
+                source: shadowShape
+                autoPaddingEnabled: false
+                blurEnabled: true
+                blur: 1.0
+                blurMax: 32
+                opacity: (Theme.darkMode ? 0.55 : 0.22) * pill.opacity
+                visible: opacity > 0
+                maskEnabled: true
+                maskSource: pillShape
+                maskInverted: true
+            }
         }
 
         Item {
@@ -1255,6 +1282,8 @@ PanelWindow { // qmllint disable uncreatable-type
             anchors.fill: parent
 
             opacity: forResults ? results.opacity : answer.opacity
+            // Effacé, ses calques et ses flous ne sont plus recalculés.
+            visible: opacity > 0
             transform: Translate {
                 y: resultsVeil.forResults ? (results.on ? 0 : 10) : (answer.shown ? 0 : 12)
                 Behavior on y { NumberAnimation { duration: 460; easing.type: Easing.OutQuint } }
@@ -1293,23 +1322,31 @@ PanelWindow { // qmllint disable uncreatable-type
                 }
             }
 
-            // Le cœur, plus sombre, juste sous les lignes.
+            // Le cœur, plus sombre, juste sous les lignes. Son calque a la
+            // taille du rectangle et de la marge du flou, pas de la surface :
+            // la liste qui grandit à chaque lettre le refloute sur bien moins
+            // de pixels.
             Item {
                 id: core
-                anchors.fill: parent
+                // Le flou (blurMax) y tient.
+                readonly property int margin: 64
+                x: resultsVeil.spread - 10 - margin
+                y: resultsVeil.listBottom - resultsVeil.contentH - 10 - margin
+                width: bar.barW + 20 + 2 * margin
+                height: resultsVeil.contentH + 30 + 2 * margin
                 visible: false
                 layer.enabled: true
                 Rectangle {
-                    x: resultsVeil.spread - 10
+                    x: core.margin
+                    y: core.margin
                     width: bar.barW + 20
-                    y: resultsVeil.listBottom - resultsVeil.contentH - 10
                     height: resultsVeil.contentH + 30
                     radius: 40
                     color: Qt.alpha(resultsVeil.tint, Theme.darkMode ? 0.6 : 0.5)
                 }
             }
             MultiEffect {
-                anchors.fill: parent
+                anchors.fill: core
                 source: core
                 autoPaddingEnabled: false
                 blurEnabled: true

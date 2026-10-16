@@ -1,37 +1,39 @@
-//! Remote servers: their stats over SSH, for the « Serveurs » tab.
+//! The devices of the tailnet, and their stats over SSH, for the « Network »
+//! tab.
 //!
-//! The servers come from two places, merged on every sample:
-//! - `~/.ssh/config`: each concrete `Host` alias is a server, without any
-//!   setup. Skipped: patterns (`*`, `?`, `!`), git forges (`User git`) and
-//!   this machine itself.
-//! - `~/.config/anna/servers.json`, for the rest — `{"servers":[{"name",
-//!   "host"}], "hidden":[…]}`, where `host` is anything `ssh` accepts
-//!   (`user@1.2.3.4`…). Removing a server that comes from the ssh config
-//!   hides it (`hidden`) rather than touching that file.
+//! The list is Tailscale's (`tailscale status --json`): every other device of
+//! the tailnet, phones included, re-read on every sample — a device that
+//! joins shows up on the next tick. Only the Linux ones are asked for stats;
+//! the others show their state, system and address.
 //!
-//! Both are re-read on every sample, so a server added from the shell, with
-//! `anna servers add` or in the ssh config shows up on the next tick.
+//! A device is reached through its `~/.ssh/config` alias when one names it
+//! (same name, or its Tailscale address), for the user and key set there;
+//! otherwise through its MagicDNS name.
 //!
-//! Nothing runs on the servers but `ssh` and a few reads of `/proc`, `df` and
-//! sysfs: no agent to install. One master connection per server stays open
+//! Nothing runs on the devices but `ssh` and a few reads of `/proc`, `df` and
+//! sysfs: no agent to install. One master connection per device stays open
 //! (`ControlMaster`, socket in `$XDG_RUNTIME_DIR`), so a sample costs a new
-//! channel, not a new handshake. `BatchMode` keeps a server that would ask
-//! for a password from hanging the loop: it reports an error instead.
+//! channel, not a new handshake. `BatchMode` keeps a device that would ask
+//! for a password from hanging the loop: it reports an error instead. A
+//! device Tailscale knows to be offline is not tried at all.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::time::Duration;
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Clone, Debug, PartialEq, Default)]
 pub struct Server {
-    /// Shown in the shell; also the key for add/remove.
+    /// Its Tailscale name, shown in the shell.
     pub name: String,
-    /// The ssh destination.
+    /// The ssh destination; "" for a device that does not run ssh (a phone).
     pub host: String,
-    /// Found in `~/.ssh/config` rather than added by hand.
-    #[serde(default, skip_deserializing)]
-    pub from_ssh: bool,
+    /// `linux`, `android`, `windows`, `macOS`, `iOS`…
+    pub os: String,
+    /// Its Tailscale IPv4.
+    pub ip: String,
+    pub online: bool,
+    /// RFC 3339, "" while online.
+    pub last_seen: String,
 }
 
 #[derive(Serialize, Default, Clone)]
@@ -47,8 +49,13 @@ pub struct RemoteDisk {
 pub struct ServerStats {
     pub name: String,
     pub host: String,
+    pub os: String,
+    pub ip: String,
+    pub last_seen: String,
     pub online: bool,
-    /// Why it is offline (ssh's last line), "" when online.
+    /// Its stats were asked over ssh (the fields below are filled).
+    pub ssh: bool,
+    /// Why ssh failed (its last line), "" otherwise.
     pub error: String,
     pub hostname: String,
     pub cpu_usage: u8,
@@ -66,57 +73,85 @@ pub struct ServerStats {
 
 // ── The list ────────────────────────────────────────────────────────────────
 
-/// What `servers.json` holds.
-#[derive(Serialize, Deserialize, Default)]
-struct ListFile {
-    /// Added by hand.
-    #[serde(default)]
-    servers: Vec<Server>,
-    /// Names from the ssh config not to show.
-    #[serde(default)]
-    hidden: Vec<String>,
+/// What `tailscale status --json` says, as far as it matters here.
+#[derive(Deserialize, Default)]
+struct Status {
+    #[serde(rename = "Peer", default)]
+    peers: HashMap<String, StatusPeer>,
 }
 
-pub fn list_file() -> PathBuf {
-    crate::paths::home_dir().join(".config/anna/servers.json")
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct StatusPeer {
+    #[serde(rename = "HostName")]
+    host_name: String,
+    #[serde(rename = "DNSName")]
+    dns_name: String,
+    #[serde(rename = "OS")]
+    os: String,
+    #[serde(rename = "Online")]
+    online: bool,
+    #[serde(rename = "LastSeen")]
+    last_seen: String,
+    #[serde(rename = "TailscaleIPs")]
+    ips: Vec<String>,
 }
 
-/// The file; empty when missing or unreadable. The first version was a bare
-/// array of servers: still read.
-fn read_list() -> ListFile {
-    let Ok(text) = std::fs::read_to_string(list_file()) else {
-        return ListFile::default();
+/// The other devices of the tailnet; none when Tailscale is missing or down.
+/// The `tailscale` CLI comes from the system PATH, to match its daemon.
+pub async fn load() -> Vec<Server> {
+    let child = tokio::process::Command::new("tailscale")
+        .args(["status", "--json"])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .output();
+    let Ok(Ok(out)) = tokio::time::timeout(Duration::from_secs(4), child).await else {
+        return vec![];
     };
-    serde_json::from_str::<ListFile>(&text)
-        .or_else(|_| serde_json::from_str::<Vec<Server>>(&text).map(|servers| ListFile { servers, hidden: vec![] }))
-        .unwrap_or_default()
+    let ssh_config = std::fs::read_to_string(crate::paths::home_dir().join(".ssh/config")).unwrap_or_default();
+    parse_status(&String::from_utf8_lossy(&out.stdout), &parse_ssh_config(&ssh_config))
 }
 
-fn write_list(list: &ListFile) -> Result<(), String> {
-    let f = list_file();
-    if let Some(d) = f.parent() {
-        std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
-    }
-    let json = serde_json::to_string_pretty(list).map_err(|e| e.to_string())?;
-    std::fs::write(&f, json + "\n").map_err(|e| e.to_string())
+fn parse_status(json: &str, aliases: &[(String, String)]) -> Vec<Server> {
+    let status: Status = serde_json::from_str(json).unwrap_or_default();
+    let mut out: Vec<Server> = status
+        .peers
+        .into_values()
+        .filter(|p| !p.host_name.is_empty())
+        .map(|p| {
+            let dns = p.dns_name.trim_end_matches('.');
+            let short = dns.split('.').next().unwrap_or("");
+            // Its ssh config alias: same name, or its Tailscale address.
+            let alias = aliases.iter().find(|(alias, hostname)| {
+                alias.eq_ignore_ascii_case(&p.host_name)
+                    || alias.eq_ignore_ascii_case(short)
+                    || p.ips.iter().any(|ip| ip == hostname)
+            });
+            let host = match alias {
+                _ if p.os != "linux" => String::new(),
+                Some((alias, _)) => alias.clone(),
+                None if dns.is_empty() => p.ips.first().cloned().unwrap_or_default(),
+                None => dns.to_string(),
+            };
+            Server {
+                name: p.host_name,
+                host,
+                // IPv4 first.
+                ip: p.ips.iter().find(|ip| !ip.contains(':')).or(p.ips.first()).cloned().unwrap_or_default(),
+                last_seen: if p.online { String::new() } else { p.last_seen },
+                online: p.online,
+                os: p.os,
+            }
+        })
+        .collect();
+    out.sort_by_key(|s| s.name.to_lowercase());
+    out
 }
 
-/// The concrete hosts of `~/.ssh/config`, minus git forges and this machine.
-fn ssh_config_servers() -> Vec<Server> {
-    let text = std::fs::read_to_string(crate::paths::home_dir().join(".ssh/config")).unwrap_or_default();
-    let me = std::fs::read_to_string("/proc/sys/kernel/hostname").unwrap_or_default();
-    parse_ssh_config(&text, me.trim())
-}
-
-fn parse_ssh_config(text: &str, me: &str) -> Vec<Server> {
-    // One block per `Host` line: its aliases, and what decides whether it is
-    // a server (its user, its address).
-    struct Block {
-        aliases: Vec<String>,
-        user: String,
-        hostname: String,
-    }
-    let mut blocks: Vec<Block> = Vec::new();
+/// `(alias, HostName)` for each concrete `Host` alias of an ssh config.
+fn parse_ssh_config(text: &str) -> Vec<(String, String)> {
+    let mut blocks: Vec<(Vec<String>, String)> = Vec::new();
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -128,92 +163,24 @@ fn parse_ssh_config(text: &str, me: &str) -> Vec<Server> {
             None => (line, ""),
         };
         match key.to_ascii_lowercase().as_str() {
-            "host" => blocks.push(Block {
-                aliases: value.split_whitespace().map(str::to_string).collect(),
-                user: String::new(),
-                hostname: String::new(),
-            }),
+            "host" => blocks.push((value.split_whitespace().map(str::to_string).collect(), String::new())),
             // A `Match` block belongs to no host.
-            "match" => blocks.push(Block { aliases: vec![], user: String::new(), hostname: String::new() }),
-            "user" => {
-                if let Some(b) = blocks.last_mut() {
-                    b.user = value.to_string();
-                }
-            }
+            "match" => blocks.push((vec![], String::new())),
             "hostname" => {
                 if let Some(b) = blocks.last_mut() {
-                    b.hostname = value.to_string();
+                    b.1 = value.to_string();
                 }
             }
             _ => {}
         }
     }
-
-    let mut out: Vec<Server> = Vec::new();
-    for b in blocks {
-        if b.user == "git" || (!me.is_empty() && b.hostname.eq_ignore_ascii_case(me)) {
-            continue;
-        }
-        for alias in b.aliases {
-            let pattern = alias.contains(['*', '?', '!']);
-            if pattern || alias.eq_ignore_ascii_case(me) || out.iter().any(|s| s.name == alias) {
-                continue;
-            }
-            out.push(Server { host: alias.clone(), name: alias, from_ssh: true });
-        }
-    }
-    out
-}
-
-/// Every server to show: the ssh config ones not hidden, then those added by
-/// hand (which win over an ssh alias of the same name).
-pub fn load() -> Vec<Server> {
-    let list = read_list();
-    let mut out: Vec<Server> = ssh_config_servers()
+    blocks
         .into_iter()
-        .filter(|s| !list.hidden.contains(&s.name) && !list.servers.iter().any(|m| m.name == s.name))
-        .collect();
-    out.extend(list.servers);
-    out
+        .flat_map(|(aliases, hostname)| aliases.into_iter().map(move |a| (a, hostname.clone())))
+        .filter(|(a, _)| !a.contains(['*', '?', '!']))
+        .collect()
 }
 
-/// Add a server, or change the host of one with the same name. An ssh config
-/// server that was hidden comes back.
-pub fn add(name: &str, host: &str) -> Result<Vec<Server>, String> {
-    let (name, host) = (name.trim(), host.trim());
-    if name.is_empty() || host.is_empty() {
-        return Err("nom et hôte requis".into());
-    }
-    // ssh would read a leading dash as an option.
-    if host.starts_with('-') || host.chars().any(char::is_whitespace) {
-        return Err(format!("hôte invalide : {host}"));
-    }
-    let mut list = read_list();
-    list.hidden.retain(|h| h != name);
-    // Already in the ssh config as such: showing it again is enough.
-    let from_ssh = ssh_config_servers().iter().any(|s| s.name == name && s.host == host);
-    if from_ssh {
-        list.servers.retain(|s| s.name != name);
-    } else {
-        match list.servers.iter_mut().find(|s| s.name == name) {
-            Some(s) => s.host = host.to_string(),
-            None => list.servers.push(Server { name: name.to_string(), host: host.to_string(), from_ssh: false }),
-        }
-    }
-    write_list(&list)?;
-    Ok(load())
-}
-
-/// Forget a server added by hand; hide one from the ssh config.
-pub fn remove(name: &str) -> Result<Vec<Server>, String> {
-    let mut list = read_list();
-    list.servers.retain(|s| s.name != name);
-    if ssh_config_servers().iter().any(|s| s.name == name) && !list.hidden.iter().any(|h| h == name) {
-        list.hidden.push(name.to_string());
-    }
-    write_list(&list)?;
-    Ok(load())
-}
 // ── Sampling ────────────────────────────────────────────────────────────────
 
 /// What runs on the server: one section per measure, split by `@@`.
@@ -228,29 +195,43 @@ hostname";
 /// The previous /proc/stat totals of each server, for the CPU delta.
 pub type CpuMemory = HashMap<String, (u64, u64)>;
 
-/// Sample every configured server at once.
+/// Sample every device at once: over ssh those that run it and are online,
+/// from Tailscale alone the others.
 pub async fn sample_all(memory: &mut CpuMemory) -> Vec<ServerStats> {
-    let servers = load();
-    let tasks: Vec<_> = servers
+    let tasks: Vec<_> = load()
+        .await
         .into_iter()
-        .map(|s| tokio::spawn(async move { (s.clone(), run_script(&s.host).await) }))
+        .map(|s| {
+            tokio::spawn(async move {
+                let result = if s.online && !s.host.is_empty() { Some(run_script(&s.host).await) } else { None };
+                (s, result)
+            })
+        })
         .collect();
 
     let mut out = Vec::new();
     for t in tasks {
         let Ok((server, result)) = t.await else { continue };
-        let stats = match result {
-            Ok(text) => parse(&server, &text, memory),
-            Err(error) => ServerStats {
-                name: server.name.clone(),
-                host: server.host.clone(),
-                error,
-                ..Default::default()
-            },
-        };
-        out.push(stats);
+        out.push(match result {
+            None => base(&server),
+            Some(Ok(text)) => parse(&server, &text, memory),
+            Some(Err(error)) => ServerStats { ssh: true, error, ..base(&server) },
+        });
     }
     out
+}
+
+/// What Tailscale says of a device, before any ssh.
+fn base(server: &Server) -> ServerStats {
+    ServerStats {
+        name: server.name.clone(),
+        host: server.host.clone(),
+        os: server.os.clone(),
+        ip: server.ip.clone(),
+        last_seen: server.last_seen.clone(),
+        online: server.online,
+        ..Default::default()
+    }
 }
 
 async fn run_script(host: &str) -> Result<String, String> {
@@ -287,12 +268,7 @@ fn parse(server: &Server, text: &str, memory: &mut CpuMemory) -> ServerStats {
     let parts: Vec<&str> = text.split("@@").map(str::trim).collect();
     let part = |i: usize| parts.get(i).copied().unwrap_or("");
 
-    let mut s = ServerStats {
-        name: server.name.clone(),
-        host: server.host.clone(),
-        online: true,
-        ..Default::default()
-    };
+    let mut s = ServerStats { ssh: true, ..base(server) };
 
     // CPU: the delta since the last sample (0 on the first).
     if let Some((total, active)) = cpu_totals(part(0)) {
@@ -396,20 +372,44 @@ mod tests {
     }
 
     #[test]
-    fn ssh_config_gives_concrete_hosts() {
+    fn ssh_config_gives_concrete_aliases() {
         let config = "Host gary\n  HostName 100.90.139.70\n  User aristide\n\n\
-                      Host github.com\n  User git\n\n\
-                      Host zola\n  HostName 100.67.220.15\n\n\
                       host kafka nas\n  hostname=192.168.1.143\n\n\
                       Host *.lan !x\n  User root\n\n\
                       Match host foo\n  User git\n";
-        let names: Vec<String> = parse_ssh_config(config, "zola").into_iter().map(|s| s.name).collect();
+        let aliases = parse_ssh_config(config);
+        let names: Vec<&str> = aliases.iter().map(|(a, _)| a.as_str()).collect();
         assert_eq!(names, ["gary", "kafka", "nas"]);
+        assert_eq!(aliases[2].1, "192.168.1.143");
+    }
+
+    #[test]
+    fn tailscale_status_gives_devices() {
+        let json = r#"{"Self":{"HostName":"zola"},"Peer":{
+            "k1":{"HostName":"Pixel 9a","DNSName":"pixel-9a.tail.ts.net.","OS":"android","Online":false,
+                  "LastSeen":"2026-10-16T10:01:58Z","TailscaleIPs":["fd7a::1","100.71.19.96"]},
+            "k2":{"HostName":"gary","DNSName":"gary.tail.ts.net.","OS":"linux","Online":true,
+                  "LastSeen":"0001-01-01T00:00:00Z","TailscaleIPs":["100.90.139.70"]},
+            "k3":{"HostName":"box","DNSName":"box.tail.ts.net.","OS":"linux","Online":true,
+                  "TailscaleIPs":["100.1.2.3"]}}}"#;
+        let aliases = vec![("g".to_string(), "100.90.139.70".to_string())];
+        let d = parse_status(json, &aliases);
+        let names: Vec<&str> = d.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["box", "gary", "Pixel 9a"]);
+        // No alias: its MagicDNS name.
+        assert_eq!(d[0].host, "box.tail.ts.net");
+        // Its ssh config alias, found by address.
+        assert_eq!(d[1].host, "g");
+        assert_eq!(d[1].last_seen, "");
+        // A phone: no ssh, its IPv4 first.
+        assert_eq!(d[2].host, "");
+        assert_eq!(d[2].ip, "100.71.19.96");
+        assert_eq!(d[2].last_seen, "2026-10-16T10:01:58Z");
     }
 
     #[test]
     fn script_output_parses() {
-        let server = Server { name: "gary".into(), host: "gary".into(), from_ssh: false };
+        let server = Server { name: "gary".into(), host: "gary".into(), online: true, ..Default::default() };
         let text = "cpu  100 0 50 800 50 0 0 0\n@@\nMemTotal: 1000 kB\nMemAvailable: 400 kB\n@@\n\
                     3600.5\n@@\n0.42\n8\n@@\n45000\n@@\n/dev/sda1 500 100 400 20% /\n@@\ngary";
         let mut mem = CpuMemory::new();

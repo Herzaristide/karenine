@@ -20,8 +20,10 @@ Item {
     property var diskData: []
     property string openTarget: ""
 
-    // ── Historique des courbes : 160 points à 4 Hz, soit 40 s ──
-    readonly property int historySize: 160
+    // ── Historique des courbes : 80 points à 2 Hz, soit 40 s ──
+    // (les trois courbes sont des Canvas redessinés en JS à chaque mesure :
+    // 2 Hz suffit à l'œil, 4 Hz doublait le travail pour rien)
+    readonly property int historySize: 80
     property var cpuHistory: []
     property var ramHistory: []
     property var gpuHistory: []
@@ -196,7 +198,7 @@ Item {
             }
         }
         onConnectedChanged: {
-            if (connected) write('{"cmd":"hwstats_watch","interval_ms":250}\n');
+            if (connected) write('{"cmd":"hwstats_watch","interval_ms":500}\n');
         }
     }
 

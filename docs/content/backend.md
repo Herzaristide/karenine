@@ -19,7 +19,7 @@ un **socket Unix**
 | --- | --- | --- |
 | thème | `set` / `mode` / `palette-color` / `reset` / `get` / `watch` | Accent + palette base16, rendu des templates, live-reload. Les rafales (glisser, arc-en-ciel) sont fusionnées : seul l'état le plus récent est appliqué. |
 | hwstats | `hwstats_get` / `hwstats_watch` | Stats matérielles (CPU/RAM/GPU/disques). |
-| servers | `servers_watch` / `servers_list` / `servers_add` / `servers_remove` | Stats des serveurs distants par ssh. Liste relue à chaque relevé : les `Host` de `~/.ssh/config` (sans motifs, forges `User git` ni la machine elle-même), plus `~/.config/anna/servers.json` (ajouts à la main, et serveurs du ssh config masqués) ; CLI `anna servers`. |
+| servers | `servers_watch` / `servers_list` | Les autres appareils du réseau Tailscale (`tailscale status --json`, relu à chaque relevé), et les stats par ssh de ceux sous Linux en ligne ; joints par leur alias de `~/.ssh/config` s'il y en a un (même nom ou même adresse), sinon par leur nom MagicDNS. Les autres (téléphone…) : état, système, adresse, dernière connexion. CLI `anna servers`. |
 | tuner | `tuner_watch` | Détection de hauteur — `{"pitch":<hz>}` par frame. |
 | chroma | `chroma_watch` | Chromagramme 12 classes — `{"chroma":[…],"top":[…]}`. |
 | metronome | `metronome` | Session de clic sample-accurate, `{"beat":<n>}`. BPM bornés à 20–300, temps par mesure à 1–16. |

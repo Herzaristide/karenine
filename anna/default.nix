@@ -55,7 +55,8 @@ pkgs.rustPlatform.buildRustPackage {
     #   pw-record (pipewire)
     #     → the echo-cancelled mic of the wake word and dictation (audio.rs)
     #   ssh (openssh)
-    #     → the stats of the remote servers (servers.rs)
+    #     → the stats of the tailnet devices (servers.rs); the tailscale CLI
+    #       itself is left to the ambient PATH, to match its daemon
     #   wpctl (wireplumber), brightnessctl, playerctl, wl-paste (wl-clipboard),
     #   xdg-open (xdg-utils), grimblast
     #     → the pilot's desk tools (claude/desk.rs)

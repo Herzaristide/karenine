@@ -14,16 +14,15 @@ composant QML autonome.
 | --- | --- |
 | `HardwareStats.qml` | Statistiques matérielles (CPU, RAM, …). |
 | `NotesWidget.qml` | Prise de notes. |
-| `ServersWidget.qml` | Les serveurs suivis par anna (ssh, sans agent) : une tuile chacun (état, processeur, mémoire, disque, « Fichiers » en sftp dans Dolphin). Les ajouter ou les retirer se fait dans les réglages (`ServerSettings`). |
+| `ServersWidget.qml` | L'onglet « Network » : les autres appareils du réseau Tailscale, une tuile chacun. Linux en ligne : processeur, mémoire, disque par ssh (sans agent), « Fichiers » en sftp dans Dolphin ; les autres : système, adresse, ou depuis quand ils sont hors ligne. |
 | `GlassButton.qml` | Le bouton des widgets, dans le style de la barre (pilule translucide, teintée si `accent`). |
 | `MusicPlayerWidget.qml` | Lecteur de musique. |
 | `Tuner.qml` | Accordeur — voir [Outils musicaux](#audio-tools). |
 | `Metronome.qml` | Métronome — voir [Outils musicaux](#audio-tools). |
 | `ChromaGraph.qml` | Chromagramme — voir [Outils musicaux](#audio-tools). |
 | `MiniGraph.qml` | Petit graphe réutilisable. |
-| `Settings.qml` | Réglages, en quatre colonnes : périphériques ; écran, accordeur (le la de référence, persisté par le singleton `Tuning` dans `tuner.json`) et serveurs ; apparence ; palette (l'onglet Réglages de `WidgetHub`). |
+| `Settings.qml` | Réglages, en quatre colonnes : périphériques ; écran, accordeur (le la de référence, persisté par le singleton `Tuning` dans `tuner.json`) ; apparence ; palette (l'onglet Réglages de `WidgetHub`). |
 | `DeviceSettings.qml` | Première colonne des réglages : sortie et entrée du son, webcam (nœuds PipeWire, `wpctl set-default`) ; la luminosité est dans la barre du haut (`HubTopBar`). |
-| `ServerSettings.qml` | Section Serveurs des réglages : la liste des serveurs suivis par anna, les retirer, en ajouter (`servers_list` / `servers_add` / `servers_remove`). |
 
 ## Relations
 

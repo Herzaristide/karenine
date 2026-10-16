@@ -31,7 +31,7 @@ widgets/             Contenu des widgets flottants
 ai/                  Cluster chat IA
   AIPanel (sélecteur), ClaudeChat, OllamaChat, OllamaTools
 lock/                Écran de verrouillage (lock.qml) : horloge, musique, stats
-anna/                Daemon Rust unique — thème, hwstats, serveurs (ssh), tuner, chroma, métronome,
+anna/                Daemon Rust unique — thème, hwstats, réseau (Tailscale + ssh), tuner, chroma, métronome,
                      gestes webcam, sessions Claude Code (barre, permissions, dock IA),
                      pilote (outils du bureau servis en MCP), voix (whisper.cpp)
 tests/               Tests QML (qmltestrunner) — `tests/run.sh`

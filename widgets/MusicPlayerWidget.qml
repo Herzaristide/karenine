@@ -26,7 +26,7 @@ Item {
     readonly property bool hasPlayer: player !== null && player !== undefined
     readonly property bool isPlaying: hasPlayer && player.playbackState === MprisPlaybackState.Playing
 
-    // ── Real-time audio spectrum from cava (0–100 per bar) ────────────
+    // ── Real-time audio spectrum from cava (0–1 per bar, already shaped) ──
     // Enough bars to read as a ring around the disc rather than a row.
     readonly property int eqBars: 32
     property var eqLevels: new Array(32).fill(0)
@@ -37,7 +37,7 @@ Item {
         command: [
             "sh", "-c",
             "mkdir -p /tmp/qs-music && cat > /tmp/qs-music/cava.conf <<'EOF'\n" +
-            "[general]\nbars = " + root.eqBars + "\nframerate = 60\n" +
+            "[general]\nbars = " + root.eqBars + "\nframerate = 30\n" +
             "[input]\nmethod = pulse\nsource = auto\n" +
             "[output]\nmethod = raw\ndata_format = ascii\nascii_max_range = 100\nchannels = mono\n" +
             "[smoothing]\nnoise_reduction = 12\n" +
@@ -45,11 +45,14 @@ Item {
         ]
         stdout: SplitParser {
             onRead: (line) => {
+                // Shaped here, once per frame, rather than in each bar's
+                // binding. Raised to a power below 1: cava's raw levels sit
+                // low, so a kick should read as a jump rather than a nudge.
                 var parts = line.trim().split(';');
                 var arr = [];
                 for (var i = 0; i < root.eqBars; i++) {
                     var v = parseInt(parts[i]);
-                    arr.push(isNaN(v) ? 0 : v);
+                    arr.push(isNaN(v) ? 0 : Math.pow(Math.max(0, Math.min(1, v / 100)), 0.7));
                 }
                 root.eqLevels = arr;
             }
@@ -72,15 +75,6 @@ Item {
         }
     }
 
-    // ── Vinyl disc rotation (25 fps) ──────────────────────────────────
-    property real vinylRotation: 0
-
-    Timer {
-        running: root.isPlaying
-        interval: 40
-        repeat: true
-        onTriggered: root.vinylRotation = (root.vinylRotation + 0.8) % 360
-    }
 
     // ── Track-change accent flash ──────────────────────────────────────
     property string currentTrackId: hasPlayer
@@ -270,10 +264,7 @@ Item {
                     // Bar 0 at the top, then clockwise around the disc.
                     rotation: index * (360 / root.eqBars)
 
-                    // Raised to a power below 1: cava's raw levels sit low, so
-                    // a kick should read as a jump rather than a nudge.
-                    readonly property real level: Math.pow(Math.max(0, Math.min(1,
-                        (root.eqLevels[index] || 0) / 100)), 0.7)
+                    readonly property real level: root.eqLevels[index] || 0
 
                     Rectangle {
                         width: 3
@@ -285,10 +276,11 @@ Item {
                         color: Theme.accentColor
                         opacity: root.isPlaying ? (0.45 + barSlot.level * 0.55) : 0.25
 
-                        // Short enough to keep up with the beat — at 60 fps
-                        // cava hands us a frame every 16 ms.
-                        Behavior on height { NumberAnimation { duration: 40; easing.type: Easing.OutCubic } }
-                        Behavior on opacity { NumberAnimation { duration: 120 } }
+                        // One cava frame long (30 fps → 33 ms): the bar glides
+                        // between frames on a faster display. Opacity follows
+                        // the level directly — a second animation per bar per
+                        // frame cost more than it smoothed.
+                        Behavior on height { NumberAnimation { duration: 33 } }
                     }
                 }
             }
@@ -337,6 +329,7 @@ Item {
 
             // Inner pulsing ring
             Rectangle {
+                id: innerRing
                 anchors.centerIn: parent
                 width: parent.width + 8; height: parent.height + 8; radius: width / 2
                 color: "transparent"
@@ -344,10 +337,11 @@ Item {
                 opacity: root.isPlaying ? 0.30 : 0.0
                 Behavior on opacity { NumberAnimation { duration: 320 } }
 
-                SequentialAnimation on scale {
+                // Animators only: the pulse runs on the render thread.
+                SequentialAnimation {
                     running: root.isPlaying && !root.showLyrics; loops: Animation.Infinite
-                    NumberAnimation { from: 1.0; to: 1.04; duration: 860; easing.type: Easing.InOutSine }
-                    NumberAnimation { from: 1.04; to: 1.0; duration: 860; easing.type: Easing.InOutSine }
+                    ScaleAnimator { target: innerRing; from: 1.0; to: 1.04; duration: 860; easing.type: Easing.InOutSine }
+                    ScaleAnimator { target: innerRing; from: 1.04; to: 1.0; duration: 860; easing.type: Easing.InOutSine }
                 }
             }
 
@@ -355,7 +349,16 @@ Item {
             Item {
                 id: vinylDisc
                 anchors.fill: parent
-                rotation: root.vinylRotation
+
+                // 20°/s, on the render thread at the display's own rate (a JS
+                // Timer used to step it at 25 fps). Resumes where it paused.
+                RotationAnimator on rotation {
+                    running: root.isPlaying
+                    from: vinylDisc.rotation
+                    to: vinylDisc.rotation + 360
+                    duration: 18000
+                    loops: Animation.Infinite
+                }
             }
         }
 
@@ -442,8 +445,8 @@ Item {
                 id: discArt
                 anchors.fill: parent
                 source: root.hasPlayer && root.player.trackArtUrl ? root.player.trackArtUrl : ""
-                sourceSize.width: 1024
-                sourceSize.height: 1024
+                sourceSize.width: 512
+                sourceSize.height: 512
                 fillMode: Image.PreserveAspectCrop
                 asynchronous: true
                 smooth: true
@@ -453,7 +456,7 @@ Item {
                 layer.enabled: true
                 layer.smooth: true
                 layer.mipmap: true
-                layer.textureSize: Qt.size(1024, 1024)
+                layer.textureSize: Qt.size(512, 512)
 
                 onSourceChanged: { artScale.scale = 1.07; artScaleAnim.restart(); }
             }
@@ -465,7 +468,7 @@ Item {
                 opacity: 0
                 layer.enabled: true
                 layer.smooth: true
-                layer.textureSize: Qt.size(1024, 1024)
+                layer.textureSize: Qt.size(512, 512)
                 Rectangle {
                     anchors.fill: parent
                     radius: width / 2

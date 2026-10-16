@@ -25,7 +25,7 @@ const OUTPUT_MAX: usize = 4000;
 /// The shell's widgets (services/Widgets.qml), plus « tout ».
 const WIDGETS: [&str; 10] = [
     "stats",
-    "serveurs",
+    "network",
     "musique",
     "metronome",
     "accordeur",
@@ -113,7 +113,7 @@ pub fn tools() -> Value {
             json!({ "chemin": s("chemin relatif au coffre, tel que chercher_notes le donne") }), &["chemin"]),
         tool("widget",
             "Ouvre, ferme ou bascule un widget de l'interface : « stats » (processeur, mémoire, \
-             disques), « serveurs » (les serveurs suivis par ssh), « musique » (lecteur en cours, paroles), « metronome » (métronome), « accordeur » (accordeur), \
+             disques), « network » (les appareils du réseau Tailscale, avec leurs stats par ssh), « musique » (lecteur en cours, paroles), « metronome » (métronome), « accordeur » (accordeur), \
              « son » (ouvre les réglages), « camera » (contrôle gestuel), « reglages » \
              (sorties et entrées audio, webcam, luminosité, écran, thème), « sessions » (le dock des sessions Claude et du savoir). « tout » avec \
              « fermer » referme tout.",

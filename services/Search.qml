@@ -61,16 +61,27 @@ QtObject {
             debounce.stop();
             root._seq++;             // invalide tout ce qui est encore en vol
             root._buckets = ({});
+            root._stale = ({});
+            root._shown = "";
             root.results = [];
             return;
         }
         debounce.restart();
     }
 
+    // Les réponses de la requête précédente : une source qui n'a pas encore
+    // répondu à la nouvelle garde les siennes à l'écran en attendant. Vider la
+    // liste à chaque lettre la faisait se replier puis se redéplier (et le
+    // voile avec elle) le temps que `fd` réponde.
+    property var _stale: ({})
+    // Ce qu'affiche la liste, en une chaîne : une réponse qui n'y change rien
+    // ne recrée pas ses lignes.
+    property string _shown: ""
+
     function _dispatch() {
         root._seq++;
+        root._stale = root._buckets;
         root._buckets = ({});
-        root.results = [];
 
         var q = root.query.trim();
         for (var i = 0; i < root.sources.length; i++)
@@ -105,7 +116,8 @@ QtObject {
         var web = [];
 
         for (var i = 0; i < root.sources.length; i++) {
-            var items = root._buckets[root.sources[i].type];
+            var type = root.sources[i].type;
+            var items = root._buckets[type] || root._stale[type];
             if (!items)
                 continue;
             for (var j = 0; j < items.length; j++) {
@@ -130,7 +142,15 @@ QtObject {
 
         var out = local.concat(web);
         out.sort(byRank);
-        root.results = out.slice(0, root.maxResults);
+        out = out.slice(0, root.maxResults);
+
+        var shown = out.map(function (it) {
+            return it.id + "\u0001" + it.title + "\u0001" + it.subtitle;
+        }).join("\u0002");
+        if (shown === root._shown)
+            return;
+        root._shown = shown;
+        root.results = out;
     }
 
     function _sourceFor(type) {

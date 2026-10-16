@@ -38,21 +38,12 @@ pub enum Command {
         interval_ms: Option<u64>,
     },
 
-    // ── remote servers (ssh) ──────────────────────────────────────────────
+    // ── tailnet devices (tailscale + ssh) ─────────────────────────────────
     /// Keep connection open; daemon pushes `{"servers":[ServerStats…]}` every
     /// few seconds, re-reading the list each time.
     ServersWatch,
-    /// Print the configured servers: `[{"name","host"}, …]`.
+    /// Print the devices of the tailnet: `[{"name","host","os",…}, …]`.
     ServersList,
-    /// Add a server (or change its host), then print the list.
-    ServersAdd {
-        name: String,
-        host: String,
-    },
-    /// Remove a server by name, then print the list.
-    ServersRemove {
-        name: String,
-    },
 
     // ── audio services (native cpal + rustfft) ────────────────────────────
     /// Keep connection open; daemon captures the mic and pushes one
