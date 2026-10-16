@@ -136,4 +136,10 @@ ShellRoot {
         open: Widgets.opened.sessions === true
         onCloseRequested: Widgets.apply("sessions", "fermer")
     }
+
+    // L'agent polkit : les demandes de mot de passe des actions système,
+    // sur l'écran de l'interface.
+    PolkitPrompt {
+        screen: Display.primary
+    }
 }
