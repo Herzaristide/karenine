@@ -2,8 +2,7 @@ pragma Singleton
 import QtQuick
 import Quickshell.Io
 
-// Battery state, polled from sysfs. A singleton because both the TopBar's
-// bottom indicator and the QuickControls popup read it — one poll, two views.
+// Battery state, polled from sysfs (a singleton: one poll for every reader).
 QtObject {
     id: battery
 

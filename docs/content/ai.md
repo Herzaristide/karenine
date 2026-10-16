@@ -10,16 +10,9 @@ links: [panels, backend, widgets]
 ## Le dock IA
 
 `panels/AiDock.qml` est la porte d'entrée de l'interface vers Claude. Il
-remplace le dock du bas (`BottomDock`, mis de côté). Il sort de la **barre
-des sessions** (`panels/SessionBar.qml`) : une bande toute noire contre le bord
-gauche, sur toute la hauteur, toujours là (les fenêtres lui laissent sa
-place) : la liste des sessions vivantes, une ligne chacune — son nom, un point
-ambre si elle attend, à la teinte de l'accent (qui respire) si elle travaille,
-éteint au repos, et sa demande en dessous. Une session qui réclame une
-permission se valide dans sa ligne même (**Autoriser**, **Toujours**,
-**Refuser**), sans rien ouvrir. Un clic sur une ligne affiche le texte de la
-session à côté (un second le fait disparaître), un clic sur ✦ bascule le
-dock. C'est aussi le widget « sessions », qu'ouvrent le pilote (outil
+remplace le dock du bas (`BottomDock`, mis de côté). Il se pose contre le bord gauche de l'écran et s'ouvre par Super+P ; les
+permissions des sessions s'y valident en lisant la conversation, et
+`SessionToast` signale celles qui attendent. C'est le widget « sessions », qu'ouvrent aussi le pilote (outil
 `widget`) ou la FIFO (`widget:sessions`, `savoir`). Le quotidien passe par la
 barre de conversation (`panels/ConversationBar.qml`, voir [Panneaux](#panels)),
 dont le dock reprend le verre, la teinte (`Theme.glow`), la police Inter et la

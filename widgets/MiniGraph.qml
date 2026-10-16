@@ -12,6 +12,8 @@ Canvas {
     property var series: []
     property var values: []
     property color lineColor: Theme.accentColor
+    // Opacité du remplissage sous une courbe seule (multi : toujours 0.08).
+    property real fillOpacity: 0.28
 
     // implicitHeight (not height) is what ColumnLayout reads to allocate space
     implicitHeight: 42
@@ -67,7 +69,7 @@ Canvas {
             const col  = ser.color;
 
             // Filled area under the curve (subtle in multi mode)
-            const fillAlpha = multi ? 0.08 : 0.28;
+            const fillAlpha = multi ? 0.08 : graph.fillOpacity;
             const grad = ctx.createLinearGradient(0, 0, 0, h);
             grad.addColorStop(0, toRgba(col, fillAlpha));
             grad.addColorStop(1, toRgba(col, 0.0));

@@ -66,6 +66,16 @@ fn build_command(args: &[String]) -> Option<(serde_json::Value, bool)> {
             ),
             _ => return None,
         },
+        "servers" => match arg(2) {
+            None | Some("list") => (json!({"cmd": "servers_list"}), false),
+            Some("watch") => (json!({"cmd": "servers_watch"}), true),
+            Some("add") => (
+                json!({"cmd": "servers_add", "name": arg(3)?, "host": arg(4).or(arg(3))?}),
+                false,
+            ),
+            Some("remove") => (json!({"cmd": "servers_remove", "name": arg(3)?}), false),
+            _ => return None,
+        },
         "voice" => match arg(2) {
             None | Some("toggle") => (json!({"cmd": "voice_toggle"}), false),
             // Dictation only: the transcript is shown, not sent.
@@ -158,6 +168,9 @@ fn usage() -> ! {
            voice hold | release                   Push-to-talk: record until release\n\
            voice wake [on|off]                    Wake word « Karénine » (toggle)\n\
            voice transcribe <file.wav>            Transcribe a 16 kHz mono WAV\n\
+           servers [list] | watch                 Remote servers (ssh) / their stats\n\
+           servers add <name> [ssh-host]          Add a server (host defaults to name)\n\
+           servers remove <name>                  Remove a server\n\
          \n\
          Claude Code hook (in its settings, not by hand):\n\
            hook                                    Forward one event from stdin"

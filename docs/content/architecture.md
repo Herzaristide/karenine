@@ -15,7 +15,7 @@ services/            Singletons transverses (voir Thème) et sources de recherch
   Theme.qml, ClaudeSessions.qml
   claude-index.sh, claude-transcript.sh   (voir « Scripts » ci-dessous)
 panels/              Chrome de haut niveau (fenêtres Wayland)
-  TopBar, BottomDock, CardCarousel, SidePanel, RightPanel, SettingsWindow
+  TopBar, BottomDock, CardCarousel, SidePanel, RightPanel
 widgets/             Contenu des panneaux
   HardwareStats, NotesWidget, Metronome, Tuner, MusicPlayerWidget,
   QuickControls, ChromaGraph, MiniGraph, Settings

@@ -54,6 +54,8 @@ pkgs.rustPlatform.buildRustPackage {
     #       (claude/worktree.rs)
     #   pw-record (pipewire)
     #     → the echo-cancelled mic of the wake word and dictation (audio.rs)
+    #   ssh (openssh)
+    #     → the stats of the remote servers (servers.rs)
     #   wpctl (wireplumber), brightnessctl, playerctl, wl-paste (wl-clipboard),
     #   xdg-open (xdg-utils), grimblast
     #     → the pilot's desk tools (claude/desk.rs)
@@ -93,6 +95,7 @@ pkgs.rustPlatform.buildRustPackage {
             wl-clipboard
             xdg-utils
             grimblast
+            openssh
             (whisper-cpp.override { vulkanSupport = true; })
             vulkan-tools
           ]

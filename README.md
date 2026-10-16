@@ -19,8 +19,9 @@ services/            Singletons transverses
                        web, paramètre, conversation), Fuzzy, DefaultApps, Audio
 panels/              Chrome de haut niveau (fenêtres Wayland)
   ConversationBar      Barre du bas : flocon (voix) + champ qui parle au pilote, réponse au-dessus
-  FloatingWidgets      Widgets flottants (WidgetCard), ouverts par anna (outil `widget`)
-  SettingsWindow, SessionToast (alertes des sessions Claude)
+  WidgetHub            Widgets à onglets dans la capsule de la barre, que le flocon agrandit
+  FloatingWidgets      Carte flottante du contrôle gestuel (WidgetCard), ouverte par anna
+  SessionToast         Alertes des sessions Claude
   AiDock               Dock IA (widget « sessions ») : sessions Claude, conversation, revue
   BottomDock           Ancien dock du bas (navigation + recherche), mis de côté
   cards/               Cartes du dock, une par type de résultat
@@ -30,7 +31,7 @@ widgets/             Contenu des widgets flottants
 ai/                  Cluster chat IA
   AIPanel (sélecteur), ClaudeChat, OllamaChat, OllamaTools
 lock/                Écran de verrouillage (lock.qml) : horloge, musique, stats
-anna/                Daemon Rust unique — thème, hwstats, tuner, chroma, métronome,
+anna/                Daemon Rust unique — thème, hwstats, serveurs (ssh), tuner, chroma, métronome,
                      gestes webcam, sessions Claude Code (barre, permissions, dock IA),
                      pilote (outils du bureau servis en MCP), voix (whisper.cpp)
 tests/               Tests QML (qmltestrunner) — `tests/run.sh`
@@ -74,7 +75,7 @@ sur le premier candidat connu trouvé dans le `$PATH`.
 Deux valeurs par défaut sont codées en dur :
 
 - Écran de la barre par défaut : `primaryScreen: "DP-1"` dans `shell.qml` (substitué
-  par la config Nix). Le réglage « Écran » de la fenêtre de paramètres passe devant
+  par la config Nix). Le réglage « Écran » (onglet Réglages des widgets) passe devant
   et est persisté dans `~/.local/share/quickshell/by-shell/<id>/display.json`.
 - Couleur d'accent par défaut : `#5277c3` dans `services/Theme.qml` (surchargée à
   chaud par le daemon `anna` quand il tourne ; sans lui, les defaults intégrés

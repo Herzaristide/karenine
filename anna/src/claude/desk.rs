@@ -22,11 +22,13 @@ pub const SENSITIVE: [&str; 3] = ["fermer_fenetre", "commande", "reconstruire_ni
 /// Longest output handed back to the model (characters).
 const OUTPUT_MAX: usize = 4000;
 
-/// The shell's floating widgets (services/Widgets.qml), plus « tout ».
-const WIDGETS: [&str; 8] = [
+/// The shell's widgets (services/Widgets.qml), plus « tout ».
+const WIDGETS: [&str; 10] = [
     "stats",
+    "serveurs",
     "musique",
     "metronome",
+    "accordeur",
     "son",
     "camera",
     "reglages",
@@ -110,10 +112,10 @@ pub fn tools() -> Value {
         tool("ouvrir_note", "Ouvre une note du coffre dans Obsidian.",
             json!({ "chemin": s("chemin relatif au coffre, tel que chercher_notes le donne") }), &["chemin"]),
         tool("widget",
-            "Ouvre, ferme ou bascule un widget flottant de l'interface : « stats » (processeur, mémoire, \
-             disques), « musique » (lecteur en cours, paroles), « metronome » (métronome et accordeur), \
-             « son » (volume, sorties et entrées audio), « camera » (contrôle gestuel), « reglages » \
-             (thème, écran), « sessions » (le dock des sessions Claude et du savoir). « tout » avec \
+            "Ouvre, ferme ou bascule un widget de l'interface : « stats » (processeur, mémoire, \
+             disques), « serveurs » (les serveurs suivis par ssh), « musique » (lecteur en cours, paroles), « metronome » (métronome), « accordeur » (accordeur), \
+             « son » (ouvre les réglages), « camera » (contrôle gestuel), « reglages » \
+             (sorties et entrées audio, webcam, luminosité, écran, thème), « sessions » (le dock des sessions Claude et du savoir). « tout » avec \
              « fermer » referme tout.",
             json!({ "nom": json!({ "type": "string", "enum": WIDGETS }),
                     "action": json!({ "type": "string", "enum": ["ouvrir", "fermer", "basculer"],

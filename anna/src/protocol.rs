@@ -31,8 +31,28 @@ pub enum Command {
     // ── hwstats service ───────────────────────────────────────────────────
     /// One hardware-stats snapshot, then close.
     HwstatsGet,
-    /// Keep connection open; daemon pushes a `HwStats` JSON line every second.
-    HwstatsWatch,
+    /// Keep connection open; daemon pushes a `HwStats` JSON line every
+    /// `interval_ms` (default 1000, clamped to 250–5000).
+    HwstatsWatch {
+        #[serde(default)]
+        interval_ms: Option<u64>,
+    },
+
+    // ── remote servers (ssh) ──────────────────────────────────────────────
+    /// Keep connection open; daemon pushes `{"servers":[ServerStats…]}` every
+    /// few seconds, re-reading the list each time.
+    ServersWatch,
+    /// Print the configured servers: `[{"name","host"}, …]`.
+    ServersList,
+    /// Add a server (or change its host), then print the list.
+    ServersAdd {
+        name: String,
+        host: String,
+    },
+    /// Remove a server by name, then print the list.
+    ServersRemove {
+        name: String,
+    },
 
     // ── audio services (native cpal + rustfft) ────────────────────────────
     /// Keep connection open; daemon captures the mic and pushes one

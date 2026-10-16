@@ -23,7 +23,7 @@ ShellRoot {
     //   echo "dock"     > /tmp/qs-panel.fifo   → fait monter (ou renvoie) la barre de conversation
     //   echo "savoir"   > /tmp/qs-panel.fifo   → ouvre le dock IA sur le savoir
     //   echo "voix"     > /tmp/qs-panel.fifo   → parle au pilote (comme `anna voice`)
-    //   echo "controls" > /tmp/qs-panel.fifo   → bascule le widget du son
+    //   echo "controls" > /tmp/qs-panel.fifo   → bascule les réglages (sortie, entrée, webcam)
     //   echo "camera"   > /tmp/qs-panel.fifo   → bascule le widget caméra/gestes
     //   echo "close"    > /tmp/qs-panel.fifo   → ferme tout
     //   NOM : stats, musique, metronome, son, camera, reglages, sessions, tout
@@ -126,39 +126,14 @@ ShellRoot {
         }
     }
 
-    // La barre des sessions, bande noire contre le bord gauche, toujours là : la liste des
-    // sessions Claude et leurs permissions à valider. Une ligne affiche le texte de sa
-    // session (le dock IA), ✦ bascule le dock.
-    Variants {
-        model: root.primaryScreens
-
-        SessionBar {
-            property var modelData
-            screen: modelData
-            openId: aiDock.open && !aiDock.overlay ? aiDock.selectedId : ""
-            onPicked: (id) => aiDock.openOn(id)
-            onToggled: Widgets.apply("sessions", "basculer")
-        }
-    }
-
-    // Le panneau des sessions, qui sort de leur barre : lancer, suivre et
+    // Le panneau des sessions, contre le bord gauche : lancer, suivre et
     // reprendre les sessions Claude, revoir leur travail, le savoir. C'est le
-    // widget « sessions » : un point de la barre, Super+P
+    // widget « sessions » : Super+P
     // (widget:sessions:basculer sur la FIFO) ou anna l'ouvrent.
     AiDock {
         id: aiDock
         screen: Display.primary
         open: Widgets.opened.sessions === true
         onCloseRequested: Widgets.apply("sessions", "fermer")
-    }
-
-    Variants {
-        model: root.primaryScreens
-
-        SettingsWindow {
-            property var modelData
-            screen: modelData
-            visible: Theme.settingsOpen
-        }
     }
 }

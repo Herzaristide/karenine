@@ -8,10 +8,7 @@ import Quickshell.Wayland
 import "../services"
 
 // Le texte des sessions : la porte d'entrée de l'interface vers Claude
-// Code. Il sort de la barre des sessions (SessionBar, la liste fixe contre
-// le bord gauche, où se valident aussi les permissions) : un clic sur une
-// session affiche son texte, un second le fait disparaître ; ✦ l'ouvre ou le
-// referme tout court. Super+P l'ouvre et le referme aussi (widget
+// Code, contre le bord gauche de l'écran. Super+P l'ouvre et le referme (widget
 // « sessions », cf. services/Widgets.qml). Affiché, il est déplié (toute la
 // conversation) ou réduit (son bas et le champ) ; il se replie quand on le
 // quitte. Le verre flouté et la capsule de saisie de la barre de
@@ -88,8 +85,8 @@ Scope {
     // n'est plus dessus ; Échap le replie, puis le fait disparaître.
     property bool expanded: false
 
-    // Il prend le clavier en exclusif le temps d'une demande (Super+P, un
-    // clic dans la barre des sessions) : une surface layer ne reçoit sinon les
+    // Il prend le clavier en exclusif le temps d'une demande (Super+P,
+    // anna) : une surface layer ne reçoit sinon les
     // frappes qu'une fois cliquée. Il le rend dès que la souris le quitte ou
     // s'en éloigne, pour ne pas bloquer le reste du bureau.
     property bool grab: false
@@ -519,10 +516,10 @@ Scope {
             return;
         var x = parseFloat(xy[0]);
         var y = parseFloat(xy[1]);
-        // La carte, en coordonnées de l'écran : le panneau commence après la
-        // bande des sessions (sa zone exclusive) et sa marge.
+        // La carte, en coordonnées de l'écran : le panneau commence après sa
+        // marge.
         var p = card.mapToItem(null, 0, 0);
-        var left = s.x + dock.stripW + panel.margins.left + p.x;
+        var left = s.x + panel.margins.left + p.x;
         var top = s.y + panel.margins.top + p.y;
         var dx = Math.max(left - x, 0, x - (left + card.width));
         var dy = Math.max(top - y, 0, y - (top + card.height));
@@ -532,9 +529,6 @@ Scope {
         else if (d > dock.closest + dock.leaveSlack)
             dock.grab = false;
     }
-
-    // La largeur que réserve la barre des sessions (SessionBar.barW).
-    readonly property int stripW: 220
 
     // ── Petits éléments ──────────────────────────────────────────
     component Chip: Rectangle {
@@ -672,8 +666,7 @@ Scope {
                                    : dock.grab ? WlrKeyboardFocus.Exclusive
                                    : WlrKeyboardFocus.OnDemand
 
-        // Contre la barre des sessions, sur toute la hauteur : elle réserve
-        // sa bande (exclusiveZone), le dock se pose juste après.
+        // Contre le bord gauche, sur toute la hauteur.
         anchors { left: true; top: true; bottom: true }
         margins { // qmllint disable unqualified unresolved-type
             left: 12
@@ -1355,8 +1348,7 @@ Scope {
                     }
 
                     // ── Sa demande de permission ─────────────────────
-                    // La même que dans la barre des sessions : valider en
-                    // lisant la conversation.
+                    // Valider en lisant la conversation.
                     Rectangle {
                         Layout.fillWidth: true
                         visible: !dock.overlay && dock.selected !== null && !!dock.selected.request

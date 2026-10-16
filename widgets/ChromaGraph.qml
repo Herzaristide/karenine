@@ -105,7 +105,7 @@ Item {
                         anchors.bottom: parent.bottom
                         width: parent.width
                         height: 2 + parent.level * (parent.height - 4)
-                        radius: 2
+                        radius: height / 2
                         color: parent.isTop
                             ? Theme.accentColor
                             : (parent.isSecondary
@@ -137,7 +137,7 @@ Item {
                     Layout.fillWidth: true
                     horizontalAlignment: Text.AlignHCenter
                     text: root.noteNames[index]
-                    font.family: "JetBrains Mono"
+                    font.family: "Inter"
                     font.pixelSize: 9
                     font.bold: root.noteNames[index] === root.topNote
                     color: root.noteNames[index] === root.topNote

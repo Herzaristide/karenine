@@ -11,6 +11,15 @@
 use serde::Serialize;
 use std::fs;
 use std::process::Command;
+use std::time::{Duration, Instant};
+
+// Les mesures qui coûtent un processus (nvidia-smi ~20 ms CPU, df) gardent
+// leur propre rythme, quelle que soit la cadence demandée par le client :
+// seuls CPU, RAM et températures (lus dans /proc et /sys) suivent chaque tick.
+const GPU_EVERY: Duration = Duration::from_secs(1);
+const DISKS_EVERY: Duration = Duration::from_secs(5);
+
+type GpuReading = (bool, u8, u64, u64, u32);
 
 // ── Snapshot payload (JSON sent to Quickshell) ──────────────────────────────
 
@@ -55,6 +64,8 @@ pub struct Collector {
     cpu_name: Option<String>,
     ram_brand: Option<String>, // Some("") once attempted with no result
     gpu_name: Option<String>,
+    gpu_cache: Option<(Instant, GpuReading)>,
+    disks_cache: Option<(Instant, Vec<DiskInfo>)>,
 }
 
 impl Collector {
@@ -65,13 +76,15 @@ impl Collector {
             cpu_name: None,
             ram_brand: None,
             gpu_name: None,
+            gpu_cache: None,
+            disks_cache: None,
         }
     }
 
     pub fn sample(&mut self) -> HwStats {
         let cpu_usage = self.cpu_usage();
         let (ram_total, ram_used) = read_ram();
-        let (gpu_present, gpu_usage, gpu_mem_used, gpu_mem_total, gpu_temp_smi) = self.read_gpu();
+        let (gpu_present, gpu_usage, gpu_mem_used, gpu_mem_total, gpu_temp_smi) = self.gpu_cached();
         let (cpu_temp, gpu_temp_hwmon) = read_temps();
 
         HwStats {
@@ -92,8 +105,30 @@ impl Collector {
             } else {
                 gpu_temp_smi
             },
-            disks: read_disks(),
+            disks: self.disks_cached(),
         }
+    }
+
+    fn gpu_cached(&mut self) -> GpuReading {
+        match self.gpu_cache {
+            Some((at, reading)) if at.elapsed() < GPU_EVERY => reading,
+            _ => {
+                let reading = self.read_gpu();
+                self.gpu_cache = Some((Instant::now(), reading));
+                reading
+            }
+        }
+    }
+
+    fn disks_cached(&mut self) -> Vec<DiskInfo> {
+        if let Some((at, disks)) = &self.disks_cache {
+            if at.elapsed() < DISKS_EVERY {
+                return disks.clone();
+            }
+        }
+        let disks = read_disks();
+        self.disks_cache = Some((Instant::now(), disks.clone()));
+        disks
     }
 
     // ── CPU ────────────────────────────────────────────────────────────────
@@ -168,7 +203,7 @@ impl Collector {
     // ── GPU ──────────────────────────────────────────────────────────────────
 
     /// Returns (present, usage%, mem_used_mib, mem_total_mib, temp_from_smi).
-    fn read_gpu(&mut self) -> (bool, u8, u64, u64, u32) {
+    fn read_gpu(&mut self) -> GpuReading {
         // 1) NVIDIA via nvidia-smi.
         if let Some(out) = run_stdout(
             "nvidia-smi",

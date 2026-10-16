@@ -16,3 +16,4 @@ singleton DragState 1.0 DragState.qml
 singleton Display 1.0 Display.qml
 singleton Gesture 1.0 Gesture.qml
 singleton Widgets 1.0 Widgets.qml
+singleton Tuning 1.0 Tuning.qml

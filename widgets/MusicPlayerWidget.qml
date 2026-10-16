@@ -231,16 +231,18 @@ Item {
     // ══ Stage — the disc with the spectrum ringed behind it. Anchored to the
     // widget's own centre, not stacked in the column, so it stays put as the
     // controls below it grow or shrink.
+    // Horizontal layout: the stage is a square on the left, the track,
+    // progress and transport fill the right.
     Item {
         id: stage
-        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.left: parent.left
         anchors.verticalCenter: parent.verticalCenter
-        width: parent.width - 24
-        height: Math.min(parent.height - 24, 300)
+        width: height
+        height: parent.height
 
         // Disc diameter, leaving room for the ring to breathe around it.
         readonly property real discSize:
-            Math.max(80, Math.min(width - 76, height - 76, 186))
+            Math.max(80, Math.min(width, height) - 2 * spectrumRing.reach - 10)
 
         // ── Spectrum ring — behind the disc, bars radiating outward ──
         Item {
@@ -251,7 +253,7 @@ Item {
 
             // Where a bar starts (just off the disc) and how far it grows.
             readonly property real innerRadius: stage.discSize / 2 + 7
-            readonly property real reach: 34
+            readonly property real reach: 26
 
             opacity: root.isPlaying ? 1.0 : 0.35
             Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
@@ -614,12 +616,17 @@ Item {
     }   // ══ end stage
 
     // ══════════════════════════════════════════════════════════════════════
-    // Column around the stage: track info at the top, transport at the bottom.
+    // Right of the stage: track info at the top, transport at the bottom.
     // ══════════════════════════════════════════════════════════════════════
     ColumnLayout {
-        anchors.fill: parent
-        anchors.margins: 12
-        spacing: 10
+        anchors.left: stage.right
+        anchors.leftMargin: 18
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        anchors.topMargin: 8
+        anchors.bottomMargin: 4
+        spacing: 8
 
         // ── Title + Artist ───────────────────────────────────────────
         ColumnLayout {
@@ -635,8 +642,8 @@ Item {
 
                 Text {
                     id: titleText
-                    text: root.hasPlayer && root.player.trackTitle ? root.player.trackTitle : "Nothing playing"
-                    font.family: "JetBrains Mono"
+                    text: root.hasPlayer && root.player.trackTitle ? root.player.trackTitle : "Rien en lecture"
+                    font.family: "Inter"
                     font.pixelSize: 16
                     font.weight: Font.Medium
                     color: Theme.textPrimary
@@ -674,8 +681,8 @@ Item {
             Text {
                 Layout.fillWidth: true
                 horizontalAlignment: Text.AlignHCenter
-                text: root.hasPlayer && root.player.trackArtist ? root.player.trackArtist : "—"
-                font.family: "JetBrains Mono"
+                text: root.hasPlayer && root.player.trackArtist ? root.player.trackArtist : (root.hasPlayer ? "—" : "Aucun lecteur actif")
+                font.family: "Inter"
                 font.pixelSize: 12
                 color: Theme.textSecondary
                 elide: Text.ElideRight
@@ -686,7 +693,7 @@ Item {
                 horizontalAlignment: Text.AlignHCenter
                 text: root.hasPlayer && root.player.trackAlbum ? root.player.trackAlbum : ""
                 visible: text !== ""
-                font.family: "JetBrains Mono"
+                font.family: "Inter"
                 font.pixelSize: 11
                 color: Theme.textDim
                 elide: Text.ElideRight
@@ -699,7 +706,7 @@ Item {
         // ── Chromagram (12 pitch classes of currently playing audio) ──
         ChromaGraph {
             Layout.fillWidth: true
-            Layout.preferredHeight: 70
+            Layout.preferredHeight: 40
             active: root.isPlaying
         }
 
@@ -714,8 +721,8 @@ Item {
                 id: progressTrack
                 Layout.fillWidth: true
                 Layout.preferredHeight: 4
-                radius: 2
-                color: Theme.bgInput
+                radius: height / 2
+                color: Qt.alpha(Theme.textPrimary, 0.1)
 
                 readonly property real ratio: {
                     if (!root.hasPlayer || !root.player.length || root.player.length <= 0) return 0;
@@ -761,14 +768,14 @@ Item {
                 Layout.fillWidth: true
                 Text {
                     text: root.hasPlayer ? root.fmtTime(root.player.position) : "0:00"
-                    font.family: "JetBrains Mono"
+                    font.family: "Inter"
                     font.pixelSize: 10
                     color: Theme.textDim
                 }
                 Item { Layout.fillWidth: true }
                 Text {
                     text: root.hasPlayer ? root.fmtTime(root.player.length) : "0:00"
-                    font.family: "JetBrains Mono"
+                    font.family: "Inter"
                     font.pixelSize: 10
                     color: Theme.textDim
                 }
@@ -850,7 +857,7 @@ Item {
             wrapMode: Text.WordWrap
             visible: root.lyricsLoading
             text: "Fetching lyrics…"
-            font.family: "JetBrains Mono"
+            font.family: "Inter"
             font.pixelSize: 11
             color: Theme.textDim
             SequentialAnimation on opacity {
@@ -871,7 +878,7 @@ Item {
             horizontalAlignment: Text.AlignHCenter
             width: parent.width - 16
             wrapMode: Text.WordWrap
-            font.family: "JetBrains Mono"
+            font.family: "Inter"
             font.pixelSize: 11
             color: Theme.textDim
         }
@@ -902,7 +909,7 @@ Item {
                           ? (root.lyricLines[targetIdx].text === ""
                              ? "·" : root.lyricLines[targetIdx].text)
                           : ""
-                    font.family: "JetBrains Mono"
+                    font.family: "Inter"
                     font.pixelSize: isCurrent ? 20 : 15
                     font.weight: isCurrent ? Font.DemiBold : Font.Normal
                     color: isCurrent ? Theme.accentColor : Theme.textSecondary
@@ -914,25 +921,6 @@ Item {
                     Behavior on color   { ColorAnimation  { duration: 280 } }
                 }
             }
-        }
-    }
-
-    // ── Empty-state overlay (subtle) ─────────────────────────────────────
-    Text {
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: 12
-        visible: !root.hasPlayer
-        text: "No active media player"
-        font.family: "JetBrains Mono"
-        font.pixelSize: 11
-        color: Theme.textDim
-        opacity: 0.6
-        SequentialAnimation on opacity {
-            running: !root.hasPlayer
-            loops: Animation.Infinite
-            NumberAnimation { from: 0.4; to: 0.8; duration: 1400; easing.type: Easing.InOutQuad }
-            NumberAnimation { from: 0.8; to: 0.4; duration: 1400; easing.type: Easing.InOutQuad }
         }
     }
 
@@ -952,14 +940,15 @@ Item {
             id: bg
             anchors.fill: parent
             radius: width / 2
+            // Le style de la barre : translucide, teinté pour l'action principale.
             color: btn.accent
-                   ? Theme.accentColor
-                   : (ma.containsMouse ? Theme.hoverOverlay : Theme.bgElevated)
+                   ? Qt.alpha(Theme.glow(0), ma.containsMouse ? 0.3 : 0.2)
+                   : Qt.alpha(Theme.textPrimary, ma.containsMouse ? 0.1 : 0.06)
             opacity: btn.enabled ? 1.0 : 0.35
-            border.width: btn.accent ? 0 : 1
-            border.color: Theme.dividerColor
+            border.width: 1
+            border.color: btn.accent ? Qt.alpha(Theme.glow(0), 0.42) : Qt.alpha(Theme.textPrimary, 0.1)
 
-            scale: ma.pressed ? 0.92 : (ma.containsMouse ? 1.08 : 1.0)
+            scale: ma.pressed ? 0.94 : 1.0
             Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
             Behavior on color { ColorAnimation { duration: 160 } }
             Behavior on opacity { NumberAnimation { duration: 160 } }
@@ -969,7 +958,7 @@ Item {
                 visible: btn.icon.toString() === ""
                 text: btn.glyph
                 font.pixelSize: btn.size * 0.42
-                color: btn.accent ? Theme.selectedTextColor : Theme.iconColor
+                color: btn.accent ? Theme.textPrimary : Theme.iconColor
             }
 
             NixIcon {
@@ -977,7 +966,7 @@ Item {
                 visible: btn.icon.toString() !== ""
                 source: btn.icon
                 iconSize: btn.size * 0.44
-                color: btn.accent ? Theme.selectedTextColor : Theme.iconColor
+                color: btn.accent ? Theme.textPrimary : Theme.iconColor
             }
         }
 

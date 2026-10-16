@@ -20,7 +20,7 @@ pub fn socket_path() -> String {
 }
 
 /// `$XDG_RUNTIME_DIR`, or `/run/user/<uid>` for the current user when unset.
-fn runtime_dir() -> String {
+pub fn runtime_dir() -> String {
     std::env::var("XDG_RUNTIME_DIR")
         .ok()
         .filter(|d| !d.is_empty())

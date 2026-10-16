@@ -7,9 +7,6 @@ import Quickshell.Io
 QtObject {
     id: themeRoot
 
-    // ── UI overlay state ──────────────────────────────────────────────────
-    property bool settingsOpen: false
-
     // ── State from the anna daemon ────────────────────────────────────────
     // state.json is written by anna on every color/mode change.
     // FileView watches it for changes and triggers a full re-parse.

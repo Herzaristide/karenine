@@ -109,7 +109,7 @@ QtObject {
             break;
         case "accent":
             if (actionId === "open")
-                Theme.settingsOpen = true;
+                Widgets.apply("reglages", "ouvrir");
             else if (actionId === "up")
                 src._stepAccent(1);
             else if (actionId === "down")

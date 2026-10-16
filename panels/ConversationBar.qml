@@ -18,13 +18,13 @@ import "../services"
 //      ░░  Volume à 40 %.          (en grand)         ░░   voile flouté
 //        ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 //         ✦╭──────────────────────────────────────────╮✦  capsule de verre,
-//         ✦│ ❄  Demander à Karénine…              (↑) │✦  halo irisé quand
+//         ✦│ ❄  Demander à Karénine…             (🎤) │✦  halo irisé quand
 //         ✦╰──────────────────────────────────────────╯✦  elle écoute ou pense
 //
 // Cachée par défaut : elle monte du bord de l'écran quand on dit « Karénine »
 // ou qu'on tape Super, et repart une fois la réponse lue. La voix passe par le même
-// chemin : dire « Karénine » (ou Super+V, ou un clic sur le flocon) fait
-// sauter le flocon, la phrase s'écrit dans le champ à mesure qu'anna la
+// chemin : dire « Karénine » (ou Super+V, ou un clic sur le micro, à droite)
+// change le micro en indicateur d'écoute, la phrase s'écrit dans le champ à mesure qu'anna la
 // comprend, une forme d'onde suit la voix, puis la phrase part au pilote.
 //
 // La même barre cherche : dès la première lettre, les résultats (applications,
@@ -32,6 +32,9 @@ import "../services"
 // l'ancien dock) s'empilent juste au-dessus, en liste, le meilleur contre la
 // barre. Entrée part toujours au pilote ; ↑ entre dans la liste, et Entrée
 // ou un clic ouvre alors le résultat retenu.
+//
+// Le flocon, à gauche, agrandit la capsule vers le haut pour montrer les
+// widgets, un onglet à la fois (panels/WidgetHub.qml).
 //
 // Le texte est en Inter (installée par la config NixOS), le reste du bureau
 // en JetBrains Mono.
@@ -45,10 +48,10 @@ PanelWindow { // qmllint disable uncreatable-type
     // d'ailleurs.
     property bool dismissed: false
 
-    readonly property int barH: 44
-    readonly property int barW: Math.min(620, (bar.screen ? bar.screen.width : 1280) - 32)
+    readonly property int barH: 52
+    readonly property int barW: Math.min(700, (bar.screen ? bar.screen.width : 1280) - 32)
     // Distance au bord de l'écran.
-    readonly property int gap: 26
+    readonly property int gap: 120
 
     WlrLayershell.layer: WlrLayer.Top
     WlrLayershell.namespace: "quickshell-conversation"
@@ -66,12 +69,12 @@ PanelWindow { // qmllint disable uncreatable-type
     exclusiveZone: 0
     // Plus large que la barre : le voile de la réponse s'efface sur les côtés.
     implicitWidth: bar.barW + 240
-    implicitHeight: 480
+    implicitHeight: Math.max(480, bar.barH + bar.hubMax + 20)
     color: "transparent"
 
     mask: Region { // qmllint disable unqualified
         Region { item: bar.shown ? pill : null }
-        Region { item: answer.shown && !bar.searching && !bar.dismissed ? flick : null }
+        Region { item: answer.shown && !bar.searching && !bar.dismissed && !Widgets.hubOpen ? flick : null }
         Region { item: results.visible ? results : null }
     }
 
@@ -83,8 +86,55 @@ PanelWindow { // qmllint disable uncreatable-type
     // suivante (la voix qui se tait, le pilote qui prend la main).
     readonly property bool wanted: !bar.dismissed
                                    && (bar.voiceOn || bar.focusRequested || input.activeFocus
-                                       || input.text.length > 0 || ClaudeLive.pilotBusy || answer.shown)
+                                       || input.text.length > 0 || ClaudeLive.pilotBusy || answer.shown
+                                       || Widgets.hubOpen)
     property bool shown: false
+    // ── Les widgets ──────────────────────────────────────────────
+    // Le flocon (ou anna) agrandit la capsule vers le haut : `expand` va de
+    // 0 (fermée) à 1 (ouverte), et la retient tant qu'elle est ouverte. Elle
+    // s'ouvre en décélérant, sans rebond ; elle se referme plus vite, les
+    // widgets s'effaçant avant que la capsule ne se rétracte (WidgetHub).
+    readonly property bool hubOn: Widgets.hubOpen && bar.shown
+    property real expand: 0
+    // La place que demande l'onglet affiché ; elle glisse d'un onglet à l'autre.
+    // La plus grande (l'onglet le plus haut) : la taille des surfaces.
+    readonly property int hubMax: 480
+    property real hubH: widgetHub.preferredHeight
+    Behavior on hubH { NumberAnimation { duration: 420; easing.type: Easing.OutQuint } }
+
+    onHubOnChanged: {
+        if (bar.hubOn) {
+            collapse.stop();
+            unfold.restart();
+        } else {
+            unfold.stop();
+            collapse.restart();
+        }
+    }
+    NumberAnimation {
+        id: unfold
+        target: bar
+        property: "expand"
+        to: 1
+        duration: 560
+        easing.type: Easing.OutQuint
+    }
+    NumberAnimation {
+        id: collapse
+        target: bar
+        property: "expand"
+        to: 0
+        duration: 300
+        easing.type: Easing.InOutCubic
+    }
+
+    Connections {
+        target: Widgets
+        function onHubOpenChanged() {
+            if (Widgets.hubOpen)
+                bar.dismissed = false;
+        }
+    }
 
     // Super : la montrer si elle n'est pas là, la renvoyer si elle l'est,
     // quoi qu'elle contienne.
@@ -100,6 +150,7 @@ PanelWindow { // qmllint disable uncreatable-type
     // Tout de suite, sans délai : le texte, la recherche et la réponse
     // partent avec elle. Le pilote, lui, continue son travail.
     function dismiss() {
+        Widgets.hubOpen = false;
         input.text = "";
         answer.hide();
         bar.selected = -1;
@@ -163,7 +214,7 @@ PanelWindow { // qmllint disable uncreatable-type
         // compte quand même comme être dessus (pointerInside).
         var left = s.x + (s.width - bar.barW) / 2;
         var bottom = s.y + s.height - bar.gap;
-        var top = bottom - bar.barH;
+        var top = bottom - pill.height;
         var dx = Math.max(left - x, 0, x - (left + bar.barW));
         var dy = Math.max(top - y, 0, y - bottom);
         var d = bar.pointerInside ? 0 : Math.sqrt(dx * dx + dy * dy);
@@ -188,6 +239,47 @@ PanelWindow { // qmllint disable uncreatable-type
         interval: 900
         onTriggered: bar.shown = false
     }
+
+    // ── Le mouvement ─────────────────────────────────────────────
+    // Une seule valeur, de 0 (cachée) à 1 (là), porte tout ce qui accompagne
+    // la capsule : le verre, son ombre et le halo bougent ensemble. Elle
+    // arrive en décélérant, sans rebond, et repart plus vite qu'elle n'est
+    // venue.
+    property real reveal: 0
+    // Le chemin parcouru : court, la capsule glisse plus qu'elle ne surgit.
+    readonly property real lift: (1 - bar.reveal) * 18
+
+    onShownChanged: {
+        if (bar.shown) {
+            revealOut.stop();
+            revealIn.restart();
+        } else {
+            revealIn.stop();
+            revealOut.restart();
+        }
+    }
+    NumberAnimation {
+        id: revealIn
+        target: bar
+        property: "reveal"
+        to: 1
+        duration: 520
+        easing.type: Easing.OutQuint
+    }
+    NumberAnimation {
+        id: revealOut
+        target: bar
+        property: "reveal"
+        to: 0
+        duration: 200
+        easing.type: Easing.InCubic
+    }
+
+    // Le niveau de la voix, lissé : le halo, le flocon et l'onde le suivent
+    // sans à-coups.
+    property real level: ClaudeLive.voicePhase === "listening"
+                         ? Math.min(1, ClaudeLive.voiceLevel * 1.5) : 0
+    Behavior on level { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
 
     onFocusRequestedChanged: {
         if (focusRequested)
@@ -560,11 +652,8 @@ PanelWindow { // qmllint disable uncreatable-type
     }
 
     // ── La réponse, au-dessus de la barre ────────────────────────
-    // Pas de cadre : le texte, en grand, sur un voile. Le voile est une
-    // ellipse sombre qui s'efface vers ses bords ; Hyprland floute ce qu'il
-    // y a derrière partout où il est assez opaque (règle de couche `blur` +
-    // `ignore_alpha` sur « quickshell-conversation », dans la config NixOS).
-    // Sans cette règle, le voile seul suffit encore à lire.
+    // Pas de cadre : le texte, en grand, sur le même voile que les résultats
+    // (veilWindow, plus bas).
     Item {
         id: answer
 
@@ -600,49 +689,16 @@ PanelWindow { // qmllint disable uncreatable-type
         height: Math.min(column.implicitHeight + fade * 2, bar.height - bar.barH)
 
         visible: opacity > 0
-        opacity: shown && hasContent && !bar.searching && !bar.dismissed ? 1 : 0
+        opacity: shown && hasContent && !bar.searching && !bar.dismissed && !Widgets.hubOpen ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
 
-        // Elle monte de la barre sur un ressort.
+        // Elle monte de la barre en décélérant, comme la capsule.
         transformOrigin: Item.Bottom
-        scale: shown ? 1 : 0.95
-        Behavior on scale { SpringAnimation { spring: 3.5; damping: 0.3; epsilon: 0.002 } }
+        scale: shown ? 1 : 0.98
+        Behavior on scale { NumberAnimation { duration: 460; easing.type: Easing.OutQuint } }
         transform: Translate {
-            y: answer.shown ? 0 : 18
-            Behavior on y { SpringAnimation { spring: 3.5; damping: 0.3; epsilon: 0.1 } }
-        }
-
-        // Le voile : un disque au dégradé radial, aplati en ellipse.
-        Shape {
-            id: veil
-            width: answer.width
-            height: answer.width
-            y: (answer.height - height) / 2
-            preferredRendererType: Shape.CurveRenderer
-            transform: Scale {
-                origin.y: veil.height / 2
-                yScale: answer.height / Math.max(1, veil.height)
-            }
-
-            ShapePath {
-                strokeWidth: -1
-                fillGradient: RadialGradient {
-                    centerX: veil.width / 2
-                    centerY: veil.height / 2
-                    centerRadius: veil.width / 2
-                    focalX: centerX
-                    focalY: centerY
-                    GradientStop { position: 0.0; color: Qt.alpha(Theme.bgDeep, 0.72) }
-                    GradientStop { position: 0.45; color: Qt.alpha(Theme.bgDeep, 0.6) }
-                    GradientStop { position: 0.75; color: Qt.alpha(Theme.bgDeep, 0.25) }
-                    GradientStop { position: 1.0; color: Qt.alpha(Theme.bgDeep, 0) }
-                }
-                startX: 0; startY: 0
-                PathLine { x: veil.width; y: 0 }
-                PathLine { x: veil.width; y: veil.height }
-                PathLine { x: 0; y: veil.height }
-                PathLine { x: 0; y: 0 }
-            }
+            y: answer.shown ? 0 : 12
+            Behavior on y { NumberAnimation { duration: 460; easing.type: Easing.OutQuint } }
         }
 
         Timer {
@@ -813,48 +869,13 @@ PanelWindow { // qmllint disable uncreatable-type
         visible: opacity > 0
         Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
         transform: Translate {
-            y: results.on ? 0 : 14
-            Behavior on y { SpringAnimation { spring: 3.5; damping: 0.3; epsilon: 0.1 } }
+            y: results.on ? 0 : 10
+            Behavior on y { NumberAnimation { duration: 460; easing.type: Easing.OutQuint } }
         }
 
         HoverHandler { id: resultsHover }
 
-        // Le fond : un voile sombre sans bord, qui s'efface vers l'extérieur,
-        // comme celui de la réponse. Il déborde largement de la liste pour que
-        // le fondu se fasse hors des lignes.
-        Shape {
-            id: resultsVeil
-            readonly property int fade: 70
-            x: -fade * 1.6
-            width: results.width + fade * 3.2
-            height: width
-            y: (results.height - height) / 2
-            preferredRendererType: Shape.CurveRenderer
-            transform: Scale {
-                origin.y: resultsVeil.height / 2
-                yScale: (results.height + resultsVeil.fade * 2) / Math.max(1, resultsVeil.height)
-            }
-
-            ShapePath {
-                strokeWidth: -1
-                fillGradient: RadialGradient {
-                    centerX: resultsVeil.width / 2
-                    centerY: resultsVeil.height / 2
-                    centerRadius: resultsVeil.width / 2
-                    focalX: centerX
-                    focalY: centerY
-                    GradientStop { position: 0.0; color: Qt.alpha(Theme.bgDeep, 0.72) }
-                    GradientStop { position: 0.5; color: Qt.alpha(Theme.bgDeep, 0.6) }
-                    GradientStop { position: 0.78; color: Qt.alpha(Theme.bgDeep, 0.25) }
-                    GradientStop { position: 1.0; color: Qt.alpha(Theme.bgDeep, 0) }
-                }
-                startX: 0; startY: 0
-                PathLine { x: resultsVeil.width; y: 0 }
-                PathLine { x: resultsVeil.width; y: resultsVeil.height }
-                PathLine { x: 0; y: resultsVeil.height }
-                PathLine { x: 0; y: 0 }
-            }
-        }
+        // Le fond est dans sa propre surface (veilWindow, plus bas).
 
         ListView {
             id: list
@@ -1040,8 +1061,8 @@ PanelWindow { // qmllint disable uncreatable-type
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
         anchors { bottom: true }
         exclusionMode: ExclusionMode.Ignore
-        implicitWidth: bar.barW + 2 * glow.pad + 60
-        implicitHeight: bar.barH + 2 * glow.pad + 40
+        implicitWidth: bar.barW + 2 * glow.pad + 160
+        implicitHeight: bar.barH + bar.gap + 2 * glow.pad + 90 + bar.hubMax
         color: "transparent"
         mask: Region {} // qmllint disable unqualified
 
@@ -1054,10 +1075,10 @@ PanelWindow { // qmllint disable uncreatable-type
             layer.enabled: true
             Rectangle {
                 x: (parent.width - pill.width) / 2
-                y: parent.height - bar.gap - pill.height + 6
+                y: parent.height - bar.gap - pill.height + 6 + bar.lift
                 width: pill.width
                 height: pill.height
-                radius: height / 2
+                radius: bar.barH / 2
                 color: "#000000"
             }
         }
@@ -1068,10 +1089,10 @@ PanelWindow { // qmllint disable uncreatable-type
             layer.enabled: true
             Rectangle {
                 x: (parent.width - pill.width) / 2
-                y: parent.height - bar.gap - pill.height
+                y: parent.height - bar.gap - pill.height + bar.lift
                 width: pill.width
                 height: pill.height
-                radius: height / 2
+                radius: bar.barH / 2
                 color: "#000000"
             }
         }
@@ -1092,23 +1113,26 @@ PanelWindow { // qmllint disable uncreatable-type
             id: glow
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: bar.gap - glow.pad
+            anchors.bottomMargin: bar.gap - glow.pad - bar.lift
             width: pill.width + 2 * pad
             height: pill.height + 2 * pad
-            scale: pill.scale
+            scale: pill.scale * (0.97 + 0.03 * bar.reveal)
+            transformOrigin: Item.Bottom
 
-            readonly property int pad: 10
-            readonly property real thickness: 2.5
+            readonly property int pad: 14
+            readonly property real thickness: 1.5
             property real angle: 0
 
-            opacity: bar.glowing ? (bar.voiceOn ? 1 : 0.65) : 0
+            // L'écoute l'allume franchement, la réflexion à mi-voix.
+            opacity: (bar.glowing ? (bar.voiceOn ? 1 : 0.55) : 0) * pill.opacity
             visible: opacity > 0
-            Behavior on opacity { NumberAnimation { duration: 500; easing.type: Easing.OutCubic } }
+            Behavior on opacity { NumberAnimation { duration: 420; easing.type: Easing.OutCubic } }
 
+            // Une rotation lente : les couleurs dérivent plus qu'elles ne tournent.
             NumberAnimation on angle {
                 from: 0
                 to: 360
-                duration: 3200
+                duration: 9000
                 loops: Animation.Infinite
                 running: glow.visible
             }
@@ -1128,9 +1152,9 @@ PanelWindow { // qmllint disable uncreatable-type
                         centerY: ring.height / 2
                         angle: glow.angle
                         GradientStop { position: 0.0;  color: bar.hue(0) }
-                        GradientStop { position: 0.25; color: bar.hue(0.14) }
-                        GradientStop { position: 0.5;  color: bar.hue(-0.12) }
-                        GradientStop { position: 0.75; color: bar.hue(0.3) }
+                        GradientStop { position: 0.25; color: bar.hue(0.07) }
+                        GradientStop { position: 0.5;  color: bar.hue(-0.06) }
+                        GradientStop { position: 0.75; color: bar.hue(0.12) }
                         GradientStop { position: 1.0;  color: bar.hue(0) }
                     }
                     PathRectangle {
@@ -1138,33 +1162,159 @@ PanelWindow { // qmllint disable uncreatable-type
                         y: glow.pad - glow.thickness
                         width: pill.width + 2 * glow.thickness
                         height: pill.height + 2 * glow.thickness
-                        radius: height / 2
+                        radius: bar.barH / 2 + glow.thickness
                     }
                     PathRectangle {
                         x: glow.pad
                         y: glow.pad
                         width: pill.width
                         height: pill.height
-                        radius: height / 2
+                        radius: bar.barH / 2
                     }
                 }
             }
 
-            // La lueur, qui respire avec la voix.
+            // La lueur : une auréole douce dont l'intensité suit la voix
+            // (lissée), sans que l'anneau ne change de taille.
             MultiEffect {
                 anchors.fill: ring
                 source: ring
                 blurEnabled: true
                 blur: 1.0
-                blurMax: 24
-                opacity: 0.75
-                scale: 1.0 + (ClaudeLive.voicePhase === "listening" ? ClaudeLive.voiceLevel * 0.06 : 0)
-                Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                blurMax: 40
+                opacity: 0.45 + 0.55 * bar.level
             }
 
+            // Le fil net, discret.
             MultiEffect {
                 anchors.fill: ring
                 source: ring
+                opacity: 0.85
+            }
+        }
+    }
+
+    // ── Le voile des résultats et des réponses ───────────────────
+    // Il sert la liste des résultats ou la réponse du pilote, qui ne
+    // s'affichent jamais ensemble.
+    // Une zone plus sombre, sans aucun bord, qui se fond dans l'écran. Deux
+    // couches : un rectangle flouté sous la liste, et un halo bien plus large
+    // flouté à mi-résolution puis agrandi deux fois, ce qui double la douceur
+    // du fondu (le flou de Qt plafonne à 64 px). Le voile descend autour de
+    // la capsule, découpé à sa forme : il ne passe jamais sur le verre.
+    // Il vit dans sa propre surface, sans flou ni clic : sur celle de la
+    // barre, la règle `ignore_alpha` d'Hyprland découperait une zone floutée
+    // à bord net au milieu du dégradé.
+    property PanelWindow veilWindow: PanelWindow { // qmllint disable uncreatable-type
+        screen: bar.screen
+        WlrLayershell.layer: WlrLayer.Top
+        WlrLayershell.namespace: "quickshell-conversation-veil"
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+        anchors { bottom: true }
+        margins { // qmllint disable unqualified unresolved-type
+            bottom: bar.gap - resultsVeil.below
+        }
+        exclusionMode: ExclusionMode.Ignore
+        implicitWidth: bar.barW + 2 * resultsVeil.spread
+        implicitHeight: resultsVeil.below + bar.barH
+                        + Math.max(10 + results.maxRows * results.rowH + 12, bar.height - bar.barH)
+                        + resultsVeil.spread
+        color: "transparent"
+        mask: Region {} // qmllint disable unqualified
+
+        // La capsule, à sa place dans cette surface : le trou du voile.
+        Item {
+            id: veilCut
+            anchors.fill: parent
+            visible: false
+            layer.enabled: true
+            Rectangle {
+                x: resultsVeil.spread
+                y: resultsVeil.height - resultsVeil.below - pill.height + bar.lift
+                width: bar.barW
+                height: pill.height
+                radius: bar.barH / 2
+                color: "#000000"
+            }
+        }
+
+        Item {
+            id: resultsVeil
+            // La marge laissée au fondu autour du contenu, et sous la capsule.
+            readonly property int spread: 240
+            readonly property int below: 90
+            // Ce qu'il couvre : la liste, ou à défaut le texte de la réponse.
+            readonly property bool forResults: results.visible
+            readonly property real contentH: forResults ? results.height : flick.height
+            // L'écart entre le bas du contenu et la capsule.
+            readonly property real contentGap: forResults ? 10 : answer.fade * 0.6
+            // Le bas du contenu et son centre, dans cette surface.
+            readonly property real listBottom: height - below - bar.barH - contentGap
+            readonly property real listCenter: listBottom - contentH / 2
+            readonly property color tint: Theme.bgDeep
+            anchors.fill: parent
+
+            opacity: forResults ? results.opacity : answer.opacity
+            transform: Translate {
+                y: resultsVeil.forResults ? (results.on ? 0 : 10) : (answer.shown ? 0 : 12)
+                Behavior on y { NumberAnimation { duration: 460; easing.type: Easing.OutQuint } }
+            }
+
+            layer.enabled: true
+            layer.effect: MultiEffect {
+                maskEnabled: true
+                maskInverted: true
+                maskSource: veilCut
+            }
+
+            // Le halo large : la moitié de sa taille, flouté, agrandi deux fois.
+            Item {
+                id: halo
+                width: (bar.barW + 120) / 2
+                height: (resultsVeil.contentH + 120) / 2
+                x: (resultsVeil.width - width) / 2
+                y: resultsVeil.listCenter - height / 2
+                scale: 2
+
+                Rectangle {
+                    id: haloSource
+                    anchors.fill: parent
+                    radius: 30
+                    color: Qt.alpha(resultsVeil.tint, Theme.darkMode ? 0.5 : 0.42)
+                    visible: false
+                    layer.enabled: true
+                }
+                MultiEffect {
+                    anchors.fill: haloSource
+                    source: haloSource
+                    blurEnabled: true
+                    blur: 1.0
+                    blurMax: 64
+                }
+            }
+
+            // Le cœur, plus sombre, juste sous les lignes.
+            Item {
+                id: core
+                anchors.fill: parent
+                visible: false
+                layer.enabled: true
+                Rectangle {
+                    x: resultsVeil.spread - 10
+                    width: bar.barW + 20
+                    y: resultsVeil.listBottom - resultsVeil.contentH - 10
+                    height: resultsVeil.contentH + 30
+                    radius: 40
+                    color: Qt.alpha(resultsVeil.tint, Theme.darkMode ? 0.6 : 0.5)
+                }
+            }
+            MultiEffect {
+                anchors.fill: parent
+                source: core
+                autoPaddingEnabled: false
+                blurEnabled: true
+                blur: 1.0
+                blurMax: 64
             }
         }
     }
@@ -1174,116 +1324,134 @@ PanelWindow { // qmllint disable uncreatable-type
         anchors.bottom: parent.bottom
         anchors.horizontalCenter: parent.horizontalCenter
         width: bar.barW
-        height: bar.barH
+        // Le flocon l'agrandit vers le haut : les widgets prennent la place
+        // gagnée au-dessus du champ (cf. expand).
+        height: bar.barH + bar.expand * bar.hubH
 
-        // Elle monte du bord de l'écran en grandissant un peu ; elle
-        // redescend en se rétractant.
-        opacity: bar.shown ? 1 : 0
-        visible: opacity > 0
-        Behavior on opacity { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+        // Elle glisse de quelques pixels en apparaissant, à peine plus petite
+        // au départ (cf. reveal). Le fondu va plus vite que le mouvement :
+        // elle est déjà nette quand elle finit de se poser.
+        opacity: Math.min(1, bar.reveal * 1.6)
+        visible: bar.reveal > 0
         transform: [
             Scale {
                 origin.x: pill.width / 2
                 origin.y: pill.height
-                xScale: bar.shown ? 1 : 0.85
+                xScale: 0.97 + 0.03 * bar.reveal
                 yScale: xScale
-                Behavior on xScale { SpringAnimation { spring: 3.5; damping: 0.3; epsilon: 0.002 } }
             },
             Translate {
-                y: bar.shown ? 0 : pill.height + bar.gap
-                Behavior on y { SpringAnimation { spring: 3.5; damping: 0.32; epsilon: 0.1 } }
+                y: bar.lift
             }
         ]
 
         HoverHandler { id: pillHover }
 
-        // Un petit tassement quand une demande part, relâché sur un ressort.
+        // Un léger tassement quand une demande part.
         SequentialAnimation {
             id: sendBounce
-            NumberAnimation { target: pill; property: "scale"; to: 0.96; duration: 90; easing.type: Easing.OutQuad }
-            SpringAnimation { target: pill; property: "scale"; to: 1.0; spring: 4.5; damping: 0.22; epsilon: 0.002 }
+            NumberAnimation { target: pill; property: "scale"; to: 0.985; duration: 90; easing.type: Easing.OutQuad }
+            NumberAnimation { target: pill; property: "scale"; to: 1.0; duration: 380; easing.type: Easing.OutQuint }
         }
 
         // ── Le verre ─────────────────────────────────────────────
         // Translucide : Hyprland floute ce qui passe derrière (même règle de
         // couche que le voile de la réponse). Son ombre portée vit avec le
         // halo, dans la surface sans flou.
+        // Les coins gardent le rayon de la capsule fermée : ouverte, elle
+        // devient une carte aux mêmes arrondis.
         Rectangle {
             id: glass
             anchors.fill: parent
-            radius: height / 2
+            radius: bar.barH / 2
             color: Qt.alpha(Theme.bgDeep, Theme.darkMode ? 0.62 : 0.7)
             border.width: 1
             border.color: Theme.darkMode ? Qt.rgba(1, 1, 1, 0.09) : Qt.rgba(0, 0, 0, 0.08)
         }
 
-        // Le reflet : un liseré clair en haut, qui s'éteint vers le milieu.
+        // Le reflet : un liseré clair en haut, qui s'éteint sur la hauteur
+        // d'une capsule fermée.
         Rectangle {
             anchors.fill: parent
             anchors.margins: 1
-            radius: height / 2
+            radius: bar.barH / 2 - 1
             gradient: Gradient {
                 GradientStop { position: 0.0; color: Theme.darkMode ? Qt.rgba(1, 1, 1, 0.09) : Qt.rgba(1, 1, 1, 0.55) }
-                GradientStop { position: 0.55; color: "transparent" }
+                GradientStop { position: 0.55 * bar.barH / Math.max(bar.barH, pill.height); color: "transparent" }
             }
         }
 
-        // ── Le flocon : s'allume quand karenine écoute ───────────
+        // ── Les widgets, au-dessus du champ ──────────────────────
+        WidgetHub {
+            id: widgetHub
+            bar: bar
+            expand: bar.expand
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.bottom: inputRow.top
+        }
+
+        // Le fil entre les widgets et le champ.
+        Rectangle {
+            anchors.bottom: inputRow.top
+            x: 22
+            width: pill.width - 44
+            height: 1
+            opacity: widgetHub.opacity
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0.0; color: "transparent" }
+                GradientStop { position: 0.5; color: Qt.alpha(Theme.textPrimary, 0.12) }
+                GradientStop { position: 1.0; color: "transparent" }
+            }
+        }
+
+        // La ligne du champ : toujours la hauteur d'une capsule fermée, en bas.
+        Item {
+            id: inputRow
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: bar.barH
+        }
+
+        // ── Le flocon : les widgets ──────────────────────────────
         Item {
             id: logo
             anchors.left: parent.left
-            anchors.leftMargin: 11
-            anchors.verticalCenter: parent.verticalCenter
-            width: 24
-            height: 24
+            anchors.leftMargin: 14
+            anchors.verticalCenter: inputRow.verticalCenter
+            width: 28
+            height: 28
 
             // Transcription ou pilote au travail : il tourne doucement.
             readonly property bool turning: ClaudeLive.voicePhase === "transcribing" || ClaudeLive.pilotBusy
             // Revient droit une fois le travail fini.
             onTurningChanged: if (!turning) settle.restart()
 
-            // « Karénine » entendu : il saute, comme une icône du Dock.
-            Connections {
-                target: bar
-                function onVoiceOnChanged() {
-                    if (bar.voiceOn) {
-                        bar.dismissed = false;
-                        pop.restart();
-                    }
-                }
-            }
-
             Item {
                 id: flake
                 anchors.fill: parent
                 transformOrigin: Item.Center
 
-                property real popScale: 1.0
-                scale: popScale * (logoMa.pressed ? 0.86
-                       : ClaudeLive.voicePhase === "listening" ? 1.0 + ClaudeLive.voiceLevel * 0.22
-                       : logoMa.containsMouse ? 1.1 : 1.0)
-                Behavior on scale { SpringAnimation { spring: 5; damping: 0.3; epsilon: 0.002 } }
-
-                SequentialAnimation {
-                    id: pop
-                    NumberAnimation { target: flake; property: "popScale"; to: 1.45; duration: 140; easing.type: Easing.OutCubic }
-                    SpringAnimation { target: flake; property: "popScale"; to: 1.0; spring: 4; damping: 0.2; epsilon: 0.002 }
-                }
+                scale: logoMa.pressed ? 0.92 : logoMa.containsMouse || Widgets.hubOpen ? 1.06 : 1.0
+                Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
 
                 RotationAnimation on rotation {
                     running: logo.turning
                     loops: Animation.Infinite
                     from: flake.rotation
                     to: flake.rotation + 360
-                    duration: 2400
+                    duration: 4200
                 }
                 NumberAnimation {
                     id: settle
                     target: flake
                     property: "rotation"
                     to: Math.round(flake.rotation / 60) * 60
-                    duration: 420
-                    easing.type: Easing.OutBack
+                    duration: 600
+                    easing.type: Easing.OutCubic
                 }
 
                 Image {
@@ -1297,23 +1465,16 @@ PanelWindow { // qmllint disable uncreatable-type
                     visible: false
                 }
 
-                // L'artwork est blanc : recoloré au thème, et auréolé de
-                // l'accent quand il s'allume.
+                // L'artwork est blanc : recoloré au thème, à l'accent quand
+                // le menu est ouvert.
                 MultiEffect {
                     anchors.fill: flakeSource
                     source: flakeSource
                     colorization: 1.0
-                    colorizationColor: bar.voiceOn ? bar.hue(0.05) : Theme.iconColor
-                    opacity: bar.voiceOn || logo.turning ? 1.0 : (logoMa.containsMouse ? 0.95 : 0.75)
-                    shadowEnabled: true
-                    shadowColor: bar.hue(0)
-                    shadowBlur: 1.0
-                    shadowOpacity: bar.voiceOn ? 1.0 : 0
-                    shadowHorizontalOffset: 0
-                    shadowVerticalOffset: 0
-                    Behavior on colorizationColor { ColorAnimation { duration: 260 } }
+                    colorizationColor: Widgets.hubOpen ? bar.hue(0.05) : Theme.iconColor
+                    opacity: Widgets.hubOpen || logo.turning ? 1.0 : (logoMa.containsMouse ? 0.95 : 0.75)
+                    Behavior on colorizationColor { ColorAnimation { duration: 200 } }
                     Behavior on opacity { NumberAnimation { duration: 200 } }
-                    Behavior on shadowOpacity { NumberAnimation { duration: 300 } }
                 }
             }
 
@@ -1323,41 +1484,117 @@ PanelWindow { // qmllint disable uncreatable-type
                 anchors.margins: -6
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                // Parler au pilote, ou couper l'écoute en cours.
-                onClicked: ClaudeLive.voiceToggle(true)
+                onClicked: Widgets.toggleHub()
             }
         }
 
-        // ── À droite : envoyer, ou la voix qui ondule ────────────
+        // ── À droite : le micro, l'écoute, ou envoyer ────────────
+        // Au repos, un micro : un clic lance l'écoute. Pendant qu'anna
+        // écoute ou transcrit, il devient l'indicateur — une pastille teintée
+        // où ondule la voix ; un clic coupe l'écoute. Dès qu'il y a du texte,
+        // le bouton d'envoi prend sa place.
         Item {
             id: accessory
             anchors.right: parent.right
-            anchors.rightMargin: 9
-            anchors.verticalCenter: parent.verticalCenter
-            width: 28
-            height: 28
+            anchors.rightMargin: 10
+            anchors.verticalCenter: inputRow.verticalCenter
+            width: 34
+            height: 34
+
+            // « Karénine » entendu : la barre revient, et l'indicateur
+            // marque le coup d'une brève pulsation.
+            Connections {
+                target: bar
+                function onVoiceOnChanged() {
+                    if (bar.voiceOn) {
+                        bar.dismissed = false;
+                        Widgets.hubOpen = false;
+                        voicePop.restart();
+                    }
+                }
+            }
+
+            Rectangle {
+                id: voiceBtn
+                anchors.centerIn: parent
+                width: 34
+                height: 34
+                radius: 17
+                readonly property bool on: !sendBtn.on
+                property real popScale: 1.0
+                color: bar.voiceOn ? Qt.alpha(bar.hue(0), 0.2)
+                     : voiceMa.containsMouse ? Qt.alpha(Theme.textPrimary, 0.08) : "transparent"
+                border.width: bar.voiceOn ? 1 : 0
+                border.color: Qt.alpha(bar.hue(0), 0.45)
+                Behavior on color { ColorAnimation { duration: 220; easing.type: Easing.OutCubic } }
+                opacity: on ? 1 : 0
+                scale: popScale * (on ? (voiceMa.pressed ? 0.92 : 1) : 0.7)
+                visible: opacity > 0
+                Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+
+                SequentialAnimation {
+                    id: voicePop
+                    NumberAnimation { target: voiceBtn; property: "popScale"; to: 1.12; duration: 160; easing.type: Easing.OutCubic }
+                    NumberAnimation { target: voiceBtn; property: "popScale"; to: 1.0; duration: 460; easing.type: Easing.OutQuint }
+                }
+
+                // Le micro, qui s'efface quand l'onde prend sa place.
+                Item {
+                    anchors.centerIn: parent
+                    width: 18
+                    height: 18
+                    opacity: bar.voiceOn ? 0 : (voiceMa.containsMouse ? 0.95 : 0.7)
+                    scale: bar.voiceOn ? 0.6 : 1
+                    Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                    Behavior on scale { NumberAnimation { duration: 280; easing.type: Easing.OutQuint } }
+
+                    Image {
+                        id: micSource
+                        anchors.fill: parent
+                        source: "../assets/icons/mic.svg"
+                        sourceSize.width: 48
+                        sourceSize.height: 48
+                        visible: false
+                    }
+                    MultiEffect {
+                        anchors.fill: micSource
+                        source: micSource
+                        colorization: 1.0
+                        colorizationColor: Theme.iconColor
+                    }
+                }
+
+                MouseArea {
+                    id: voiceMa
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    // Parler au pilote, ou couper l'écoute en cours.
+                    onClicked: ClaudeLive.voiceToggle(true)
+                }
+            }
 
             // Le bouton d'envoi, qui éclot quand il y a quelque chose à envoyer.
             Rectangle {
                 id: sendBtn
                 anchors.centerIn: parent
-                width: 26
-                height: 26
-                radius: 13
+                width: 32
+                height: 32
+                radius: 16
                 color: bar.hue(0)
                 readonly property bool on: input.text.trim().length > 0 && !bar.voiceOn
                 opacity: on ? 1 : 0
-                scale: on ? (sendMa.pressed ? 0.88 : 1) : 0.4
+                scale: on ? (sendMa.pressed ? 0.92 : 1) : 0.7
                 visible: opacity > 0
-                Behavior on opacity { NumberAnimation { duration: 160 } }
-                Behavior on scale { SpringAnimation { spring: 5; damping: 0.28; epsilon: 0.002 } }
+                Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                Behavior on scale { NumberAnimation { duration: 260; easing.type: Easing.OutQuint } }
 
                 Text {
                     anchors.centerIn: parent
                     anchors.verticalCenterOffset: -1
                     text: "↑"
                     font.family: bar.uiFont
-                    font.pixelSize: 15
+                    font.pixelSize: 17
                     font.weight: Font.Bold
                     color: "#ffffff"
                 }
@@ -1370,20 +1607,32 @@ PanelWindow { // qmllint disable uncreatable-type
                 }
             }
 
-            // La forme d'onde : cinq barres qui suivent le niveau de la voix,
-            // puis respirent ensemble pendant la transcription.
+            // La forme d'onde : cinq barres portées par une onde continue,
+            // dont l'amplitude suit le niveau lissé de la voix. Pendant la
+            // transcription, une petite vague les parcourt de gauche à droite.
             Row {
+                id: wave
                 anchors.centerIn: parent
                 spacing: 3
                 readonly property bool on: bar.voiceOn
+                readonly property bool transcribing: ClaudeLive.voicePhase === "transcribing"
+                property real phase: 0
                 opacity: on ? 1 : 0
-                scale: on ? 1 : 0.5
+                scale: on ? 1 : 0.7
                 visible: opacity > 0
-                Behavior on opacity { NumberAnimation { duration: 200 } }
-                Behavior on scale { SpringAnimation { spring: 4; damping: 0.3; epsilon: 0.002 } }
+                Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+                Behavior on scale { NumberAnimation { duration: 320; easing.type: Easing.OutQuint } }
+
+                NumberAnimation on phase {
+                    from: 0
+                    to: 2 * Math.PI
+                    duration: wave.transcribing ? 1400 : 1000
+                    loops: Animation.Infinite
+                    running: wave.visible
+                }
 
                 Repeater {
-                    model: [0.55, 0.85, 1.0, 0.8, 0.5]
+                    model: [0.55, 0.85, 1.0, 0.85, 0.55]
                     Rectangle {
                         id: waveBar
                         required property real modelData
@@ -1391,29 +1640,12 @@ PanelWindow { // qmllint disable uncreatable-type
                         anchors.verticalCenter: parent.verticalCenter
                         width: 3
                         radius: 1.5
-                        color: bar.hue(waveBar.index * 0.06)
+                        color: bar.hue(waveBar.index * 0.03)
 
-                        property real jitter: 1
-                        height: ClaudeLive.voicePhase === "listening"
-                                ? 4 + 16 * waveBar.modelData * Math.min(1, ClaudeLive.voiceLevel * 1.6) * jitter
-                                : 4
-                        Behavior on height { SpringAnimation { spring: 6; damping: 0.35; epsilon: 0.1 } }
-
-                        Timer {
-                            interval: 110 + waveBar.index * 23
-                            repeat: true
-                            running: ClaudeLive.voicePhase === "listening"
-                            onTriggered: waveBar.jitter = 0.6 + Math.random() * 0.6
-                        }
-
-                        SequentialAnimation on opacity {
-                            running: ClaudeLive.voicePhase === "transcribing"
-                            loops: Animation.Infinite
-                            alwaysRunToEnd: true
-                            PauseAnimation { duration: waveBar.index * 90 }
-                            NumberAnimation { to: 0.3; duration: 380; easing.type: Easing.InOutSine }
-                            NumberAnimation { to: 1.0; duration: 380; easing.type: Easing.InOutSine }
-                        }
+                        readonly property real swing: 0.5 + 0.5 * Math.sin(wave.phase - waveBar.index * 0.9)
+                        height: wave.transcribing
+                                ? 4 + 6 * waveBar.swing
+                                : 4 + 18 * waveBar.modelData * bar.level * (0.65 + 0.35 * waveBar.swing)
                     }
                 }
             }
@@ -1423,11 +1655,11 @@ PanelWindow { // qmllint disable uncreatable-type
         Item {
             id: field
             anchors.left: logo.right
-            anchors.leftMargin: 11
+            anchors.leftMargin: 12
             anchors.right: accessory.left
             anchors.rightMargin: 8
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
+            anchors.top: inputRow.top
+            anchors.bottom: inputRow.bottom
             clip: true
 
             TextInput {
@@ -1438,14 +1670,19 @@ PanelWindow { // qmllint disable uncreatable-type
                 enabled: !bar.voiceOn
                 Behavior on opacity { NumberAnimation { duration: 180 } }
                 font.family: bar.uiFont
-                font.pixelSize: 14
+                font.pixelSize: 15
                 font.weight: Font.Medium
                 color: Theme.textPrimary
                 selectionColor: Qt.alpha(bar.hue(0), 0.45)
                 selectedTextColor: Theme.textPrimary
 
                 // La recherche suit la frappe ; la voix, elle, n'écrit pas ici.
-                onTextChanged: Search.query = text
+                onTextChanged: {
+                    Search.query = text;
+                    // Écrire referme le menu : la recherche prend sa place.
+                    if (text.length > 0)
+                        Widgets.hubOpen = false;
+                }
 
                 Keys.onReturnPressed: bar.submit()
                 Keys.onEnterPressed: bar.submit()
@@ -1470,7 +1707,9 @@ PanelWindow { // qmllint disable uncreatable-type
                 Keys.onRightPressed: (event) => event.accepted = bar.adjustSelected(1)
                 // Une sélection en cours s'abandonne avant la barre.
                 Keys.onEscapePressed: {
-                    if (bar.selected >= 0)
+                    if (Widgets.hubOpen)
+                        Widgets.hubOpen = false;
+                    else if (bar.selected >= 0)
                         bar.selected = -1;
                     else
                         bar.release();
@@ -1495,7 +1734,7 @@ PanelWindow { // qmllint disable uncreatable-type
                     : ClaudeLive.voiceWake ? "Demander ou chercher, ou dire « Karénine »"
                     : "Demander à Karénine ou chercher…"
                 font.family: bar.uiFont
-                font.pixelSize: 14
+                font.pixelSize: 15
                 color: Qt.alpha(Theme.textPrimary, 0.42)
                 elide: Text.ElideRight
             }
@@ -1530,7 +1769,7 @@ PanelWindow { // qmllint disable uncreatable-type
                 text: ClaudeLive.voiceText.length > 0 ? ClaudeLive.voiceText
                     : ClaudeLive.voicePhase === "listening" ? "J'écoute…" : "Je transcris…"
                 font.family: bar.uiFont
-                font.pixelSize: 14
+                font.pixelSize: 15
                 font.weight: Font.Medium
                 color: ClaudeLive.voicePartial || ClaudeLive.voicePhase === "transcribing"
                        ? Theme.textSecondary : Theme.textPrimary

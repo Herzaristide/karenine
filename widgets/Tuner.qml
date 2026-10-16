@@ -17,7 +17,8 @@ Item {
     property string noteName: "—"
     property int    octave:   0
     property int    cents:    0
-    property real   refFreq:  440   // A4 reference (concert pitch) in Hz
+    // A4 reference (concert pitch) in Hz, set in the settings (Tuning).
+    readonly property real refFreq: Tuning.refFreq
     readonly property bool inTune: freq > 0 && Math.abs(cents) <= 5
 
     readonly property var noteNames: ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
@@ -77,154 +78,134 @@ Item {
     // Re-map the currently held pitch when the reference changes.
     onRefFreqChanged: if (freq > 0) setFreq(freq)
 
-    // ── UI ─────────────────────────────────────────────────────────────────
-    ColumnLayout {
+    // ── UI : horizontale, dans le style de la barre de conversation ──────
+    //    A4        −50 ┊ · · · · ┃ · · · · ┊ +50
+    //   440,0 Hz         ▮ (l'aiguille)
+    //   +3 ¢              A4 = 440 Hz
+    RowLayout {
         anchors.fill: parent
-        anchors.margins: 8
-        spacing: 4
+        anchors.leftMargin: 16
+        anchors.rightMargin: 16
+        spacing: 28
 
-        Text {
-            Layout.alignment: Qt.AlignHCenter
-            text: "ACCORDEUR"
-            font.family: "JetBrains Mono"
-            font.pixelSize: 12
-            font.weight: Font.Medium
-            font.letterSpacing: 2
-            color: Theme.accentMuted
+        // La note, en grand.
+        ColumnLayout {
+            Layout.alignment: Qt.AlignVCenter
+            Layout.preferredWidth: 140
+            spacing: 2
+
+            Text {
+                Layout.alignment: Qt.AlignHCenter
+                text: tuner.freq > 0 ? tuner.noteName + tuner.octave : "—"
+                font.family: "Inter"
+                font.pixelSize: 60
+                font.weight: Font.DemiBold
+                color: tuner.inTune ? Theme.colorSuccess : Theme.textPrimary
+                Behavior on color { ColorAnimation { duration: 160 } }
+            }
+            Text {
+                Layout.alignment: Qt.AlignHCenter
+                text: tuner.freq > 0
+                      ? tuner.freq.toFixed(1) + " Hz  ·  " + (tuner.cents > 0 ? "+" : "") + tuner.cents + " ¢"
+                      : "Joue une note…"
+                font.family: "Inter"
+                font.pixelSize: 12
+                color: Theme.textSecondary
+            }
         }
 
-        // Detected note + octave
-        Text {
-            Layout.alignment: Qt.AlignHCenter
-            text: tuner.freq > 0 ? tuner.noteName + tuner.octave : "—"
-            font.family: "JetBrains Mono"
-            font.pixelSize: 40
-            font.bold: true
-            color: tuner.inTune ? Theme.colorSuccess : Theme.textPrimary
-            Behavior on color { ColorAnimation { duration: 120 } }
-        }
-
-        // Frequency + cents deviation
-        Text {
-            Layout.alignment: Qt.AlignHCenter
-            text: tuner.freq > 0
-                  ? tuner.freq.toFixed(1) + " Hz   " + (tuner.cents > 0 ? "+" : "") + tuner.cents + "¢"
-                  : "…"
-            font.family: "JetBrains Mono"
-            font.pixelSize: 11
-            color: Theme.textDim
-        }
-
-        Item { Layout.preferredHeight: 4 }
-
-        // Cents meter (−50 … +50), needle centered when in tune
-        Item {
+        // La jauge des cents, puis la référence.
+        ColumnLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: 22
+            Layout.alignment: Qt.AlignVCenter
+            spacing: 14
 
-            Rectangle {   // track
-                anchors.verticalCenter: parent.verticalCenter
-                width: parent.width
-                height: 4
-                radius: 2
-                color: Theme.bgDeep
-            }
-            Rectangle {   // center reference
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.verticalCenter: parent.verticalCenter
-                width: 2
-                height: 16
-                color: Qt.rgba(Theme.iconColor.r, Theme.iconColor.g, Theme.iconColor.b, 0.4)
-            }
-            Rectangle {   // needle
-                visible: tuner.freq > 0
-                width: 6
-                height: 20
-                radius: 3
-                anchors.verticalCenter: parent.verticalCenter
-                color: tuner.inTune ? Theme.colorSuccess : Theme.accentColor
-                x: {
-                    const half = parent.width / 2 - width / 2
-                    return parent.width / 2 - width / 2
-                         + Math.max(-50, Math.min(50, tuner.cents)) / 50 * half
-                }
-                Behavior on x { NumberAnimation { duration: 80; easing.type: Easing.OutQuad } }
-                Behavior on color { ColorAnimation { duration: 120 } }
-            }
-        }
+            Item {
+                id: meter
+                Layout.fillWidth: true
+                Layout.preferredHeight: 54
 
-        Item { Layout.preferredHeight: 4 }
-
-        // Reference pitch (A4) calibration — adjust the fundamental
-        RowLayout {
-            Layout.alignment: Qt.AlignHCenter
-            spacing: 6
-
-            Repeater {
-                model: [-1, 1]
+                // La zone juste (±5 ¢), teintée.
                 Rectangle {
-                    id: refBtn
-                    required property var modelData
-                    width: 24
-                    height: 22
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.verticalCenter: track.verticalCenter
+                    width: meter.width * 0.1
+                    height: 26
+                    radius: 8
+                    color: Qt.alpha(Theme.colorSuccess, tuner.inTune ? 0.24 : 0.1)
+                    Behavior on color { ColorAnimation { duration: 160 } }
+                }
+
+                Rectangle {
+                    id: track
+                    y: 14
+                    width: parent.width
+                    height: 6
+                    radius: 3
+                    color: Qt.alpha(Theme.textPrimary, 0.1)
+                }
+
+                // Les graduations, tous les 10 ¢.
+                Repeater {
+                    model: 11
+                    Rectangle {
+                        required property int index
+                        x: index / 10 * (meter.width - width)
+                        anchors.verticalCenter: track.verticalCenter
+                        width: 2
+                        height: index === 5 ? 20 : 10
+                        radius: 1
+                        color: Qt.alpha(Theme.textPrimary, index === 5 ? 0.45 : 0.18)
+                    }
+                }
+
+                // L'aiguille.
+                Rectangle {
+                    visible: tuner.freq > 0
+                    width: 8
+                    height: 28
                     radius: 4
-                    color: refMa.containsMouse ? Theme.accentDark : "transparent"
-                    border.color: Theme.bgElevated
-                    border.width: 1
-                    Text {
-                        anchors.centerIn: parent
-                        text: refBtn.modelData > 0 ? "+" : "−"
-                        font.family: "JetBrains Mono"
-                        font.pixelSize: 12
-                        color: Theme.accentMuted
-                    }
-                    MouseArea {
-                        id: refMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: tuner.refFreq = Math.max(400, Math.min(480, tuner.refFreq + refBtn.modelData))
-                    }
+                    anchors.verticalCenter: track.verticalCenter
+                    color: tuner.inTune ? Theme.colorSuccess : Theme.glow(0)
+                    x: (meter.width - width) / 2
+                       + Math.max(-50, Math.min(50, tuner.cents)) / 50 * (meter.width - width) / 2
+                    Behavior on x { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                    Behavior on color { ColorAnimation { duration: 160 } }
+                }
+
+                Text {
+                    anchors.left: parent.left
+                    anchors.bottom: parent.bottom
+                    text: "−50"
+                    font.family: "Inter"
+                    font.pixelSize: 10
+                    color: Theme.textDim
+                }
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.bottom: parent.bottom
+                    text: "juste"
+                    font.family: "Inter"
+                    font.pixelSize: 10
+                    color: tuner.inTune ? Theme.colorSuccess : Theme.textDim
+                }
+                Text {
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    text: "+50"
+                    font.family: "Inter"
+                    font.pixelSize: 10
+                    color: Theme.textDim
                 }
             }
 
+            // La référence (A4) : elle se règle dans les réglages.
             Text {
-                text: "A4"
-                font.family: "JetBrains Mono"
-                font.pixelSize: 11
-                color: Theme.textDim
-            }
-
-            TextInput {
-                id: refInput
-                text: tuner.refFreq.toFixed(0)
-                font.family: "JetBrains Mono"
-                font.pixelSize: 14
-                font.bold: true
-                color: Theme.textPrimary
-                horizontalAlignment: TextInput.AlignHCenter
-                selectByMouse: true
-                inputMethodHints: Qt.ImhDigitsOnly
-                validator: IntValidator { bottom: 400; top: 480 }
-                onEditingFinished: {
-                    var v = parseInt(text)
-                    if (!isNaN(v)) tuner.refFreq = Math.max(400, Math.min(480, v))
-                    text = tuner.refFreq.toFixed(0)
-                }
-                Connections {
-                    target: tuner
-                    function onRefFreqChanged() {
-                        if (!refInput.activeFocus)
-                            refInput.text = tuner.refFreq.toFixed(0)
-                    }
-                }
-            }
-
-            Text {
-                text: "Hz"
-                font.family: "JetBrains Mono"
-                font.pixelSize: 11
-                color: Theme.textDim
+                Layout.alignment: Qt.AlignHCenter
+                text: "A4 = " + tuner.refFreq.toFixed(0) + " Hz"
+                font.family: "Inter"
+                font.pixelSize: 12
+                color: Theme.textSecondary
             }
         }
     }

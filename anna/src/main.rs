@@ -30,6 +30,7 @@
 //! Services exposed over `$XDG_RUNTIME_DIR/anna.sock`:
 //!   - theme    : accent/palette (set/mode/palette-color/get/watch)
 //!   - hwstats  : hardware stats (hwstats_get / hwstats_watch)
+//!   - servers  : remote servers over ssh (servers_watch / servers_add / …)
 //!   - gesture  : webcam control (gesture_get/set/toggle/watch)
 //!   - claude   : live Claude Code sessions (claude_hook/list/watch/focus)
 
@@ -45,6 +46,7 @@ mod metronome;
 mod msi;
 mod paths;
 mod protocol;
+mod servers;
 mod state;
 mod templates;
 mod tuner;
@@ -85,7 +87,7 @@ async fn main() {
                 tokio::time::sleep(Duration::from_secs(3600)).await;
             }
         }
-        Some("gesture" | "claude" | "pilot" | "voice") => {
+        Some("gesture" | "claude" | "pilot" | "voice" | "servers") => {
             client::run(&args);
         }
         // Claude Code hook: must stay silent and exit 0 whatever happens.
@@ -379,9 +381,11 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             }
         }
 
-        Command::HwstatsWatch => {
+        Command::HwstatsWatch { interval_ms } => {
             let mut collector = hwstats::Collector::new();
-            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            let period = interval_ms.unwrap_or(1000).clamp(250, 5000);
+            let mut interval = tokio::time::interval(Duration::from_millis(period));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 interval.tick().await;
                 let Some((c, snap)) = sample_hwstats(collector).await else {
@@ -393,6 +397,35 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
                     break; // socket closed
                 }
             }
+        }
+
+        // ── remote servers ───────────────────────────────────────────────
+        Command::ServersWatch => {
+            let mut memory = servers::CpuMemory::new();
+            let mut interval = tokio::time::interval(Duration::from_secs(3));
+            // A slow server delays the next round rather than stacking them.
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                let stats = servers::sample_all(&mut memory).await;
+                let json = serde_json::json!({ "servers": stats }).to_string();
+                if write_line(&mut writer, &json).await.is_err() {
+                    break; // socket closed
+                }
+            }
+        }
+
+        Command::ServersList => {
+            let json = serde_json::to_string(&servers::load()).unwrap_or_default();
+            let _ = write_line(&mut writer, &json).await;
+        }
+
+        Command::ServersAdd { name, host } => {
+            write_servers_result(&mut writer, servers::add(&name, &host)).await;
+        }
+
+        Command::ServersRemove { name } => {
+            write_servers_result(&mut writer, servers::remove(&name)).await;
         }
 
         // ── audio services ───────────────────────────────────────────────
@@ -1107,6 +1140,18 @@ async fn write_gesture_status(
     status: &gesture::Status,
 ) {
     let json = serde_json::to_string(status).unwrap_or_default();
+    let _ = write_line(writer, &json).await;
+}
+
+/// The server list after an add/remove, or `{"ok":false,"error"}`.
+async fn write_servers_result(
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    result: Result<Vec<servers::Server>, String>,
+) {
+    let json = match result {
+        Ok(list) => serde_json::to_string(&list).unwrap_or_default(),
+        Err(error) => serde_json::json!({ "ok": false, "error": error }).to_string(),
+    };
     let _ = write_line(writer, &json).await;
 }
 

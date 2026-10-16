@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
+import QtQuick.Effects
 import Quickshell
 import Quickshell.Io
 import "../services"
@@ -19,8 +20,8 @@ Item {
     property var diskData: []
     property string openTarget: ""
 
-    // ── History buffers for sparkline graphs (40 samples) ──
-    readonly property int historySize: 40
+    // ── Historique des courbes : 160 points à 4 Hz, soit 40 s ──
+    readonly property int historySize: 160
     property var cpuHistory: []
     property var ramHistory: []
     property var gpuHistory: []
@@ -31,10 +32,82 @@ Item {
     // RAM brand info (loaded once, provided by the daemon)
     property string ramBrand: ""
 
-    // Disk grouping and per-disk history
-    property var diskHistories: ({})
-    property var diskGroups: []   // [{disk, usedPct, history}]
+    // ── Disques physiques ────────────────────────────────────────────────
+    // anna liste les systèmes de fichiers montés : sur btrfs, chaque
+    // sous-volume (/, /nix, /home…) revient avec la taille du volume entier.
+    // lsblk relie chaque source (partition, volume chiffré) à son disque :
+    // chaque système de fichiers compte une fois, puis on additionne par
+    // disque.
+    property var blockDevices: ({})   // chemin de la source → { disk, model }
+    property var disks: []            // [{ name, label, used, size, mount }]
+    // Les sources déjà cherchées dans lsblk sans succès (tmpfs, réseau…).
+    property var unknownSources: ({})
     readonly property var diskColors: Theme.diskSeriesColors
+
+    Process {
+        id: lsblkProc
+        command: ["lsblk", "-J", "-o", "NAME,PATH,TYPE,MODEL"]
+        stdout: StdioCollector {
+            onStreamFinished: hwPanel.applyLsblk(text)
+        }
+    }
+    Component.onCompleted: lsblkProc.running = true
+
+    function applyLsblk(text) {
+        const map = {};
+        try {
+            const tree = JSON.parse(text).blockdevices || [];
+            for (const d of tree) {
+                if (d.type !== "disk" || d.name.startsWith("zram"))
+                    continue;
+                // « Micron_3400_MTFDKBA1T0TFH » → « Micron 3400 ».
+                const model = (d.model || "").trim().replace(/_/g, " ").split(/\s+/).slice(0, 2).join(" ");
+                const info = { disk: d.name, model: model };
+                const walk = (n) => {
+                    map[n.path] = info;
+                    (n.children || []).forEach(walk);
+                };
+                walk(d);
+            }
+        } catch (e) { /* lsblk absent ou sortie inattendue : on garde les sources */ }
+        hwPanel.blockDevices = map;
+        hwPanel.groupDisks();
+    }
+
+    function groupDisks() {
+        // Un système de fichiers par source : le point de montage le plus court.
+        const bySource = {};
+        for (const d of hwPanel.diskData) {
+            const prev = bySource[d.source];
+            if (!prev || d.mount.length < prev.mount.length)
+                bySource[d.source] = d;
+        }
+        const byDisk = {};
+        let missing = false;
+        for (const src of Object.keys(bySource)) {
+            const fs = bySource[src];
+            const dev = hwPanel.blockDevices[src];
+            if (!dev && !hwPanel.unknownSources[src]) {
+                missing = true;
+                hwPanel.unknownSources[src] = true;
+            }
+            const key = dev ? dev.disk : src;
+            if (!byDisk[key])
+                byDisk[key] = { name: key, label: dev && dev.model ? dev.model : key.replace(/^\/dev\//, ""),
+                                used: 0, size: 0, mount: fs.mount };
+            const g = byDisk[key];
+            g.used += fs.used;
+            g.size += fs.size;
+            if (fs.mount.length < g.mount.length)
+                g.mount = fs.mount;
+        }
+        hwPanel.disks = Object.keys(byDisk).sort().map(k => byDisk[k]);
+        // Un disque branché depuis : lsblk ne le connaissait pas encore.
+        if (missing && !lsblkProc.running)
+            lsblkProc.running = true;
+    }
+
+    onDiskDataChanged: groupDisks()
 
     // Combined series for the merged CPU/RAM/GPU graph
     readonly property var combinedSeries: {
@@ -46,13 +119,6 @@ Item {
         if (hwPanel.gpuHistory.length > 0 && hwPanel.gpuUsage.length > 0)
             s.push({ values: hwPanel.gpuHistory, color: Theme.colorGpu });
         return s;
-    }
-
-    // One series entry per physical disk for the combined disk graph
-    readonly property var diskSeries: {
-        return hwPanel.diskGroups.map(function(g, i) {
-            return { values: g.history, color: hwPanel.diskColors[i % hwPanel.diskColors.length] };
-        });
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -70,45 +136,11 @@ Item {
         return copy;
     }
 
-    // Extract the physical disk from a partition path
-    // e.g. /dev/nvme0n1p2 → /dev/nvme0n1 ; /dev/sda1 → /dev/sda
-    function getPhysicalDisk(source) {
-        let m = source.match(/^(\/dev\/nvme\d+n\d+)p\d+$/);
-        if (m) return m[1];
-        m = source.match(/^(\/dev\/[shv]d[a-z]+)\d+$/);
-        if (m) return m[1];
-        return source;
-    }
-
-    onDiskDataChanged: {
-        // Aggregate used/total by physical disk
-        const groups = {};
-        for (const d of diskData) {
-            const key = getPhysicalDisk(d.source);
-            if (!groups[key]) groups[key] = { usedBytes: 0, totalBytes: 0 };
-            groups[key].usedBytes  += d.used;
-            groups[key].totalBytes += d.size;
-        }
-        // Push a new sample into each disk's history
-        const histories = Object.assign({}, hwPanel.diskHistories);
-        const newGroups = [];
-        for (const disk of Object.keys(groups).sort()) {
-            const g   = groups[disk];
-            const pct = g.totalBytes > 0 ? Math.round((g.usedBytes / g.totalBytes) * 100) : 0;
-            const hist = (histories[disk] || []).slice();
-            hist.push(Math.max(0, Math.min(100, pct)));
-            if (hist.length > hwPanel.historySize) hist.splice(0, 1);
-            histories[disk] = hist;
-            newGroups.push({ disk: disk, usedPct: pct, history: hist.slice() });
-        }
-        hwPanel.diskHistories = histories;
-        hwPanel.diskGroups    = newGroups;
-    }
-
     // ── Live stats from the anna daemon ──────────────────────────────────
     // All hardware polling (CPU/RAM/GPU/temps/disks) moved out of QML into the
     // native `anna` engine. We open one Unix socket, subscribe with
-    // `hwstats_watch`, and receive one JSON snapshot per second. The derived
+    // `hwstats_watch`, and receive one JSON snapshot every 250 ms (GPU and
+    // disks refresh slower on the daemon side, they cost a process). The derived
     // state below (histories, disk grouping, formatting) stays here.
     function applyStats(s) {
         // CPU
@@ -164,7 +196,7 @@ Item {
             }
         }
         onConnectedChanged: {
-            if (connected) write('{"cmd":"hwstats_watch"}\n');
+            if (connected) write('{"cmd":"hwstats_watch","interval_ms":250}\n');
         }
     }
 
@@ -187,400 +219,260 @@ Item {
         command: ["dolphin", hwPanel.openTarget]
     }
 
-    // ── Scrollable content ──────────────────────────────────────────────
-    Flickable {
-        anchors.fill: parent
-        contentHeight: cardColumn.implicitHeight
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
+    // ── UI : trois cartes, le pourcentage en grand, la courbe derrière ───
+    //   ╭ ● PROCESSEUR   45°C ╮ ╭ ● MÉMOIRE   ╮ ╭ ● GPU      47°C ╮
+    //   │ 8%                  │ │ 27%        │ │ 5%              │
+    //   │ i7-11800H      ~~~~~│ │ 4,2 / 15 Go│ │ 907 / 8192 Mio  │
+    //   │~~~~~~~~~~~~~~~~~~~~~│ │~~~~~~~~~~~~│ │~~~~~~~~~~~~~~~~~│
+    //   ╰─────────────────────╯ ╰────────────╯ ╰─────────────────╯
+    //   ( Micron 3400   232 / 953 Go · 24 % ▬▬▬───── )  (un disque, un autre…)
+    readonly property int tileH: 150
 
-        ScrollBar.vertical: ScrollBar {
-            policy: ScrollBar.AsNeeded
+    component Tile: Rectangle {
+        id: tile
+        property string label
+        property string extra
+        property int percent: -1          // -1 : pas de mesure
+        // Le nombre affiché glisse vers la nouvelle mesure au lieu de sauter.
+        property real shown: Math.max(0, percent)
+        Behavior on shown { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+        property string detail
+        property var history: []
+        property color tone: Theme.accentColor
+
+        Layout.fillWidth: true
+        Layout.preferredHeight: hwPanel.tileH
+        radius: 20
+        color: Qt.alpha(Theme.textPrimary, 0.05)
+        border.width: 1
+        border.color: Qt.alpha(Theme.textPrimary, 0.08)
+
+        // La courbe occupe toute la carte, coupée à ses coins arrondis :
+        // 100 % touche le haut, 0 % le bas.
+        Item {
+            id: graphLayer
+            anchors.fill: parent
+            visible: false
+            layer.enabled: true
+            MiniGraph {
+                anchors.fill: parent
+                anchors.topMargin: 12
+                values: tile.history
+                lineColor: tile.tone
+                fillOpacity: 0.32
+            }
+        }
+        Rectangle {
+            id: tileShape
+            anchors.fill: parent
+            radius: tile.radius
+            visible: false
+            layer.enabled: true
+        }
+        MultiEffect {
+            anchors.fill: parent
+            source: graphLayer
+            maskEnabled: true
+            maskSource: tileShape
+            maskThresholdMin: 0.5
+            maskSpreadAtMin: 1.0
+            opacity: 0.85
         }
 
-        ColumnLayout {
-            id: cardColumn
-            width: parent.width
-            spacing: 14
-
-            // ── CPU ──────────────────────────────────────────────────
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 6
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    Text {
-                        text: "CPU"
-                        font.family: "JetBrains Mono"
-                        font.pixelSize: 10
-                        font.weight: Font.Bold
-                        font.letterSpacing: 1.5
-                        color: Theme.accentMuted
-                        Layout.fillWidth: true
-                    }
-                    Text {
-                        visible: hwPanel.cpuTemp.length > 0
-                        text: hwPanel.cpuTemp
-                        font.family: "JetBrains Mono"
-                        font.pixelSize: 11
-                        color: {
-                            const v = parseInt(hwPanel.cpuTemp) || 0;
-                            return v > 90 ? Theme.colorDanger : v > 70 ? Theme.colorWarning : Theme.colorSuccess;
-                        }
-                    }
-                }
-
-                Text {
-                    text: hwPanel.cpuName
-                    font.family: "JetBrains Mono"
-                    font.pixelSize: 12
-                    color: Theme.textPrimary
-                    Layout.fillWidth: true
-                    elide: Text.ElideRight
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 6
-                        radius: 3
-                        color: Theme.bgDeep
-                        Rectangle {
-                            width: parent.width * Math.min(hwPanel.cpuUsage / 100.0, 1.0)
-                            height: parent.height
-                            radius: parent.radius
-                            color: hwPanel.cpuUsage > 80 ? Theme.colorDanger
-                                 : hwPanel.cpuUsage > 60 ? Theme.colorWarning
-                                 : Theme.accentColor
-                            Behavior on width { NumberAnimation { duration: 400 } }
-                        }
-                    }
-
-                    Text {
-                        text: hwPanel.cpuUsage + "%"
-                        font.family: "JetBrains Mono"
-                        font.pixelSize: 12
-                        color: Theme.textPrimary
-                        Layout.preferredWidth: 40
-                        horizontalAlignment: Text.AlignRight
-                    }
-                }
-
+        // En-tête : pastille de couleur, intitulé, température.
+        Row {
+            id: header
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.leftMargin: 16
+            anchors.topMargin: 14
+            spacing: 7
+            Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: 6; height: 6; radius: 3
+                color: tile.tone
             }
-
-            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.bgElevated }
-
-            // ── RAM ──────────────────────────────────────────────────
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 6
-
-                Text {
-                    text: "RAM"
-                    font.family: "JetBrains Mono"
-                    font.pixelSize: 10
-                    font.weight: Font.Bold
-                    font.letterSpacing: 1.5
-                    color: Theme.accentMuted
-                }
-
-                Text {
-                    visible: hwPanel.ramBrand.length > 0
-                    text: hwPanel.ramBrand
-                    font.family: "JetBrains Mono"
-                    font.pixelSize: 11
-                    color: Theme.textSecondary
-                    Layout.fillWidth: true
-                    elide: Text.ElideRight
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 6
-                        radius: 3
-                        color: Theme.bgDeep
-                        property real ratio: hwPanel.ramTotalBytes > 0
-                            ? hwPanel.ramUsedBytes / hwPanel.ramTotalBytes : 0
-                        Rectangle {
-                            width: parent.width * Math.min(parent.ratio, 1.0)
-                            height: parent.height
-                            radius: parent.radius
-                            color: parent.ratio > 0.85 ? Theme.colorDanger
-                                 : parent.ratio > 0.65 ? Theme.colorWarning
-                                 : Theme.colorRam
-                            Behavior on width { NumberAnimation { duration: 400 } }
-                        }
-                    }
-
-                    Text {
-                        text: hwPanel.ramTotalBytes > 0
-                            ? hwPanel.formatGiB(hwPanel.ramUsedBytes) + " / " + hwPanel.formatGiB(hwPanel.ramTotalBytes)
-                            : "..."
-                        font.family: "JetBrains Mono"
-                        font.pixelSize: 12
-                        color: Theme.textPrimary
-                        Layout.preferredWidth: 140
-                        horizontalAlignment: Text.AlignRight
-                    }
-                }
-
+            Text {
+                text: tile.label.toUpperCase()
+                font.family: "Inter"
+                font.pixelSize: 10
+                font.weight: Font.DemiBold
+                font.letterSpacing: 1.4
+                color: Theme.textSecondary
             }
+        }
+        Text {
+            anchors.right: parent.right
+            anchors.rightMargin: 16
+            anchors.verticalCenter: header.verticalCenter
+            text: tile.extra
+            font.family: "Inter"
+            font.pixelSize: 11
+            font.weight: Font.Medium
+            font.features: { "tnum": 1 }
+            color: Theme.textDim
+        }
 
-            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.bgElevated }
-
-            // ── GPU ──────────────────────────────────────────────────
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 6
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    Text {
-                        text: "GPU"
-                        font.family: "JetBrains Mono"
-                        font.pixelSize: 10
-                        font.weight: Font.Bold
-                        font.letterSpacing: 1.5
-                        color: Theme.accentMuted
-                        Layout.fillWidth: true
-                    }
-                    Text {
-                        visible: hwPanel.gpuTemp.length > 0
-                        text: hwPanel.gpuTemp
-                        font.family: "JetBrains Mono"
-                        font.pixelSize: 11
-                        color: {
-                            const v = parseInt(hwPanel.gpuTemp) || 0;
-                            return v > 95 ? Theme.colorDanger : v > 75 ? Theme.colorWarning : Theme.colorSuccess;
-                        }
-                    }
-                }
-
-                Text {
-                    text: hwPanel.gpuName
-                    font.family: "JetBrains Mono"
-                    font.pixelSize: 12
-                    color: Theme.textPrimary
-                    Layout.fillWidth: true
-                    elide: Text.ElideRight
-                }
-
-                Text {
-                    visible: hwPanel.gpuUsage.length > 0
-                    text: hwPanel.gpuUsage
-                    font.family: "JetBrains Mono"
-                    font.pixelSize: 11
-                    color: Theme.textSecondary
-                }
-
-                RowLayout {
-                    visible: hwPanel.gpuUsage.length > 0
-                    Layout.fillWidth: true
-                    spacing: 8
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 6
-                        radius: 3
-                        color: Theme.bgDeep
-                        Rectangle {
-                            width: parent.width * Math.min(hwPanel.gpuUsagePercent / 100.0, 1.0)
-                            height: parent.height
-                            radius: parent.radius
-                            color: hwPanel.gpuUsagePercent > 80 ? Theme.colorDanger
-                                 : hwPanel.gpuUsagePercent > 60 ? Theme.colorWarning
-                                 : Theme.colorGpu
-                            Behavior on width { NumberAnimation { duration: 400 } }
-                        }
-                    }
-
-                    Text {
-                        text: hwPanel.gpuUsagePercent + "%"
-                        font.family: "JetBrains Mono"
-                        font.pixelSize: 12
-                        color: Theme.textPrimary
-                        Layout.preferredWidth: 40
-                        horizontalAlignment: Text.AlignRight
-                    }
-                }
-
+        // Le pourcentage, en grand.
+        Row {
+            id: bigValue
+            anchors.left: parent.left
+            anchors.top: header.bottom
+            anchors.leftMargin: 14
+            anchors.topMargin: 2
+            Text {
+                id: bigNumber
+                text: tile.percent >= 0 ? Math.round(tile.shown) : "—"
+                font.family: "Inter Display"
+                font.pixelSize: 60
+                font.weight: Font.Light
+                font.letterSpacing: -2.5
+                font.features: { "tnum": 1 }
+                color: Theme.textPrimary
             }
+            Text {
+                visible: tile.percent >= 0
+                anchors.baseline: bigNumber.baseline
+                leftPadding: 3
+                text: "%"
+                font.family: "Inter Display"
+                font.pixelSize: 24
+                font.weight: Font.Normal
+                color: tile.tone
+            }
+        }
 
-            // ── CPU / RAM / GPU — combined graph ─────────────────────
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 6
-                visible: hwPanel.combinedSeries.length > 0
+        Text {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: bigValue.bottom
+            anchors.leftMargin: 16
+            anchors.rightMargin: 16
+            anchors.topMargin: -4
+            text: tile.detail
+            font.family: "Inter"
+            font.pixelSize: 11
+            font.weight: Font.Medium
+            color: Theme.textSecondary
+            elide: Text.ElideRight
+        }
+    }
 
-                MiniGraph {
+    ColumnLayout {
+        anchors.fill: parent
+        spacing: 10
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 10
+
+            Tile {
+                label: "Processeur"
+                extra: hwPanel.cpuTemp
+                percent: hwPanel.cpuUsage
+                detail: hwPanel.cpuName
+                history: hwPanel.cpuHistory
+                tone: Theme.accentColor
+            }
+            Tile {
+                label: "Mémoire"
+                extra: hwPanel.ramBrand
+                percent: hwPanel.ramTotalBytes > 0
+                         ? Math.round(hwPanel.ramUsedBytes / hwPanel.ramTotalBytes * 100) : -1
+                detail: hwPanel.formatGiB(hwPanel.ramUsedBytes) + " / " + hwPanel.formatGiB(hwPanel.ramTotalBytes)
+                history: hwPanel.ramHistory
+                tone: Theme.colorRam
+            }
+            Tile {
+                label: "Carte graphique"
+                extra: hwPanel.gpuTemp
+                percent: hwPanel.gpuUsage.length > 0 ? hwPanel.gpuUsagePercent : -1
+                detail: hwPanel.gpuUsage.length > 0
+                        ? hwPanel.gpuUsage.substring(hwPanel.gpuUsage.indexOf("—") + 2)
+                        : hwPanel.gpuName
+                history: hwPanel.gpuHistory
+                tone: Theme.colorGpu
+            }
+        }
+
+        // Les disques physiques : une pastille chacun ; un clic ouvre son
+        // point de montage principal dans Dolphin.
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+
+            Repeater {
+                model: hwPanel.disks.slice(0, 4)
+
+                Rectangle {
+                    id: disk
+                    required property var modelData
+                    required property int index
+                    readonly property real pct: disk.modelData.size > 0 ? disk.modelData.used / disk.modelData.size : 0
+
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 72
-                    series: hwPanel.combinedSeries
-                }
+                    Layout.preferredHeight: 52
+                    radius: 16
+                    color: Qt.alpha(Theme.textPrimary, diskMa.containsMouse ? 0.09 : 0.05)
+                    border.width: 1
+                    border.color: Qt.alpha(Theme.textPrimary, 0.08)
+                    Behavior on color { ColorAnimation { duration: 140 } }
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 16
+                    Column {
+                        anchors.fill: parent
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: 12
+                        anchors.topMargin: 9
+                        spacing: 6
 
-                    Repeater {
-                        model: [
-                            { label: "CPU", value: hwPanel.cpuUsage + "%",
-                              color: Theme.accentColor },
-                            { label: "RAM", value: hwPanel.ramTotalBytes > 0
-                                ? hwPanel.formatGiB(hwPanel.ramUsedBytes) : "...",
-                              color: Theme.colorRam },
-                            { label: "GPU", value: hwPanel.gpuUsage.length > 0
-                                ? hwPanel.gpuUsagePercent + "%" : "—",
-                              color: Theme.colorGpu }
-                        ]
-                        delegate: RowLayout {
-                            id: statChip
-                            required property var modelData
-                            spacing: 4
-                            Rectangle {
-                                Layout.preferredWidth: 8; Layout.preferredHeight: 8; radius: 4
-                                color: statChip.modelData.color
-                            }
+                        Item {
+                            width: parent.width
+                            height: mountText.implicitHeight
                             Text {
-                                text: statChip.modelData.label + " " + statChip.modelData.value
-                                font.family: "JetBrains Mono"
-                                font.pixelSize: 10
-                                color: Theme.textSecondary
-                            }
-                        }
-                    }
-
-                    Item { Layout.fillWidth: true }
-                }
-            }
-
-            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.bgElevated }
-
-            // ── Disques ──────────────────────────────────────────────
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 10
-
-                Text {
-                    text: "Disques"
-                    font.family: "JetBrains Mono"
-                    font.pixelSize: 10
-                    font.weight: Font.Bold
-                    font.letterSpacing: 1.5
-                    color: Theme.accentMuted
-                }
-
-                Text {
-                    visible: hwPanel.diskData.length === 0
-                    text: "Chargement..."
-                    font.family: "JetBrains Mono"
-                    font.pixelSize: 12
-                    color: Theme.textSecondary
-                }
-
-                Repeater {
-                    model: hwPanel.diskData
-                    delegate: ColumnLayout {
-                        id: diskItem
-                        required property var modelData
-                        Layout.fillWidth: true
-                        spacing: 4
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 6
-
-                            Text {
-                                text: diskItem.modelData.mount
-                                font.family: "JetBrains Mono"
+                                id: mountText
+                                width: parent.width - pctText.implicitWidth - 6
+                                text: disk.modelData.label
+                                font.family: "Inter"
                                 font.pixelSize: 12
+                                font.weight: Font.Medium
                                 color: Theme.textPrimary
-                                Layout.fillWidth: true
-                                elide: Text.ElideRight
+                                elide: Text.ElideMiddle
                             }
-
                             Text {
-                                text: diskItem.modelData.used + " Go / " + diskItem.modelData.size + " Go"
-                                font.family: "JetBrains Mono"
-                                font.pixelSize: 11
-                                color: Theme.textSecondary
-                            }
-
-                            Text {
-                                property real ratio: diskItem.modelData.size > 0 ? diskItem.modelData.used / diskItem.modelData.size : 0
-                                text: Math.round(ratio * 100) + "%"
-                                font.family: "JetBrains Mono"
-                                font.pixelSize: 11
-                                color: ratio > 0.85 ? Theme.colorDanger : ratio > 0.65 ? Theme.colorWarning : Theme.textPrimary
-                                Layout.preferredWidth: 36
-                                horizontalAlignment: Text.AlignRight
-                            }
-
-                            Rectangle {
-                                Layout.preferredWidth: 22
-                                Layout.preferredHeight: 22
-                                radius: 4
-                                color: openBtn.containsMouse ? Theme.accentDark : "transparent"
-                                border.color: openBtn.containsMouse ? Theme.accentColor : Theme.bgElevated
-                                border.width: 1
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "↗"
-                                    font.pixelSize: 12
-                                    color: openBtn.containsMouse ? Theme.textPrimary : Theme.textSecondary
-                                }
-
-                                MouseArea {
-                                    id: openBtn
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        hwPanel.openTarget = diskItem.modelData.mount;
-                                        openFolderProc.running = true;
-                                    }
-                                }
+                                id: pctText
+                                anchors.right: parent.right
+                                text: disk.modelData.used + " / " + disk.modelData.size + " Go  ·  " + Math.round(disk.pct * 100) + " %"
+                                font.family: "Inter"
+                                font.pixelSize: 10
+                                color: Theme.textDim
                             }
                         }
-
                         Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 5
-                            radius: 3
-                            color: Theme.bgDeep
-                            property real ratio: diskItem.modelData.size > 0
-                                ? diskItem.modelData.used / diskItem.modelData.size : 0
+                            width: parent.width
+                            height: 5
+                            radius: 2.5
+                            color: Qt.alpha(Theme.textPrimary, 0.1)
                             Rectangle {
-                                width: parent.width * Math.min(parent.ratio, 1.0)
+                                width: parent.width * disk.pct
                                 height: parent.height
                                 radius: parent.radius
-                                color: parent.ratio > 0.85 ? Theme.colorDanger
-                                     : parent.ratio > 0.65 ? Theme.colorWarning
-                                     : Theme.colorAltBlue
+                                color: hwPanel.diskColors[disk.index % hwPanel.diskColors.length]
                             }
                         }
+                    }
 
-                        Text {
-                            text: diskItem.modelData.source
-                            font.family: "JetBrains Mono"
-                            font.pixelSize: 10
-                            color: Theme.textDim
+                    MouseArea {
+                        id: diskMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            hwPanel.openTarget = disk.modelData.mount;
+                            openFolderProc.running = true;
                         }
                     }
                 }
-
             }
-
-            Item { Layout.preferredHeight: 8 }
         }
     }
 }
