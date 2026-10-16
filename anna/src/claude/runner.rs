@@ -74,7 +74,7 @@ fn user_line(text: &str) -> String {
 /// survives a daemon restart — with the session's environment.
 fn launch(args: &[&str]) -> Result<(), String> {
     let status = std::process::Command::new("systemd-run")
-        .args(["--user", "--collect", "--quiet", "--"])
+        .args(["--user", "--collect", "--quiet", "-p", "ExitType=cgroup", "--"])
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -165,6 +165,9 @@ impl Runner {
         let mut child = Command::new("claude")
             .args(&args)
             .current_dir(&spec.cwd)
+            // `-p` marks the transcript "sdk-cli", which `/resume` hides; any
+            // other entrypoint keeps the session in the picker.
+            .env("CLAUDE_CODE_ENTRYPOINT", "anna")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

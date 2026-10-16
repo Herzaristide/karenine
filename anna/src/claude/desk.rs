@@ -212,7 +212,7 @@ fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
 fn launch(args: &[&str]) -> Result<(), String> {
     run(
         "systemd-run",
-        &[&["--user", "--collect", "--quiet", "--"], args].concat(),
+        &[&["--user", "--collect", "--quiet", "-p", "ExitType=cgroup", "--"], args].concat(),
     )
     .map(|_| ())
 }
