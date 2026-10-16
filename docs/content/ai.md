@@ -12,15 +12,27 @@ links: [panels, backend, widgets]
 `panels/AiDock.qml` est la porte d'entrée de l'interface vers Claude. Il
 remplace le dock du bas (`BottomDock`, mis de côté). Il sort de la **barre
 des sessions** (`panels/SessionBar.qml`) : une bande toute noire contre le bord
-gauche, sur toute la hauteur, toujours là (les fenêtres lui laissent sa place), avec un point par session vivante — ambre si elle
-attend, à la teinte de l'accent (qui respire) si elle travaille, éteint au
-repos. Survoler un point donne son nom et son état ; un clic ouvre le dock sur
-cette session (et le referme si c'est déjà elle), un clic sur ✦ bascule le
+gauche, sur toute la hauteur, toujours là (les fenêtres lui laissent sa
+place) : la liste des sessions vivantes, une ligne chacune — son nom, un point
+ambre si elle attend, à la teinte de l'accent (qui respire) si elle travaille,
+éteint au repos, et sa demande en dessous. Une session qui réclame une
+permission se valide dans sa ligne même (**Autoriser**, **Toujours**,
+**Refuser**), sans rien ouvrir. Un clic sur une ligne affiche le texte de la
+session à côté (un second le fait disparaître), un clic sur ✦ bascule le
 dock. C'est aussi le widget « sessions », qu'ouvrent le pilote (outil
 `widget`) ou la FIFO (`widget:sessions`, `savoir`). Le quotidien passe par la
 barre de conversation (`panels/ConversationBar.qml`, voir [Panneaux](#panels)),
 dont le dock reprend le verre, la teinte (`Theme.glow`), la police Inter et la
 capsule de saisie.
+
+Le texte, lui, n'est pas fixe : posé sur un verre flouté (règle de couche
+`blur` sur « quickshell-aidock » dans la config Hyprland), il est **déplié**
+(toute la conversation, son travail, les autres vues) ou **réduit** (l'en-tête,
+le bas de la conversation, la demande de permission et le champ, pour répondre
+ou valider sans plus), et peut **disparaître** tout à fait (×). Il ne prend le
+clavier en exclusif que le temps d'une demande, le rend dès que la souris le
+quitte ou s'en éloigne, et se replie de lui-même quand il perd le focus.
+Échap le replie, puis le fait disparaître ; ⌃/⌄ bascule entre les deux tailles.
 
 ```
 ╭──────────────────────────────────────────────────────────╮
@@ -52,7 +64,7 @@ capsule de saisie.
   en choisir une la relit, lui écrire la reprend.
 
 Clavier : ⏎ envoie, ⇧⏎ va à la ligne, Alt+←/→ change de session, Alt+N
-ouvre une nouvelle session, Échap ferme.
+ouvre une nouvelle session, Échap replie puis fait disparaître le texte.
 
 Les sessions lancées d'ici tournent chez anna (`anna/src/claude/runner.rs`), pas
 dans le QML : fermer le dock ou recharger le shell ne les interrompt pas. Elles
@@ -199,6 +211,14 @@ c'est pourquoi l'interrupteur est en vue.
   demi-seconde de pastille dans la barre). Confirmé, le mot est retiré de la
   demande.
 - `anna wake-score fichier.wav` donne les scores pas à pas, pour régler le seuil.
+- **Le son de l'ordinateur est retiré du micro.** Le mot et la dictée écoutent
+  `echo-cancel-source` (`ANNA_VOICE_NODE`) par `pw-record` : PipeWire y
+  soustrait ce que jouent les haut-parleurs (annulation d'écho WebRTC,
+  `modules/audio.nix` de la config NixOS). « Karénine » est donc entendu
+  par-dessus une musique ou une vidéo, et une vidéo qui le dit ne réveille
+  pas anna. Sans ce nœud, PipeWire donne le micro par défaut ; sans
+  `pw-record`, anna ouvre le micro par défaut elle-même. L'accordeur et le
+  métronome gardent le micro brut.
 
 Le modèle a été entraîné dans `~/ciph3r/lab/wakeword-karenine/` : la chaîne
 officielle d'openWakeWord, mais nourrie d'exemples **français** générés par

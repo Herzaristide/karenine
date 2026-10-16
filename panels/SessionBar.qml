@@ -5,41 +5,42 @@ import Quickshell.Wayland
 import "../services"
 
 // La barre des sessions : toujours là, une bande toute noire contre le bord
-// gauche de l'écran de l'interface, sur toute la hauteur. En haut, ✦ puis un
-// point par session Claude Code vivante (le pilote n'en a pas : il vit dans
-// la barre de conversation).
+// gauche de l'écran de l'interface, sur toute la hauteur. Les fenêtres lui
+// laissent sa place. En haut ✦, puis une ligne par session Claude Code
+// vivante (le pilote n'en a pas : il vit dans la barre de conversation).
 //
-//   ▌✦
-//   ▌●  karenine·fix-dock · travaille     (au survol)
-//   ▌◉
-//   ▌●
-//   ▌
+//   ▌✦ Sessions
+//   ▌● karenine·fix-dock   t'attend
+//   ▌  Bash  nix build .#anna
+//   ▌  [Autoriser] [Toujours] [Refuser]
+//   ▌◉ karenine            travaille
+//   ▌  corrige le dock…
+//   ▌● v4ult
 //
 // La couleur d'un point dit son état : ambre s'il attend l'utilisateur, la
-// teinte de l'accent s'il travaille (il respire), éteint au repos. Le point
-// de la session ouverte dans le dock porte un anneau.
+// teinte de l'accent s'il travaille (il respire), éteint au repos. Une
+// session qui demande une permission se valide ici même, d'un bouton, sans
+// rien ouvrir d'autre.
 //
-// Un clic sur un point ouvre le dock IA sur cette session (et le referme si
-// c'est déjà elle) ; un clic sur ✦ ouvre ou referme le dock tout court. Une
-// session qui attend une permission rouvre aussi sa bulle.
+// Un clic sur une ligne affiche son texte (le dock IA, qui sort à côté) et le
+// fait disparaître si c'est déjà elle ; un clic sur ✦ ouvre ou referme le
+// dock tout court.
 PanelWindow { // qmllint disable uncreatable-type
     id: sbar
 
-    // La session affichée par le dock, "" s'il est fermé.
+    // La session dont le texte est affiché, "" sinon.
     property string openId: ""
     signal picked(string id)
     signal toggled()
 
-    // La largeur réservée aux points ; le dock se pose juste à côté (AiDock).
-    readonly property int barW: 28
+    // La largeur de la liste ; le dock se pose juste à côté (AiDock.stripW).
+    readonly property int barW: 220
     // L'écart que Hyprland laisse entre la bande et les fenêtres
     // (general:gaps_out) : la bande le couvre aussi, pour que le noir aille
     // jusqu'aux fenêtres et se confonde avec le bord de l'écran.
     readonly property int gap: 12
-    readonly property int dotSize: 9
-    readonly property int dotGap: 16
 
-    // Les sessions qui ont un point.
+    // Les sessions qui ont une ligne.
     readonly property var sessions: ClaudeLive.sessions.filter(s => s.id !== "pilote")
 
     WlrLayershell.layer: WlrLayer.Top
@@ -47,16 +48,9 @@ PanelWindow { // qmllint disable uncreatable-type
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
 
     anchors { left: true; top: true; bottom: true }
-    // Toujours là : les fenêtres lui laissent sa place, au lieu de passer
-    // dessous (l'étiquette du survol, elle, passe par-dessus).
     exclusiveZone: sbar.barW
-    color: "transparent"
-
-    // De la place à droite de la bande pour l'étiquette du survol ; seule
-    // la bande reçoit la souris.
-    implicitWidth: sbar.barW + sbar.gap + 320
-
-    mask: Region { item: strip } // qmllint disable unqualified
+    color: "#000000"
+    implicitWidth: sbar.barW + sbar.gap
 
     function stateColor(s) {
         return s === "waiting" ? Theme.colorAmber
@@ -67,171 +61,273 @@ PanelWindow { // qmllint disable uncreatable-type
     function stateLabel(s) {
         return s === "waiting" ? "t'attend"
              : s === "working" ? "travaille"
-             : "au repos";
+             : "";
     }
 
     function sessionLabel(s) {
         return s.worktree ? s.project + "·" + s.worktree.name.replace(/-[0-9a-f]{4}$/, "") : s.project;
     }
 
-    // La session survolée, pour l'étiquette, et la hauteur de son point.
-    property var hovered: null
-    property real hoveredY: 0
+    // Un bouton de réponse à une permission : plein pour l'action
+    // principale, sinon un simple contour.
+    component Answer: Rectangle {
+        id: ans
+        property string label
+        property color tint: "#ffffff"
+        property bool primary: false
+        signal activated()
 
-    // ── La bande ─────────────────────────────────────────────────
+        implicitWidth: ansText.implicitWidth + 16
+        implicitHeight: 22
+        radius: height / 2
+        color: ans.primary ? ans.tint : (ansMa.containsMouse ? Qt.rgba(1, 1, 1, 0.1) : "transparent")
+        border.width: ans.primary ? 0 : 1
+        border.color: Qt.rgba(1, 1, 1, 0.2)
+        scale: ansMa.pressed ? 0.92 : 1.0
+        Behavior on scale { SpringAnimation { spring: 5; damping: 0.28; epsilon: 0.002 } }
+
+        Text {
+            id: ansText
+            anchors.centerIn: parent
+            text: ans.label
+            font.family: "JetBrains Mono"
+            font.pixelSize: 10
+            font.weight: ans.primary ? Font.DemiBold : Font.Normal
+            color: ans.primary ? "#ffffff" : ans.tint
+        }
+
+        MouseArea {
+            id: ansMa
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: ans.activated()
+        }
+    }
+
+    // ── ✦ : le dock tout court ───────────────────────────────────
     Rectangle {
-        id: strip
-        anchors.left: parent.left
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        width: sbar.barW + sbar.gap
-        color: "#000000"
+        id: head
+        x: 6
+        y: 8
+        width: sbar.barW - 12
+        height: 32
+        radius: height / 2
+        color: starMa.containsMouse ? Qt.rgba(1, 1, 1, 0.07) : "transparent"
 
-        Column {
-            id: column
-            anchors.top: parent.top
-            anchors.topMargin: 12
+        Row {
             anchors.left: parent.left
-            width: sbar.barW
-            spacing: sbar.dotGap
+            anchors.leftMargin: 12
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 9
 
-            // ✦ : le dock tout court.
             Text {
-                id: star
-                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.verticalCenter: parent.verticalCenter
                 text: "✦"
                 font.pixelSize: 14
                 color: starMa.containsMouse ? Theme.glow(0) : Qt.rgba(1, 1, 1, 0.7)
-                scale: starMa.pressed ? 0.85 : (starMa.containsMouse ? 1.15 : 1)
-                Behavior on scale { SpringAnimation { spring: 5; damping: 0.3; epsilon: 0.002 } }
                 Behavior on color { ColorAnimation { duration: 160 } }
+            }
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Sessions"
+                font.family: "Inter"
+                font.pixelSize: 13
+                font.weight: Font.DemiBold
+                color: Qt.rgba(1, 1, 1, 0.85)
+            }
+        }
 
-                MouseArea {
-                    id: starMa
-                    anchors.fill: parent
-                    anchors.margins: -7
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: sbar.toggled()
-                }
+        MouseArea {
+            id: starMa
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: sbar.toggled()
+        }
+    }
+
+    // ── Les sessions ─────────────────────────────────────────────
+    ListView {
+        id: list
+        anchors.top: head.bottom
+        anchors.topMargin: 6
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 8
+        x: 6
+        width: sbar.barW - 12
+        clip: true
+        spacing: 4
+        boundsBehavior: Flickable.StopAtBounds
+        model: sbar.sessions
+
+        delegate: Rectangle {
+            id: row
+            required property var modelData
+            // Lue en direct : l'état et la demande changent sous nos yeux.
+            readonly property var request: row.modelData.request || null
+            readonly property bool current: sbar.openId === row.modelData.id
+            readonly property color tone: sbar.stateColor(row.modelData.state)
+            readonly property string detail: ((row.modelData.state === "waiting" && row.modelData.message)
+                                              || row.modelData.prompt || "").replace(/\s+/g, " ")
+
+            width: list.width
+            height: col.implicitHeight + 16
+            radius: 14
+            color: row.current ? Qt.alpha(Theme.glow(0), 0.25)
+                   : row.request ? Qt.alpha(Theme.colorAmber, 0.1)
+                   : (rowMa.containsMouse ? Qt.rgba(1, 1, 1, 0.07) : "transparent")
+            Behavior on color { ColorAnimation { duration: 140 } }
+
+            // Toute la ligne ouvre son texte ; les boutons, posés dessus,
+            // répondent sans l'ouvrir.
+            MouseArea {
+                id: rowMa
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: sbar.picked(row.modelData.id)
             }
 
-            Repeater {
-                model: sbar.sessions
+            Column {
+                id: col
+                x: 12
+                y: 8
+                width: row.width - 24
+                spacing: 4
 
-                Item {
-                    id: dot
-                    required property var modelData
-                    readonly property bool current: sbar.openId === dot.modelData.id
-                    readonly property color tone: sbar.stateColor(dot.modelData.state)
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: sbar.dotSize
-                    height: sbar.dotSize
+                Row {
+                    width: parent.width
+                    spacing: 8
 
-                    // L'anneau de la session ouverte dans le dock.
-                    Rectangle {
-                        anchors.centerIn: parent
-                        width: parent.width + 7
-                        height: width
-                        radius: width / 2
-                        color: "transparent"
-                        border.width: 1.5
-                        border.color: dot.tone
-                        opacity: dot.current ? 0.9 : 0
-                        Behavior on opacity { NumberAnimation { duration: 160 } }
-                    }
+                    Item {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 8
+                        height: 8
 
-                    // Le halo d'une session qui attend : il s'élargit et s'efface.
-                    Rectangle {
-                        id: ping
-                        anchors.centerIn: parent
-                        width: parent.width
-                        height: width
-                        radius: width / 2
-                        color: dot.tone
-                        opacity: 0
-                        visible: dot.modelData.state === "waiting"
+                        // Le halo d'une session qui attend : il s'élargit et s'efface.
+                        Rectangle {
+                            id: ping
+                            anchors.fill: parent
+                            radius: width / 2
+                            color: row.tone
+                            opacity: 0
+                            visible: row.modelData.state === "waiting"
 
-                        ParallelAnimation {
-                            running: ping.visible
-                            loops: Animation.Infinite
-                            NumberAnimation { target: ping; property: "scale"; from: 1; to: 2.4; duration: 1400; easing.type: Easing.OutCubic }
-                            NumberAnimation { target: ping; property: "opacity"; from: 0.5; to: 0; duration: 1400; easing.type: Easing.OutCubic }
+                            ParallelAnimation {
+                                running: ping.visible
+                                loops: Animation.Infinite
+                                NumberAnimation { target: ping; property: "scale"; from: 1; to: 2.4; duration: 1400; easing.type: Easing.OutCubic }
+                                NumberAnimation { target: ping; property: "opacity"; from: 0.5; to: 0; duration: 1400; easing.type: Easing.OutCubic }
+                            }
+                        }
+
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: width / 2
+                            color: row.tone
+                            Behavior on color { ColorAnimation { duration: 260 } }
+
+                            // Une session au travail respire.
+                            SequentialAnimation on opacity {
+                                running: row.modelData.state === "working"
+                                loops: Animation.Infinite
+                                alwaysRunToEnd: true
+                                NumberAnimation { to: 0.35; duration: 800; easing.type: Easing.InOutSine }
+                                NumberAnimation { to: 1.0; duration: 800; easing.type: Easing.InOutSine }
+                            }
                         }
                     }
 
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: width / 2
-                        color: dot.tone
-                        Behavior on color { ColorAnimation { duration: 260 } }
-                        scale: dotMa.pressed ? 0.8 : (dotMa.containsMouse ? 1.3 : 1)
-                        Behavior on scale { SpringAnimation { spring: 5; damping: 0.3; epsilon: 0.002 } }
-
-                        // Une session au travail respire.
-                        SequentialAnimation on opacity {
-                            running: dot.modelData.state === "working"
-                            loops: Animation.Infinite
-                            alwaysRunToEnd: true
-                            NumberAnimation { to: 0.35; duration: 800; easing.type: Easing.InOutSine }
-                            NumberAnimation { to: 1.0; duration: 800; easing.type: Easing.InOutSine }
-                        }
+                    Text {
+                        width: parent.width - 16 - (stateText.visible ? stateText.implicitWidth + 8 : 0)
+                        text: sbar.sessionLabel(row.modelData)
+                        elide: Text.ElideRight
+                        font.family: "Inter"
+                        font.pixelSize: 12
+                        font.weight: Font.Medium
+                        color: "#ffffff"
                     }
 
-                    MouseArea {
-                        id: dotMa
-                        anchors.fill: parent
-                        anchors.margins: -(sbar.dotGap / 2)
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onContainsMouseChanged: {
-                            if (containsMouse) {
-                                sbar.hovered = dot.modelData;
-                                sbar.hoveredY = dot.mapToItem(strip, 0, dot.height / 2).y;
-                            } else if (sbar.hovered && sbar.hovered.id === dot.modelData.id)
-                                sbar.hovered = null;
-                        }
-                        onClicked: {
-                            if (dot.modelData.request)
-                                ClaudeLive.reopen(dot.modelData.id);
-                            sbar.picked(dot.modelData.id);
-                        }
+                    Text {
+                        id: stateText
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: text.length > 0
+                        text: sbar.stateLabel(row.modelData.state)
+                        font.family: "JetBrains Mono"
+                        font.pixelSize: 9
+                        color: row.tone
+                    }
+                }
+
+                // Hors permission : ce qu'elle attend, ou sa demande.
+                Text {
+                    width: parent.width
+                    leftPadding: 16
+                    visible: !row.request && row.detail.length > 0
+                    text: row.detail
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 2
+                    elide: Text.ElideRight
+                    font.family: "JetBrains Mono"
+                    font.pixelSize: 9
+                    color: Qt.rgba(1, 1, 1, 0.45)
+                }
+
+                // Permission : l'outil, ce qu'il ferait, et la réponse.
+                Text {
+                    width: parent.width
+                    leftPadding: 16
+                    visible: row.request !== null
+                    textFormat: Text.StyledText
+                    text: row.request
+                          ? "<b>" + row.request.tool + "</b>  "
+                            + row.request.summary.replace(/&/g, "&amp;").replace(/</g, "&lt;")
+                          : ""
+                    wrapMode: Text.WrapAnywhere
+                    maximumLineCount: 3
+                    elide: Text.ElideRight
+                    font.family: "JetBrains Mono"
+                    font.pixelSize: 10
+                    color: Qt.rgba(1, 1, 1, 0.8)
+                }
+
+                Flow {
+                    width: parent.width
+                    leftPadding: 16
+                    visible: row.request !== null
+                    spacing: 5
+
+                    Answer {
+                        label: "Autoriser"
+                        primary: true
+                        tint: Theme.glow(0)
+                        onActivated: ClaudeLive.decide(row.request.req, "allow")
+                    }
+                    Answer {
+                        visible: row.request !== null && row.request.always !== ""
+                        label: "Toujours"
+                        tint: Theme.glow(0)
+                        onActivated: ClaudeLive.decide(row.request.req, "always")
+                    }
+                    Answer {
+                        label: "Refuser"
+                        tint: Theme.colorDanger
+                        onActivated: ClaudeLive.decide(row.request.req, "deny")
                     }
                 }
             }
         }
-    }
-
-    // ── L'étiquette du survol ────────────────────────────────────
-    // Le nom de la session et son état, à droite de son point. Lue en
-    // direct : l'état peut changer pendant qu'on survole.
-    Rectangle {
-        id: label
-        readonly property var session: sbar.hovered ? ClaudeLive.find(sbar.hovered.id) : null
-        x: sbar.barW + sbar.gap + 6
-        y: sbar.hoveredY - height / 2
-        width: labelText.implicitWidth + 22
-        height: 24
-        radius: height / 2
-        color: "#000000"
-
-        opacity: label.session && sbar.openId !== label.session.id ? 1 : 0
-        visible: opacity > 0
-        Behavior on opacity { NumberAnimation { duration: 140 } }
 
         Text {
-            id: labelText
-            anchors.centerIn: parent
-            textFormat: Text.StyledText
-            text: label.session
-                  ? sbar.sessionLabel(label.session) + "  <font color=\""
-                    + (label.session.state === "idle" ? "#9a9a9a" : sbar.stateColor(label.session.state))
-                    + "\">· " + sbar.stateLabel(label.session.state) + "</font>"
-                  : ""
+            width: list.width
+            visible: list.count === 0
+            topPadding: 6
+            leftPadding: 12
+            text: "Aucune session en cours."
             font.family: "Inter"
-            font.pixelSize: 12
-            font.weight: Font.Medium
-            color: "#ffffff"
+            font.pixelSize: 11
+            color: Qt.rgba(1, 1, 1, 0.35)
         }
     }
 }

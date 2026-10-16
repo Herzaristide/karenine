@@ -52,6 +52,8 @@ pkgs.rustPlatform.buildRustPackage {
     #   git
     #     → reviewing / merging the worktrees of AI dock sessions
     #       (claude/worktree.rs)
+    #   pw-record (pipewire)
+    #     → the echo-cancelled mic of the wake word and dictation (audio.rs)
     #   wpctl (wireplumber), brightnessctl, playerctl, wl-paste (wl-clipboard),
     #   xdg-open (xdg-utils), grimblast
     #     → the pilot's desk tools (claude/desk.rs)
@@ -85,6 +87,7 @@ pkgs.rustPlatform.buildRustPackage {
             coreutils
             git
             wireplumber
+            pipewire
             brightnessctl
             playerctl
             wl-clipboard

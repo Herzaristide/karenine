@@ -195,7 +195,7 @@ pub fn listen(voice: Arc<Voice>) {
                 continue;
             }
         };
-        let (capture, rx) = match crate::audio::start_capture() {
+        let (capture, rx) = match crate::audio::start_voice_capture() {
             Ok(c) => c,
             Err(e) => {
                 voice.wake_failed(format!("micro : {e}"));

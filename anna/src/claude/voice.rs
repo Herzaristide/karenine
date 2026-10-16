@@ -745,7 +745,7 @@ impl Voice {
     /// Record until the end of speech, showing the transcript as it comes,
     /// then transcribe the whole. `None`: nothing said.
     fn record(&self) -> Result<Option<String>, String> {
-        let (capture, rx) = crate::audio::start_capture()?;
+        let (capture, rx) = crate::audio::start_voice_capture()?;
         let rate = capture.sample_rate;
         // The wake word's audio, if it started the turn.
         let preroll = lock(&self.preroll)

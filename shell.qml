@@ -126,8 +126,9 @@ ShellRoot {
         }
     }
 
-    // La barre des sessions, bande noire contre le bord gauche, toujours là : un point par
-    // session Claude. Un point ouvre le dock IA sur sa session, ✦ le bascule.
+    // La barre des sessions, bande noire contre le bord gauche, toujours là : la liste des
+    // sessions Claude et leurs permissions à valider. Une ligne affiche le texte de sa
+    // session (le dock IA), ✦ bascule le dock.
     Variants {
         model: root.primaryScreens
 

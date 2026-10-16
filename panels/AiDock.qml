@@ -3,15 +3,18 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Quickshell
+import Quickshell.Io
 import Quickshell.Wayland
 import "../services"
 
-// Le panneau des sessions : la porte d'entrée de l'interface vers Claude
-// Code. Il sort de la barre des sessions (SessionBar, la bande noire toujours
-// là contre le bord gauche, un point par session) : un clic sur un point l'ouvre sur cette
-// session, un clic sur ✦ l'ouvre tout court. Super+P l'ouvre et le referme
-// aussi (widget « sessions », cf. services/Widgets.qml), Échap le referme.
-// Même verre, mêmes teintes et même capsule de saisie que la barre de
+// Le texte des sessions : la porte d'entrée de l'interface vers Claude
+// Code. Il sort de la barre des sessions (SessionBar, la liste fixe contre
+// le bord gauche, où se valident aussi les permissions) : un clic sur une
+// session affiche son texte, un second le fait disparaître ; ✦ l'ouvre ou le
+// referme tout court. Super+P l'ouvre et le referme aussi (widget
+// « sessions », cf. services/Widgets.qml). Affiché, il est déplié (toute la
+// conversation) ou réduit (son bas et le champ) ; il se replie quand on le
+// quitte. Le verre flouté et la capsule de saisie de la barre de
 // conversation.
 //
 //   ╭──────────────────────────────╮
@@ -52,6 +55,7 @@ Scope {
 
     property var screen: null
     property bool open: false
+    // Faire disparaître le texte (×, Échap une fois réduit).
     signal closeRequested()
 
     // Le texte en Inter, comme la barre de conversation ; les détails en
@@ -62,8 +66,8 @@ Scope {
     // sessions), plutôt que celle que choisit pickDefault.
     property string pendingId: ""
 
-    // Un point de la barre : ouvre le dock sur cette session ; déjà ouvert
-    // sur elle, le referme.
+    // Une ligne de la barre : affiche le texte de cette session ; déjà
+    // affiché, le fait disparaître.
     function openOn(id) {
         if (!dock.open) {
             dock.pendingId = id;
@@ -72,7 +76,38 @@ Scope {
             dock.closeRequested();
         } else {
             dock.select(id);
+            dock.expand();
         }
+    }
+
+    // ── Réduit, déplié ───────────────────────────────────────────
+    // Déplié, le texte prend toute la hauteur : la conversation, son
+    // travail, les autres vues. Réduit, il ne garde que l'en-tête, le bas de
+    // la conversation, une demande de permission et le champ. Il se replie
+    // de lui-même quand il perd le focus (un clic ailleurs) et que la souris
+    // n'est plus dessus ; Échap le replie, puis le fait disparaître.
+    property bool expanded: false
+
+    // Il prend le clavier en exclusif le temps d'une demande (Super+P, un
+    // clic dans la barre des sessions) : une surface layer ne reçoit sinon les
+    // frappes qu'une fois cliquée. Il le rend dès que la souris le quitte ou
+    // s'en éloigne, pour ne pas bloquer le reste du bureau.
+    property bool grab: false
+
+    function expand() {
+        dock.expanded = true;
+        dock.grab = true;
+        composer.forceActiveFocus();
+    }
+
+    function collapse() {
+        dock.expanded = false;
+        dock.grab = false;
+        dock.dictating = false;
+        dock.showHistory = false;
+        dock.showKnowledge = false;
+        dock.confirmDiscard = false;
+        composer.focus = false;
     }
 
     // ── Sélection ────────────────────────────────────────────────
@@ -111,6 +146,7 @@ Scope {
         dock.showHistory = false;
         dock.showKnowledge = true;
         ClaudeLive.loadNotes();
+        dock.expand();
     }
 
     // Le savoir s'ouvre sur la note la plus récente plutôt que sur un aperçu
@@ -323,7 +359,7 @@ Scope {
         interval: 700
         onTriggered: {
             if (dock.open && composer.text.length === 0)
-                dock.closeRequested();
+                dock.collapse();
         }
     }
 
@@ -417,14 +453,88 @@ Scope {
             else
                 dock.pickDefault();
             dock.pendingId = "";
-            composer.forceActiveFocus();
+            dock.expand();
         } else {
-            composer.focus = false;
-            dock.showHistory = false;
-            dock.showKnowledge = false;
-            dock.confirmDiscard = false;
+            dock.collapse();
         }
     }
+
+    // ── Perdre le focus ──────────────────────────────────────────
+    // Déplié sans le clavier ni la souris : il se replie un instant après.
+    readonly property bool idleExpanded: dock.expanded && !dock.grab
+                                         && !focusScope.activeFocus && !cardHover.hovered
+    onIdleExpandedChanged: {
+        if (dock.idleExpanded)
+            collapseLater.restart();
+        else
+            collapseLater.stop();
+    }
+
+    Timer {
+        id: collapseLater
+        interval: 600
+        onTriggered: if (dock.idleExpanded) dock.collapse()
+    }
+
+    // La souris qui le quitte rend le clavier.
+    Connections {
+        target: cardHover
+        function onHoveredChanged() {
+            if (!cardHover.hovered)
+                dock.grab = false;
+        }
+    }
+
+    // Ouvert au clavier, la souris ailleurs : une surface layer ne voit le
+    // curseur que quand il la survole, sa position se lit donc chez Hyprland
+    // (comme la barre de conversation). S'éloigner de plus de `leaveSlack`
+    // du point le plus proche atteint rend le clavier.
+    readonly property int leaveSlack: 60
+    property real closest: -1
+
+    Timer {
+        interval: 150
+        repeat: true
+        running: dock.grab && !cardHover.hovered && !Gesture.active
+        onRunningChanged: dock.closest = -1
+        onTriggered: {
+            if (!cursorProbe.running)
+                cursorProbe.running = true;
+        }
+    }
+
+    Process {
+        id: cursorProbe
+        command: ["hyprctl", "cursorpos"]
+        stdout: StdioCollector {
+            id: cursorOut
+            onStreamFinished: dock.cursorAt(cursorOut.text)
+        }
+    }
+
+    function cursorAt(line) {
+        var xy = line.trim().split(",");
+        var s = dock.screen;
+        if (xy.length !== 2 || !s || !dock.grab)
+            return;
+        var x = parseFloat(xy[0]);
+        var y = parseFloat(xy[1]);
+        // La carte, en coordonnées de l'écran : le panneau commence après la
+        // bande des sessions (sa zone exclusive) et sa marge.
+        var p = card.mapToItem(null, 0, 0);
+        var left = s.x + dock.stripW + panel.margins.left + p.x;
+        var top = s.y + panel.margins.top + p.y;
+        var dx = Math.max(left - x, 0, x - (left + card.width));
+        var dy = Math.max(top - y, 0, y - (top + card.height));
+        var d = Math.sqrt(dx * dx + dy * dy);
+        if (dock.closest < 0 || d < dock.closest)
+            dock.closest = d;
+        else if (d > dock.closest + dock.leaveSlack)
+            dock.grab = false;
+    }
+
+    // La largeur que réserve la barre des sessions (SessionBar.barW).
+    readonly property int stripW: 220
 
     // ── Petits éléments ──────────────────────────────────────────
     component Chip: Rectangle {
@@ -538,9 +648,15 @@ Scope {
     }
 
     // ── Surface ──────────────────────────────────────────────────
-    // Le même verre que la barre de conversation : translucide, flouté par
-    // Hyprland (règle de couche `blur` sur « quickshell-aidock »), un liseré
-    // clair en haut. Il sort de la barre des sessions, contre le bord gauche.
+    // Le verre de la capsule de saisie (celle de la barre de conversation) :
+    // translucide, flouté par Hyprland (règle de couche `blur` sur
+    // « quickshell-aidock »), un liseré clair en haut. Il sort de la barre
+    // des sessions, contre le bord gauche. Seule la carte reçoit la souris :
+    // réduite, ce qui est autour reste visible et cliquable.
+    readonly property int fullW: Math.min(520, Math.round((dock.screen ? dock.screen.width : 1280) * 0.36))
+    // Réduit : l'en-tête, les derniers messages et le champ.
+    readonly property int compactH: 300
+
     PanelWindow { // qmllint disable uncreatable-type
         id: panel
 
@@ -549,9 +665,12 @@ Scope {
 
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.namespace: "quickshell-aidock"
-        // Ouvert, il prend le clavier pour de bon : en OnDemand, le compositeur
-        // ne route les frappes vers une layer qu'une fois cliquée.
-        WlrLayershell.keyboardFocus: dock.open ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+        // Exclusif seulement le temps d'une demande (dock.grab) ; ensuite à
+        // la demande, comme une fenêtre : un clic ailleurs lui reprend le
+        // clavier, et il se replie.
+        WlrLayershell.keyboardFocus: !dock.open ? WlrKeyboardFocus.None
+                                   : dock.grab ? WlrKeyboardFocus.Exclusive
+                                   : WlrKeyboardFocus.OnDemand
 
         // Contre la barre des sessions, sur toute la hauteur : elle réserve
         // sa bande (exclusiveZone), le dock se pose juste après.
@@ -564,15 +683,27 @@ Scope {
         exclusiveZone: 0
         color: "transparent"
 
-        implicitWidth: Math.min(520, Math.round((panel.screen ? panel.screen.width : 1280) * 0.36))
+        implicitWidth: dock.fullW
+
+        mask: Region { item: card } // qmllint disable unqualified
 
         Rectangle {
             id: card
-            anchors.fill: parent
+            anchors.left: parent.left
+            anchors.top: parent.top
+            // Réduite, la carte ne garde que le bas de la conversation ; dépliée,
+            // toute la hauteur. Elle passe de l'une à l'autre sur un ressort.
+            width: dock.fullW
+            height: dock.expanded ? panel.height
+                                  : Math.min(panel.height, dock.compactH)
+            Behavior on height { SpringAnimation { spring: 4; damping: 0.34; epsilon: 0.5 } }
+            clip: true
             radius: 22
-            color: Qt.alpha(Theme.bgDeep, Theme.darkMode ? 0.93 : 0.94)
+            color: Qt.alpha(Theme.bgDeep, Theme.darkMode ? 0.72 : 0.78)
             border.width: 1
             border.color: Theme.darkMode ? Qt.rgba(1, 1, 1, 0.09) : Qt.rgba(0, 0, 0, 0.08)
+
+            HoverHandler { id: cardHover }
 
             // Il sort de la barre en grandissant un peu, sur un ressort ; il y
             // rentre en se rétractant.
@@ -581,7 +712,7 @@ Scope {
             transform: [
                 Scale {
                     origin.x: 0
-                    origin.y: card.height / 2
+                    origin.y: 0
                     xScale: dock.open ? 1 : 0.94
                     yScale: xScale
                     Behavior on xScale { SpringAnimation { spring: 3.5; damping: 0.3; epsilon: 0.002 } }
@@ -592,901 +723,999 @@ Scope {
                 }
             ]
 
-            // Le reflet : un liseré clair en haut, qui s'éteint vite.
+            // Le reflet de la capsule : un liseré clair en haut, qui s'éteint
+            // vite.
             Rectangle {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: parent.top
                 anchors.margins: 1
-                height: 60
+                height: 44
                 radius: card.radius - 1
                 gradient: Gradient {
-                    GradientStop { position: 0.0; color: Theme.darkMode ? Qt.rgba(1, 1, 1, 0.07) : Qt.rgba(1, 1, 1, 0.5) }
-                    GradientStop { position: 1.0; color: "transparent" }
+                    GradientStop { position: 0.0; color: Theme.darkMode ? Qt.rgba(1, 1, 1, 0.09) : Qt.rgba(1, 1, 1, 0.55) }
+                    GradientStop { position: 0.55; color: "transparent" }
                 }
             }
 
-            ColumnLayout {
+            // Le focus de tout ce qui est dans la carte : le perdre (un clic
+            // ailleurs) replie le dock (dock.idleExpanded).
+            FocusScope {
+                id: focusScope
                 anchors.fill: parent
-                anchors.margins: 16
-                spacing: 10
 
-                // ── En-tête ──────────────────────────────────────
-                // La session regardée (choisie d'un point de la barre), ou
-                // la vue ouverte.
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 9
+                // Réduit, seuls restent l'en-tête, la conversation (son
+                // bas, collé au dernier message), une demande de permission
+                // et le champ.
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 16
+                    spacing: 10
+
+                    // ── En-tête ──────────────────────────────────────
+                    // La session regardée (choisie d'un point de la barre), ou
+                    // la vue ouverte.
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 9
+
+                        Rectangle {
+                            Layout.preferredWidth: 8
+                            Layout.preferredHeight: 8
+                            radius: 4
+                            visible: dock.selected !== null && !dock.overlay
+                            color: dock.selected ? dock.stateColor(dock.selected.state) : "transparent"
+                        }
+
+                        Text {
+                            visible: dock.selected === null || dock.overlay
+                            text: "✦"
+                            font.pixelSize: 15
+                            color: Theme.glow(0)
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            text: dock.showKnowledge ? "Savoir"
+                                : dock.showHistory ? "Historique"
+                                : dock.selected ? dock.sessionLabel(dock.selected)
+                                : dock.past ? dock.past.project + " — " + dock.past.title
+                                : dock.toPilot ? "Pilote" : "Nouvelle session"
+                            font.family: dock.uiFont
+                            font.pixelSize: 15
+                            font.weight: Font.DemiBold
+                            color: Theme.textPrimary
+                        }
+
+                        Text {
+                            visible: dock.selected !== null && !dock.overlay
+                            text: dock.selected ? dock.stateLabel(dock.selected) : ""
+                            font.family: "JetBrains Mono"
+                            font.pixelSize: 10
+                            color: dock.selected ? dock.stateColor(dock.selected.state) : Theme.textDim
+                        }
+
+                        // Déplier ou réduire (Échap réduit aussi).
+                        Text {
+                            text: dock.expanded ? "⌃" : "⌄"
+                            font.family: dock.uiFont
+                            font.pixelSize: 16
+                            color: foldMa.containsMouse ? Theme.glow(0) : Theme.textSecondary
+
+                            MouseArea {
+                                id: foldMa
+                                anchors.fill: parent
+                                anchors.margins: -6
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: dock.expanded ? dock.collapse() : dock.expand()
+                            }
+                        }
+
+                        // Faire disparaître le texte (Échap, une fois réduit).
+                        Text {
+                            text: "×"
+                            font.family: dock.uiFont
+                            font.pixelSize: 17
+                            color: hideMa.containsMouse ? Theme.colorDanger : Theme.textSecondary
+
+                            MouseArea {
+                                id: hideMa
+                                anchors.fill: parent
+                                anchors.margins: -6
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: dock.closeRequested()
+                            }
+                        }
+                    }
+
+                    // Les autres vues : lancer, relire, le savoir.
+                    Flow {
+                        Layout.fillWidth: true
+                        visible: dock.expanded
+                        spacing: 6
+
+                        Chip {
+                            label: "+ nouvelle"
+                            active: dock.composingNew && !dock.overlay
+                            onActivated: dock.startNew()
+                        }
+
+                        Chip {
+                            label: "⟲ historique"
+                            active: dock.showHistory || dock.past !== null
+                            onActivated: {
+                                var on = !dock.showHistory;
+                                dock.showKnowledge = false;
+                                dock.showHistory = on;
+                                if (on)
+                                    ClaudeSessions.ensureIndex();
+                            }
+                        }
+
+                        Chip {
+                            label: "◈ savoir" + (dock.toReview > 0 ? "  " + dock.toReview : "")
+                            active: dock.showKnowledge
+                            onActivated: {
+                                var on = !dock.showKnowledge;
+                                dock.showHistory = false;
+                                dock.showKnowledge = on;
+                                if (on) {
+                                    ClaudeLive.loadNotes();
+                                    composer.text = "";
+                                    composer.forceActiveFocus();
+                                }
+                            }
+                        }
+                    }
 
                     Rectangle {
-                        Layout.preferredWidth: 8
-                        Layout.preferredHeight: 8
-                        radius: 4
-                        visible: dock.selected !== null && !dock.overlay
-                        color: dock.selected ? dock.stateColor(dock.selected.state) : "transparent"
-                    }
-
-                    Text {
-                        visible: dock.selected === null || dock.overlay
-                        text: "✦"
-                        font.pixelSize: 15
-                        color: Theme.glow(0)
-                    }
-
-                    Text {
                         Layout.fillWidth: true
-                        elide: Text.ElideRight
-                        text: dock.showKnowledge ? "Savoir"
-                            : dock.showHistory ? "Historique"
-                            : dock.selected ? dock.sessionLabel(dock.selected)
-                            : dock.past ? dock.past.project + " — " + dock.past.title
-                            : dock.toPilot ? "Pilote" : "Nouvelle session"
-                        font.family: dock.uiFont
-                        font.pixelSize: 15
-                        font.weight: Font.DemiBold
-                        color: Theme.textPrimary
+                        visible: dock.expanded
+                        implicitHeight: 1
+                        color: Theme.dividerColor
                     }
 
-                    Text {
-                        visible: dock.selected !== null && !dock.overlay
-                        text: dock.selected ? dock.stateLabel(dock.selected) : ""
-                        font.family: "JetBrains Mono"
-                        font.pixelSize: 10
-                        color: dock.selected ? dock.stateColor(dock.selected.state) : Theme.textDim
-                    }
+                    // ── Corps ────────────────────────────────────────
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
 
-                    Text {
-                        text: "alt+←→ · échap"
-                        font.family: "JetBrains Mono"
-                        font.pixelSize: 9
-                        color: Theme.textDim
-                    }
-                }
-
-                // Les autres vues : lancer, relire, le savoir.
-                Flow {
-                    Layout.fillWidth: true
-                    spacing: 6
-
-                    Chip {
-                        label: "+ nouvelle"
-                        active: dock.composingNew && !dock.overlay
-                        onActivated: dock.startNew()
-                    }
-
-                    Chip {
-                        label: "⟲ historique"
-                        active: dock.showHistory || dock.past !== null
-                        onActivated: {
-                            var on = !dock.showHistory;
-                            dock.showKnowledge = false;
-                            dock.showHistory = on;
-                            if (on)
-                                ClaudeSessions.ensureIndex();
-                        }
-                    }
-
-                    Chip {
-                        label: "◈ savoir" + (dock.toReview > 0 ? "  " + dock.toReview : "")
-                        active: dock.showKnowledge
-                        onActivated: {
-                            var on = !dock.showKnowledge;
-                            dock.showHistory = false;
-                            dock.showKnowledge = on;
-                            if (on) {
-                                ClaudeLive.loadNotes();
-                                composer.text = "";
-                                composer.forceActiveFocus();
-                            }
-                        }
-                    }
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    implicitHeight: 1
-                    color: Theme.dividerColor
-                }
-
-                // ── Corps ────────────────────────────────────────
-                Item {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-
-                    // Savoir : filtres, notes, aperçu.
-                    ColumnLayout {
-                        anchors.fill: parent
-                        visible: dock.showKnowledge
-                        spacing: 8
-
-                        Flow {
-                            Layout.fillWidth: true
-                            spacing: 6
-
-                            Repeater {
-                                model: [
-                                    { key: "", label: "tout" },
-                                    { key: "à-relire", label: "à relire" },
-                                    { key: "recherche", label: "recherche" },
-                                    { key: "projet", label: "projets" },
-                                    { key: "skill", label: "skills" },
-                                    { key: "lab", label: "lab" },
-                                    { key: "journal", label: "journal" }
-                                ]
-
-                                Chip {
-                                    required property var modelData
-                                    readonly property int count: ClaudeLive.notes.filter(n =>
-                                        modelData.key === "" ? true
-                                        : modelData.key === "à-relire" ? n.statut === "à-relire"
-                                        : n.kind === modelData.key).length
-                                    visible: modelData.key === "" || count > 0
-                                    label: modelData.label + "  " + count
-                                    active: dock.noteFilter === modelData.key
-                                    onActivated: dock.noteFilter = modelData.key
-                                }
-                            }
-                        }
-
-                        // Les notes en haut, la note ouverte en dessous : le
-                        // panneau est trop étroit pour les mettre côte à côte.
+                        // Savoir : filtres, notes, aperçu.
                         ColumnLayout {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
+                            anchors.fill: parent
+                            visible: dock.showKnowledge
                             spacing: 8
 
-                            ListView {
-                                id: noteList
+                            Flow {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 200
-                                clip: true
-                                spacing: 2
-                                model: dock.shownNotes
+                                spacing: 6
 
-                                delegate: Rectangle {
-                                    id: noteRow
-                                    required property var modelData
-                                    width: noteList.width
-                                    height: noteCol.implicitHeight + 10
-                                    radius: 12
-                                    color: dock.note && dock.note.path === noteRow.modelData.path
-                                           ? Qt.alpha(Theme.glow(0), 0.22)
-                                           : (noteMa.containsMouse ? Qt.alpha(Theme.glow(0), 0.1) : "transparent")
+                                Repeater {
+                                    model: [
+                                        { key: "", label: "tout" },
+                                        { key: "à-relire", label: "à relire" },
+                                        { key: "recherche", label: "recherche" },
+                                        { key: "projet", label: "projets" },
+                                        { key: "skill", label: "skills" },
+                                        { key: "lab", label: "lab" },
+                                        { key: "journal", label: "journal" }
+                                    ]
 
-                                    Column {
-                                        id: noteCol
-                                        anchors.left: parent.left
-                                        anchors.right: parent.right
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        anchors.leftMargin: 8
-                                        anchors.rightMargin: 8
-                                        spacing: 2
-
-                                        Text {
-                                            width: parent.width
-                                            text: (noteRow.modelData.statut === "à-relire" ? "● " : "")
-                                                  + noteRow.modelData.title
-                                            elide: Text.ElideRight
-                                            font.family: dock.uiFont
-                                            font.pixelSize: 12
-                                            color: Theme.textPrimary
-                                        }
-                                        Text {
-                                            width: parent.width
-                                            text: {
-                                                var n = noteRow.modelData;
-                                                var bits = [n.kind];
-                                                if (n.projet)
-                                                    bits.push(n.projet);
-                                                if (n.sujets.length > 0)
-                                                    bits.push(n.sujets.join(", "));
-                                                if (n.revu || n.date)
-                                                    bits.push(n.revu || n.date);
-                                                return bits.join("  ·  ");
-                                            }
-                                            elide: Text.ElideRight
-                                            font.family: "JetBrains Mono"
-                                            font.pixelSize: 9
-                                            color: Theme.textDim
-                                        }
+                                    Chip {
+                                        required property var modelData
+                                        readonly property int count: ClaudeLive.notes.filter(n =>
+                                            modelData.key === "" ? true
+                                            : modelData.key === "à-relire" ? n.statut === "à-relire"
+                                            : n.kind === modelData.key).length
+                                        visible: modelData.key === "" || count > 0
+                                        label: modelData.label + "  " + count
+                                        active: dock.noteFilter === modelData.key
+                                        onActivated: dock.noteFilter = modelData.key
                                     }
-
-                                    MouseArea {
-                                        id: noteMa
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: dock.openNote(noteRow.modelData)
-                                    }
-                                }
-
-                                Text {
-                                    anchors.fill: parent
-                                    visible: noteList.count === 0
-                                    wrapMode: Text.Wrap
-                                    text: ClaudeLive.notes.length === 0
-                                          ? "Le coffre est vide pour l'instant. En fin de session, « ◈ Capitaliser » "
-                                            + "y range ce qui mérite d'être gardé."
-                                          : "Aucune note ne correspond."
-                                    font.family: dock.uiFont
-                                    font.pixelSize: 12
-                                    color: Theme.textDim
                                 }
                             }
 
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 1
-                                color: Theme.dividerColor
-                            }
-
+                            // Les notes en haut, la note ouverte en dessous : le
+                            // panneau est trop étroit pour les mettre côte à côte.
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 spacing: 8
 
-                                RowLayout {
+                                ListView {
+                                    id: noteList
                                     Layout.fillWidth: true
-                                    visible: dock.note !== null
-                                    spacing: 6
+                                    Layout.preferredHeight: 200
+                                    clip: true
+                                    spacing: 2
+                                    model: dock.shownNotes
+
+                                    delegate: Rectangle {
+                                        id: noteRow
+                                        required property var modelData
+                                        width: noteList.width
+                                        height: noteCol.implicitHeight + 10
+                                        radius: 12
+                                        color: dock.note && dock.note.path === noteRow.modelData.path
+                                               ? Qt.alpha(Theme.glow(0), 0.22)
+                                               : (noteMa.containsMouse ? Qt.alpha(Theme.glow(0), 0.1) : "transparent")
+
+                                        Column {
+                                            id: noteCol
+                                            anchors.left: parent.left
+                                            anchors.right: parent.right
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            anchors.leftMargin: 8
+                                            anchors.rightMargin: 8
+                                            spacing: 2
+
+                                            Text {
+                                                width: parent.width
+                                                text: (noteRow.modelData.statut === "à-relire" ? "● " : "")
+                                                      + noteRow.modelData.title
+                                                elide: Text.ElideRight
+                                                font.family: dock.uiFont
+                                                font.pixelSize: 12
+                                                color: Theme.textPrimary
+                                            }
+                                            Text {
+                                                width: parent.width
+                                                text: {
+                                                    var n = noteRow.modelData;
+                                                    var bits = [n.kind];
+                                                    if (n.projet)
+                                                        bits.push(n.projet);
+                                                    if (n.sujets.length > 0)
+                                                        bits.push(n.sujets.join(", "));
+                                                    if (n.revu || n.date)
+                                                        bits.push(n.revu || n.date);
+                                                    return bits.join("  ·  ");
+                                                }
+                                                elide: Text.ElideRight
+                                                font.family: "JetBrains Mono"
+                                                font.pixelSize: 9
+                                                color: Theme.textDim
+                                            }
+                                        }
+
+                                        MouseArea {
+                                            id: noteMa
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: dock.openNote(noteRow.modelData)
+                                        }
+                                    }
 
                                     Text {
-                                        Layout.fillWidth: true
-                                        text: dock.note ? dock.note.path : ""
-                                        elide: Text.ElideMiddle
-                                        font.family: "JetBrains Mono"
-                                        font.pixelSize: 9
+                                        anchors.fill: parent
+                                        visible: noteList.count === 0
+                                        wrapMode: Text.Wrap
+                                        text: ClaudeLive.notes.length === 0
+                                              ? "Le coffre est vide pour l'instant. En fin de session, « ◈ Capitaliser » "
+                                                + "y range ce qui mérite d'être gardé."
+                                              : "Aucune note ne correspond."
+                                        font.family: dock.uiFont
+                                        font.pixelSize: 12
                                         color: Theme.textDim
-                                    }
-                                    ActionButton {
-                                        visible: dock.note !== null && dock.note.statut === "à-relire"
-                                        label: "Relu"
-                                        primary: true
-                                        tint: Theme.glow(0)
-                                        onActivated: {
-                                            var path = dock.note.path;
-                                            ClaudeLive.markReviewed(path, function (ok) {
-                                                if (ok && dock.note && dock.note.path === path)
-                                                    dock.note = ClaudeLive.notes.find(n => n.path === path) || dock.note;
-                                            });
-                                        }
-                                    }
-                                    ActionButton {
-                                        visible: dock.sessionOf(dock.note) !== null
-                                        label: "Session"
-                                        onActivated: dock.selectPast(dock.sessionOf(dock.note))
-                                    }
-                                    ActionButton {
-                                        visible: dock.note !== null
-                                        label: "Obsidian"
-                                        onActivated: {
-                                            ClaudeLive.openNote(dock.note.path);
-                                            dock.closeRequested();
-                                        }
                                     }
                                 }
 
-                                ScrollView {
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 1
+                                    color: Theme.dividerColor
+                                }
+
+                                ColumnLayout {
                                     Layout.fillWidth: true
                                     Layout.fillHeight: true
-                                    clip: true
-                                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                                    spacing: 8
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        visible: dock.note !== null
+                                        spacing: 6
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: dock.note ? dock.note.path : ""
+                                            elide: Text.ElideMiddle
+                                            font.family: "JetBrains Mono"
+                                            font.pixelSize: 9
+                                            color: Theme.textDim
+                                        }
+                                        ActionButton {
+                                            visible: dock.note !== null && dock.note.statut === "à-relire"
+                                            label: "Relu"
+                                            primary: true
+                                            tint: Theme.glow(0)
+                                            onActivated: {
+                                                var path = dock.note.path;
+                                                ClaudeLive.markReviewed(path, function (ok) {
+                                                    if (ok && dock.note && dock.note.path === path)
+                                                        dock.note = ClaudeLive.notes.find(n => n.path === path) || dock.note;
+                                                });
+                                            }
+                                        }
+                                        ActionButton {
+                                            visible: dock.sessionOf(dock.note) !== null
+                                            label: "Session"
+                                            onActivated: dock.selectPast(dock.sessionOf(dock.note))
+                                        }
+                                        ActionButton {
+                                            visible: dock.note !== null
+                                            label: "Obsidian"
+                                            onActivated: {
+                                                ClaudeLive.openNote(dock.note.path);
+                                                dock.collapse();
+                                            }
+                                        }
+                                    }
+
+                                    ScrollView {
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        clip: true
+                                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                                        TextEdit {
+                                            width: parent.width
+                                            readOnly: true
+                                            selectByMouse: true
+                                            wrapMode: TextEdit.Wrap
+                                            textFormat: TextEdit.MarkdownText
+                                            text: dock.note ? dock.noteText
+                                                  : "Choisis une note au-dessus — ou tape pour chercher, puis Entrée."
+                                            font.family: dock.uiFont
+                                            font.pixelSize: 13
+                                            color: dock.note ? Theme.textBody : Theme.textDim
+                                            selectionColor: Theme.glow(0)
+                                            selectedTextColor: Theme.selectedTextColor
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Historique
+                        ListView {
+                            id: history
+                            anchors.fill: parent
+                            visible: dock.showHistory
+                            clip: true
+                            spacing: 2
+                            model: ClaudeSessions.liveSessions.slice(0, 60)
+
+                            delegate: Rectangle {
+                                id: row
+                                required property var modelData
+                                width: history.width
+                                height: 30
+                                radius: 12
+                                color: rowMa.containsMouse ? Qt.alpha(Theme.glow(0), 0.1) : "transparent"
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 8
+                                    anchors.rightMargin: 8
+                                    spacing: 12
+
+                                    Text {
+                                        Layout.preferredWidth: 130
+                                        text: row.modelData.project
+                                        elide: Text.ElideRight
+                                        font.family: dock.uiFont
+                                        font.pixelSize: 12
+                                        color: Theme.textPrimary
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: row.modelData.title
+                                        elide: Text.ElideRight
+                                        font.family: dock.uiFont
+                                        font.pixelSize: 12
+                                        color: Theme.textSecondary
+                                    }
+                                    Text {
+                                        text: ClaudeSessions.ago(row.modelData.at)
+                                        font.family: "JetBrains Mono"
+                                        font.pixelSize: 10
+                                        color: Theme.textDim
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: rowMa
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: dock.selectPast(row.modelData)
+                                }
+                            }
+                        }
+
+                        // Hors session : à qui parler — le pilote, ou une
+                        // nouvelle session dans un projet.
+                        ColumnLayout {
+                            anchors.fill: parent
+                            visible: dock.composingNew && !dock.overlay
+                            spacing: 10
+
+                            Flow {
+                                Layout.fillWidth: true
+                                spacing: 6
+
+                                Chip {
+                                    label: "✦ pilote"
+                                    active: dock.toPilot
+                                    onActivated: dock.targetIndex = -1
+                                }
+
+                                Repeater {
+                                    model: ClaudeLive.projects
+
+                                    Chip {
+                                        required property var modelData
+                                        required property int index
+                                        label: modelData.kind === "recherche" ? "✎ recherche" : modelData.name
+                                        active: dock.targetIndex === index
+                                        onActivated: dock.targetIndex = index
+                                    }
+                                }
+                            }
+
+                            // Pilote : ses échanges.
+                            ListView {
+                                id: pilotThread
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                visible: dock.toPilot
+                                clip: true
+                                spacing: 6
+                                model: ClaudeLive.pilotItems
+                                boundsBehavior: Flickable.StopAtBounds
+                                onCountChanged: Qt.callLater(pilotThread.positionViewAtEnd)
+
+                                delegate: Item {
+                                    id: item
+                                    required property var modelData
+                                    width: pilotThread.width - 12
+                                    height: itemText.implicitHeight + (item.modelData.kind === "user" ? 12 : 0)
+
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        visible: item.modelData.kind === "user"
+                                        radius: 14
+                                        color: Qt.alpha(Theme.glow(0), 0.1)
+                                    }
 
                                     TextEdit {
-                                        width: parent.width
+                                        id: itemText
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        anchors.leftMargin: item.modelData.kind === "user" ? 10 : 2
+                                        anchors.rightMargin: item.modelData.kind === "user" ? 10 : 2
                                         readOnly: true
                                         selectByMouse: true
                                         wrapMode: TextEdit.Wrap
-                                        textFormat: TextEdit.MarkdownText
-                                        text: dock.note ? dock.noteText
-                                              : "Choisis une note au-dessus — ou tape pour chercher, puis Entrée."
-                                        font.family: dock.uiFont
-                                        font.pixelSize: 13
-                                        color: dock.note ? Theme.textBody : Theme.textDim
+                                        textFormat: item.modelData.kind === "reply" ? TextEdit.MarkdownText
+                                                                                   : TextEdit.PlainText
+                                        text: item.modelData.kind === "action" ? "· " + item.modelData.text
+                                            : item.modelData.kind === "error" ? "⚠ " + item.modelData.text
+                                            : item.modelData.text
+                                        font.family: item.modelData.kind === "action" ? "JetBrains Mono" : dock.uiFont
+                                        font.pixelSize: item.modelData.kind === "action" ? 10 : 14
+                                        color: item.modelData.kind === "action" ? Theme.accentMuted
+                                             : item.modelData.kind === "error" ? Theme.colorDanger
+                                             : item.modelData.kind === "user" ? Theme.textPrimary
+                                             : Theme.textBody
                                         selectionColor: Theme.glow(0)
                                         selectedTextColor: Theme.selectedTextColor
                                     }
                                 }
-                            }
-                        }
-                    }
 
-                    // Historique
-                    ListView {
-                        id: history
-                        anchors.fill: parent
-                        visible: dock.showHistory
-                        clip: true
-                        spacing: 2
-                        model: ClaudeSessions.liveSessions.slice(0, 60)
-
-                        delegate: Rectangle {
-                            id: row
-                            required property var modelData
-                            width: history.width
-                            height: 30
-                            radius: 12
-                            color: rowMa.containsMouse ? Qt.alpha(Theme.glow(0), 0.1) : "transparent"
-
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 8
-                                anchors.rightMargin: 8
-                                spacing: 12
-
-                                Text {
-                                    Layout.preferredWidth: 130
-                                    text: row.modelData.project
-                                    elide: Text.ElideRight
-                                    font.family: dock.uiFont
-                                    font.pixelSize: 12
-                                    color: Theme.textPrimary
-                                }
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: row.modelData.title
-                                    elide: Text.ElideRight
-                                    font.family: dock.uiFont
-                                    font.pixelSize: 12
-                                    color: Theme.textSecondary
-                                }
-                                Text {
-                                    text: ClaudeSessions.ago(row.modelData.at)
+                                footer: Text {
+                                    visible: ClaudeLive.pilotBusy
+                                    height: visible ? implicitHeight + 8 : 0
+                                    topPadding: 8
+                                    text: "…"
                                     font.family: "JetBrains Mono"
-                                    font.pixelSize: 10
+                                    font.pixelSize: 14
+                                    color: Theme.glow(0)
+                                }
+
+                                Text {
+                                    anchors.fill: parent
+                                    visible: pilotThread.count === 0
+                                    wrapMode: Text.Wrap
+                                    text: "Le pilote agit sur ton bureau : son, fenêtres, applications, "
+                                          + "projets, notes. Une tâche de code ou de recherche, il la confie "
+                                          + "à une session complète, qui apparaît en haut.\n\n"
+                                          + "« baisse le son »   « ouvre zed sur karenine »   "
+                                          + "« corrige le dock qui s'ouvre tout seul dans karenine »"
+                                    font.family: dock.uiFont
+                                    font.pixelSize: 12
                                     color: Theme.textDim
                                 }
                             }
 
-                            MouseArea {
-                                id: rowMa
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: dock.selectPast(row.modelData)
-                            }
-                        }
-                    }
-
-                    // Hors session : à qui parler — le pilote, ou une
-                    // nouvelle session dans un projet.
-                    ColumnLayout {
-                        anchors.fill: parent
-                        visible: dock.composingNew && !dock.overlay
-                        spacing: 10
-
-                        Flow {
-                            Layout.fillWidth: true
-                            spacing: 6
-
-                            Chip {
-                                label: "✦ pilote"
-                                active: dock.toPilot
-                                onActivated: dock.targetIndex = -1
+                            // Session : où, et comment.
+                            Text {
+                                Layout.fillWidth: true
+                                visible: !dock.toPilot
+                                wrapMode: Text.Wrap
+                                text: "Une session Claude Code complète, lancée directement. "
+                                      + "Dans un dépôt, elle travaille par défaut dans une copie isolée : "
+                                      + "ton code ne bouge pas tant que tu n'as pas fusionné."
+                                font.family: dock.uiFont
+                                font.pixelSize: 12
+                                color: Theme.textSecondary
                             }
 
-                            Repeater {
-                                model: ClaudeLive.projects
+                            Flow {
+                                Layout.fillWidth: true
+                                spacing: 6
 
                                 Chip {
-                                    required property var modelData
-                                    required property int index
-                                    label: modelData.kind === "recherche" ? "✎ recherche" : modelData.name
-                                    active: dock.targetIndex === index
-                                    onActivated: dock.targetIndex = index
+                                    visible: dock.target !== null && dock.target.kind === "projet"
+                                    label: (dock.isolate ? "☑" : "☐") + " copie isolée (worktree)"
+                                    active: dock.isolate
+                                    onActivated: dock.isolate = !dock.isolate
                                 }
+
+                                Chip {
+                                    visible: dock.toPilot
+                                    label: (dock.withClipboard ? "☑" : "☐") + " joindre le presse-papiers"
+                                    active: dock.withClipboard
+                                    onActivated: dock.withClipboard = !dock.withClipboard
+                                }
+
+                                Chip {
+                                    visible: dock.toPilot && pilotThread.count > 0
+                                    label: "↺ oublier"
+                                    onActivated: ClaudeLive.pilotReset()
+                                }
+                            }
+
+                            Item {
+                                Layout.fillHeight: true
+                                visible: !dock.toPilot
                             }
                         }
 
-                        // Pilote : ses échanges.
+                        // Conversation
                         ListView {
-                            id: pilotThread
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            visible: dock.toPilot
+                            id: thread
+                            anchors.fill: parent
+                            visible: !dock.overlay && !dock.composingNew
                             clip: true
-                            spacing: 6
-                            model: ClaudeLive.pilotItems
+                            spacing: 8
+                            model: ClaudeLive.messages
                             boundsBehavior: Flickable.StopAtBounds
-                            onCountChanged: Qt.callLater(pilotThread.positionViewAtEnd)
+
+                            property bool stick: true
+                            onMovementEnded: thread.stick = thread.atYEnd
+                            onCountChanged: if (thread.stick) Qt.callLater(thread.positionViewAtEnd)
+                            onContentHeightChanged: if (thread.stick) Qt.callLater(thread.positionViewAtEnd)
+
+                            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
                             delegate: Item {
-                                id: item
-                                required property var modelData
-                                width: pilotThread.width - 12
-                                height: itemText.implicitHeight + (item.modelData.kind === "user" ? 12 : 0)
+                                id: msg
+                                required property string role
+                                required property string text
+                                width: thread.width - 12
+                                height: body.implicitHeight + (msg.role === "user" ? 12 : 0)
 
                                 Rectangle {
                                     anchors.fill: parent
-                                    visible: item.modelData.kind === "user"
+                                    visible: msg.role === "user"
                                     radius: 14
                                     color: Qt.alpha(Theme.glow(0), 0.1)
                                 }
 
                                 TextEdit {
-                                    id: itemText
+                                    id: body
                                     anchors.left: parent.left
                                     anchors.right: parent.right
                                     anchors.verticalCenter: parent.verticalCenter
-                                    anchors.leftMargin: item.modelData.kind === "user" ? 10 : 2
-                                    anchors.rightMargin: item.modelData.kind === "user" ? 10 : 2
+                                    anchors.leftMargin: msg.role === "user" ? 10 : 2
+                                    anchors.rightMargin: msg.role === "user" ? 10 : 2
                                     readOnly: true
                                     selectByMouse: true
                                     wrapMode: TextEdit.Wrap
-                                    textFormat: item.modelData.kind === "reply" ? TextEdit.MarkdownText
-                                                                               : TextEdit.PlainText
-                                    text: item.modelData.kind === "action" ? "· " + item.modelData.text
-                                        : item.modelData.kind === "error" ? "⚠ " + item.modelData.text
-                                        : item.modelData.text
-                                    font.family: item.modelData.kind === "action" ? "JetBrains Mono" : dock.uiFont
-                                    font.pixelSize: item.modelData.kind === "action" ? 10 : 14
-                                    color: item.modelData.kind === "action" ? Theme.accentMuted
-                                         : item.modelData.kind === "error" ? Theme.colorDanger
-                                         : item.modelData.kind === "user" ? Theme.textPrimary
+                                    textFormat: msg.role === "assistant" ? TextEdit.MarkdownText : TextEdit.PlainText
+                                    text: msg.role === "tool" ? "· " + msg.text : msg.text
+                                    font.family: msg.role === "tool" ? "JetBrains Mono" : dock.uiFont
+                                    font.pixelSize: msg.role === "tool" ? 10 : 14
+                                    color: msg.role === "tool" ? Theme.accentMuted
+                                         : msg.role === "user" ? Theme.textPrimary
                                          : Theme.textBody
                                     selectionColor: Theme.glow(0)
                                     selectedTextColor: Theme.selectedTextColor
                                 }
                             }
 
-                            footer: Text {
-                                visible: ClaudeLive.pilotBusy
-                                height: visible ? implicitHeight + 8 : 0
-                                topPadding: 8
-                                text: "…"
-                                font.family: "JetBrains Mono"
-                                font.pixelSize: 14
-                                color: Theme.glow(0)
-                            }
-
+                            // Une session qui démarre n'a pas encore de transcript.
                             Text {
-                                anchors.fill: parent
-                                visible: pilotThread.count === 0
-                                wrapMode: Text.Wrap
-                                text: "Le pilote agit sur ton bureau : son, fenêtres, applications, "
-                                      + "projets, notes. Une tâche de code ou de recherche, il la confie "
-                                      + "à une session complète, qui apparaît en haut.\n\n"
-                                      + "« baisse le son »   « ouvre zed sur karenine »   "
-                                      + "« corrige le dock qui s'ouvre tout seul dans karenine »"
+                                anchors.centerIn: parent
+                                visible: thread.count === 0
+                                text: dock.selected && dock.selected.state === "working"
+                                      ? "Claude démarre…" : "Rien à afficher pour l'instant."
                                 font.family: dock.uiFont
                                 font.pixelSize: 12
                                 color: Theme.textDim
                             }
                         }
+                    }
 
-                        // Session : où, et comment.
-                        Text {
-                            Layout.fillWidth: true
-                            visible: !dock.toPilot
-                            wrapMode: Text.Wrap
-                            text: "Une session Claude Code complète, lancée directement. "
-                                  + "Dans un dépôt, elle travaille par défaut dans une copie isolée : "
-                                  + "ton code ne bouge pas tant que tu n'as pas fusionné."
-                            font.family: dock.uiFont
-                            font.pixelSize: 12
-                            color: Theme.textSecondary
-                        }
+                    // ── Sa demande de permission ─────────────────────
+                    // La même que dans la barre des sessions : valider en
+                    // lisant la conversation.
+                    Rectangle {
+                        Layout.fillWidth: true
+                        visible: !dock.overlay && dock.selected !== null && !!dock.selected.request
+                        implicitHeight: requestCol.implicitHeight + 16
+                        radius: 14
+                        color: Qt.alpha(Theme.colorAmber, 0.12)
+                        border.width: 1
+                        border.color: Qt.alpha(Theme.colorAmber, 0.35)
 
-                        Flow {
-                            Layout.fillWidth: true
+                        Column {
+                            id: requestCol
+                            x: 12
+                            y: 8
+                            width: parent.width - 24
                             spacing: 6
 
-                            Chip {
-                                visible: dock.target !== null && dock.target.kind === "projet"
-                                label: (dock.isolate ? "☑" : "☐") + " copie isolée (worktree)"
-                                active: dock.isolate
-                                onActivated: dock.isolate = !dock.isolate
+                            Text {
+                                width: parent.width
+                                textFormat: Text.StyledText
+                                readonly property var r: dock.selected ? dock.selected.request : null
+                                text: r ? "<b>" + r.tool + "</b>  "
+                                          + r.summary.replace(/&/g, "&amp;").replace(/</g, "&lt;") : ""
+                                wrapMode: Text.WrapAnywhere
+                                maximumLineCount: 4
+                                elide: Text.ElideRight
+                                font.family: "JetBrains Mono"
+                                font.pixelSize: 10
+                                color: Theme.textBody
                             }
 
-                            Chip {
-                                visible: dock.toPilot
-                                label: (dock.withClipboard ? "☑" : "☐") + " joindre le presse-papiers"
-                                active: dock.withClipboard
-                                onActivated: dock.withClipboard = !dock.withClipboard
-                            }
+                            Row {
+                                spacing: 6
 
-                            Chip {
-                                visible: dock.toPilot && pilotThread.count > 0
-                                label: "↺ oublier"
-                                onActivated: ClaudeLive.pilotReset()
-                            }
-                        }
-
-                        Item {
-                            Layout.fillHeight: true
-                            visible: !dock.toPilot
-                        }
-                    }
-
-                    // Conversation
-                    ListView {
-                        id: thread
-                        anchors.fill: parent
-                        visible: !dock.overlay && !dock.composingNew
-                        clip: true
-                        spacing: 8
-                        model: ClaudeLive.messages
-                        boundsBehavior: Flickable.StopAtBounds
-
-                        property bool stick: true
-                        onMovementEnded: thread.stick = thread.atYEnd
-                        onCountChanged: if (thread.stick) Qt.callLater(thread.positionViewAtEnd)
-                        onContentHeightChanged: if (thread.stick) Qt.callLater(thread.positionViewAtEnd)
-
-                        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-
-                        delegate: Item {
-                            id: msg
-                            required property string role
-                            required property string text
-                            width: thread.width - 12
-                            height: body.implicitHeight + (msg.role === "user" ? 12 : 0)
-
-                            Rectangle {
-                                anchors.fill: parent
-                                visible: msg.role === "user"
-                                radius: 14
-                                color: Qt.alpha(Theme.glow(0), 0.1)
-                            }
-
-                            TextEdit {
-                                id: body
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.verticalCenter: parent.verticalCenter
-                                anchors.leftMargin: msg.role === "user" ? 10 : 2
-                                anchors.rightMargin: msg.role === "user" ? 10 : 2
-                                readOnly: true
-                                selectByMouse: true
-                                wrapMode: TextEdit.Wrap
-                                textFormat: msg.role === "assistant" ? TextEdit.MarkdownText : TextEdit.PlainText
-                                text: msg.role === "tool" ? "· " + msg.text : msg.text
-                                font.family: msg.role === "tool" ? "JetBrains Mono" : dock.uiFont
-                                font.pixelSize: msg.role === "tool" ? 10 : 14
-                                color: msg.role === "tool" ? Theme.accentMuted
-                                     : msg.role === "user" ? Theme.textPrimary
-                                     : Theme.textBody
-                                selectionColor: Theme.glow(0)
-                                selectedTextColor: Theme.selectedTextColor
+                                ActionButton {
+                                    label: "Autoriser"
+                                    primary: true
+                                    tint: Theme.glow(0)
+                                    onActivated: ClaudeLive.decide(dock.selected.request.req, "allow")
+                                }
+                                ActionButton {
+                                    visible: dock.selected !== null && !!dock.selected.request
+                                             && dock.selected.request.always !== ""
+                                    label: "Toujours"
+                                    tint: Theme.glow(0)
+                                    onActivated: ClaudeLive.decide(dock.selected.request.req, "always")
+                                }
+                                ActionButton {
+                                    label: "Refuser"
+                                    tint: Theme.colorDanger
+                                    onActivated: ClaudeLive.decide(dock.selected.request.req, "deny")
+                                }
                             }
                         }
+                    }
 
-                        // Une session qui démarre n'a pas encore de transcript.
-                        Text {
-                            anchors.centerIn: parent
-                            visible: thread.count === 0
-                            text: dock.selected && dock.selected.state === "working"
-                                  ? "Claude démarre…" : "Rien à afficher pour l'instant."
-                            font.family: dock.uiFont
-                            font.pixelSize: 12
-                            color: Theme.textDim
-                        }
-                    }
-                }
-
-                // ── Le travail de la session ─────────────────────
-                // Où elle travaille, puis ses actions, qui passent à la ligne.
-                Text {
-                    Layout.fillWidth: true
-                    visible: !dock.overlay && dock.selected !== null
-                    elide: Text.ElideRight
-                    font.family: "JetBrains Mono"
-                    font.pixelSize: 10
-                    color: Theme.textSecondary
-                    text: {
-                        var s = dock.selected;
-                        if (!s)
-                            return "";
-                        if (!s.worktree)
-                            return s.cwd.replace(/^\/home\/[^/]+/, "~")
-                                   + (s.managed ? "" : "  ·  dans un terminal");
-                        var r = dock.review;
-                        if (!r)
-                            return s.worktree.branch;
-                        var add = 0, del = 0;
-                        for (var i = 0; i < r.files.length; i++) {
-                            add += r.files[i].added;
-                            del += r.files[i].removed;
-                        }
-                        var bits = [s.worktree.branch];
-                        bits.push(r.files.length === 0 ? "aucune modification en cours"
-                                  : r.files.length + " fichier" + (r.files.length > 1 ? "s" : "")
-                                    + "  +" + add + " −" + del);
-                        if (r.ahead > 0)
-                            bits.push(r.ahead + " commit" + (r.ahead > 1 ? "s" : "") + " à fusionner dans " + r.base);
-                        return bits.join("  ·  ");
-                    }
-                }
-
-                Flow {
-                    Layout.fillWidth: true
-                    visible: !dock.overlay && dock.selected !== null
-                    spacing: 6
-
-                    // Le tour est fini : ranger dans le coffre ce qu'il a appris
-                    // (commande /capitaliser, cf. la config NixOS).
-                    ActionButton {
-                        visible: dock.selected !== null && dock.selected.managed
-                                 && dock.selected.state === "idle" && dock.selected.id !== "pilote"
-                        label: "◈ Capitaliser"
-                        tint: Theme.glow(0)
-                        onActivated: ClaudeLive.send(dock.selected.id, "/capitaliser", dock.selected.cwd)
-                    }
-                    ActionButton {
-                        visible: dock.selected !== null && dock.selected.managed && dock.selected.state !== "idle"
-                        label: "Arrêter"
-                        tint: Theme.colorDanger
-                        onActivated: ClaudeLive.stop(dock.selectedId)
-                    }
-                    ActionButton {
-                        label: "Zed"
-                        onActivated: ClaudeLive.open(dock.selected.cwd, "zed", "")
-                    }
-                    ActionButton {
-                        label: "Terminal"
-                        onActivated: {
+                    // ── Le travail de la session ─────────────────────
+                    // Où elle travaille, puis ses actions, qui passent à la ligne.
+                    Text {
+                        Layout.fillWidth: true
+                        visible: dock.expanded && !dock.overlay && dock.selected !== null
+                        elide: Text.ElideRight
+                        font.family: "JetBrains Mono"
+                        font.pixelSize: 10
+                        color: Theme.textSecondary
+                        text: {
                             var s = dock.selected;
-                            // Une session de terminal : sa fenêtre existe déjà.
-                            if (s.managed)
-                                ClaudeLive.open(s.cwd, "terminal", s.id);
-                            else
-                                ClaudeLive.focus(s.id);
-                            dock.closeRequested();
-                        }
-                    }
-                    ActionButton {
-                        visible: dock.review !== null && dock.review.files.length > 0
-                        label: "Commit"
-                        tint: Theme.glow(0)
-                        onActivated: ClaudeLive.worktree(dock.selected.cwd, "commit",
-                                                         dock.selected.prompt, dock.selectedId,
-                                                         function () { dock.refreshReview(); })
-                    }
-                    ActionButton {
-                        visible: dock.review !== null && dock.review.ahead > 0 && dock.review.files.length === 0
-                        label: "Fusionner"
-                        primary: true
-                        tint: Theme.glow(0)
-                        onActivated: {
-                            var id = dock.selectedId;
-                            ClaudeLive.worktree(dock.selected.cwd, "merge", "", id, function (ok) {
-                                if (ok && dock.selectedId === id)
-                                    dock.review = null;
-                            });
-                        }
-                    }
-                    ActionButton {
-                        visible: dock.review !== null
-                        label: dock.confirmDiscard ? "Vraiment jeter ?" : "Jeter"
-                        tint: Theme.colorDanger
-                        primary: dock.confirmDiscard
-                        onActivated: {
-                            if (!dock.confirmDiscard) {
-                                dock.confirmDiscard = true;
-                                return;
+                            if (!s)
+                                return "";
+                            if (!s.worktree)
+                                return s.cwd.replace(/^\/home\/[^/]+/, "~")
+                                       + (s.managed ? "" : "  ·  dans un terminal");
+                            var r = dock.review;
+                            if (!r)
+                                return s.worktree.branch;
+                            var add = 0, del = 0;
+                            for (var i = 0; i < r.files.length; i++) {
+                                add += r.files[i].added;
+                                del += r.files[i].removed;
                             }
-                            dock.confirmDiscard = false;
-                            var id = dock.selectedId;
-                            ClaudeLive.worktree(dock.selected.cwd, "discard", "", id, function (ok) {
-                                if (ok && dock.selectedId === id)
-                                    dock.review = null;
-                            });
+                            var bits = [s.worktree.branch];
+                            bits.push(r.files.length === 0 ? "aucune modification en cours"
+                                      : r.files.length + " fichier" + (r.files.length > 1 ? "s" : "")
+                                        + "  +" + add + " −" + del);
+                            if (r.ahead > 0)
+                                bits.push(r.ahead + " commit" + (r.ahead > 1 ? "s" : "") + " à fusionner dans " + r.base);
+                            return bits.join("  ·  ");
                         }
                     }
-                }
 
-                // ── Saisie ───────────────────────────────────────
-                // La capsule de la barre de conversation : ronde tant qu'elle
-                // tient sur une ligne, le bouton ↑ qui éclot à droite.
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: Math.min(140, Math.max(44, composer.implicitHeight + 8))
-                    radius: Math.min(height / 2, 22)
-                    color: Qt.alpha(Theme.bgDeep, Theme.darkMode ? 0.62 : 0.7)
-                    border.width: 1
-                    border.color: composer.activeFocus ? Qt.alpha(Theme.glow(0), 0.6)
-                                  : Theme.darkMode ? Qt.rgba(1, 1, 1, 0.09) : Qt.rgba(0, 0, 0, 0.08)
-                    Behavior on border.color { ColorAnimation { duration: 160 } }
+                    Flow {
+                        Layout.fillWidth: true
+                        visible: dock.expanded && !dock.overlay && dock.selected !== null
+                        spacing: 6
 
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 16
-                        anchors.rightMargin: 9
-                        spacing: 8
-
-                        Text {
-                            Layout.alignment: Qt.AlignVCenter
-                            text: !dock.composingNew ? "›"
-                                  : dock.toPilot ? "✦ ›"
-                                  : dock.target
-                                    ? (dock.target.kind === "recherche" ? "✎" : dock.target.name
-                                       + (dock.isolate ? " ⎇" : "")) + " ›"
-                                    : "›"
-                            font.family: dock.uiFont
-                            font.pixelSize: 13
-                            color: Theme.glow(0)
+                        // Le tour est fini : ranger dans le coffre ce qu'il a appris
+                        // (commande /capitaliser, cf. la config NixOS).
+                        ActionButton {
+                            visible: dock.selected !== null && dock.selected.managed
+                                     && dock.selected.state === "idle" && dock.selected.id !== "pilote"
+                            label: "◈ Capitaliser"
+                            tint: Theme.glow(0)
+                            onActivated: ClaudeLive.send(dock.selected.id, "/capitaliser", dock.selected.cwd)
                         }
-
-                        ScrollView {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-
-                            TextArea {
-                                id: composer
-                                wrapMode: TextArea.Wrap
-                                // Lecture seule plutôt que désactivé : le champ
-                                // garde le focus, donc Échap et Alt+←/→.
-                                readOnly: dock.inTerminal
-                                font.weight: Font.Medium
-                                placeholderText: {
-                                    if (dock.showKnowledge)
-                                        return "Chercher dans le savoir…  (⏎ ouvre la première note)";
-                                    if (dock.composingNew && dock.toPilot)
-                                        return ClaudeLive.pilotBusy
-                                               ? "Le pilote travaille…"
-                                               : "Demande au pilote : son, fenêtres, apps, notes, ou une tâche de code…";
-                                    if (dock.composingNew)
-                                        return "Demande à Claude…  (⏎ envoie, espace maintenu dicte, ⇧⏎ nouvelle ligne)";
-                                    if (dock.past)
-                                        return "Reprendre cette conversation…";
-                                    if (dock.inTerminal)
-                                        return "Session ouverte dans un terminal : réponds-y (bouton Terminal)";
-                                    return "Répondre à Claude…";
+                        ActionButton {
+                            visible: dock.selected !== null && dock.selected.managed && dock.selected.state !== "idle"
+                            label: "Arrêter"
+                            tint: Theme.colorDanger
+                            onActivated: ClaudeLive.stop(dock.selectedId)
+                        }
+                        ActionButton {
+                            label: "Zed"
+                            onActivated: ClaudeLive.open(dock.selected.cwd, "zed", "")
+                        }
+                        ActionButton {
+                            label: "Terminal"
+                            onActivated: {
+                                var s = dock.selected;
+                                // Une session de terminal : sa fenêtre existe déjà.
+                                if (s.managed)
+                                    ClaudeLive.open(s.cwd, "terminal", s.id);
+                                else
+                                    ClaudeLive.focus(s.id);
+                                dock.collapse();
+                            }
+                        }
+                        ActionButton {
+                            visible: dock.review !== null && dock.review.files.length > 0
+                            label: "Commit"
+                            tint: Theme.glow(0)
+                            onActivated: ClaudeLive.worktree(dock.selected.cwd, "commit",
+                                                             dock.selected.prompt, dock.selectedId,
+                                                             function () { dock.refreshReview(); })
+                        }
+                        ActionButton {
+                            visible: dock.review !== null && dock.review.ahead > 0 && dock.review.files.length === 0
+                            label: "Fusionner"
+                            primary: true
+                            tint: Theme.glow(0)
+                            onActivated: {
+                                var id = dock.selectedId;
+                                ClaudeLive.worktree(dock.selected.cwd, "merge", "", id, function (ok) {
+                                    if (ok && dock.selectedId === id)
+                                        dock.review = null;
+                                });
+                            }
+                        }
+                        ActionButton {
+                            visible: dock.review !== null
+                            label: dock.confirmDiscard ? "Vraiment jeter ?" : "Jeter"
+                            tint: Theme.colorDanger
+                            primary: dock.confirmDiscard
+                            onActivated: {
+                                if (!dock.confirmDiscard) {
+                                    dock.confirmDiscard = true;
+                                    return;
                                 }
-                                placeholderTextColor: Qt.alpha(Theme.textPrimary, 0.42)
+                                dock.confirmDiscard = false;
+                                var id = dock.selectedId;
+                                ClaudeLive.worktree(dock.selected.cwd, "discard", "", id, function (ok) {
+                                    if (ok && dock.selectedId === id)
+                                        dock.review = null;
+                                });
+                            }
+                        }
+                    }
+
+                    // ── Saisie ───────────────────────────────────────
+                    // La capsule de la barre de conversation : ronde tant qu'elle
+                    // tient sur une ligne, le bouton ↑ qui éclot à droite.
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Math.min(140, Math.max(44, composer.implicitHeight + 8))
+                        radius: Math.min(height / 2, 22)
+                        color: Qt.alpha(Theme.bgDeep, Theme.darkMode ? 0.62 : 0.7)
+                        border.width: 1
+                        border.color: composer.activeFocus ? Qt.alpha(Theme.glow(0), 0.6)
+                                      : Theme.darkMode ? Qt.rgba(1, 1, 1, 0.09) : Qt.rgba(0, 0, 0, 0.08)
+                        Behavior on border.color { ColorAnimation { duration: 160 } }
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 16
+                            anchors.rightMargin: 9
+                            spacing: 8
+
+                            Text {
+                                Layout.alignment: Qt.AlignVCenter
+                                text: !dock.composingNew ? "›"
+                                      : dock.toPilot ? "✦ ›"
+                                      : dock.target
+                                        ? (dock.target.kind === "recherche" ? "✎" : dock.target.name
+                                           + (dock.isolate ? " ⎇" : "")) + " ›"
+                                        : "›"
                                 font.family: dock.uiFont
-                                font.pixelSize: 14
-                                selectionColor: Qt.alpha(Theme.glow(0), 0.45)
-                                selectedTextColor: Theme.textPrimary
-                                color: Theme.textPrimary
-                                background: Item {}
-                                topPadding: 10
-                                bottomPadding: 10
-                                leftPadding: 0
-                                rightPadding: 0
+                                font.pixelSize: 13
+                                color: Theme.glow(0)
+                            }
 
-                                Keys.onEscapePressed: dock.closeRequested()
-                                Keys.onReturnPressed: (event) => {
-                                    if (event.modifiers & Qt.ShiftModifier)
-                                        insert(cursorPosition, "\n");
-                                    else
-                                        dock.submit();
-                                }
-                                Keys.onEnterPressed: dock.submit()
-                                // Espace maintenu : dictée (dock.keyPressed).
-                                Keys.onReleased: (event) => dock.keyReleased(event)
-                                // Alt+← / Alt+→ : session précédente / suivante.
-                                Keys.onPressed: (event) => {
-                                    dock.keyPressed(event);
-                                    if (event.accepted || !(event.modifiers & Qt.AltModifier))
-                                        return;
-                                    if (event.key === Qt.Key_Left) {
-                                        dock.cycleSession(-1);
-                                        event.accepted = true;
-                                    } else if (event.key === Qt.Key_Right) {
-                                        dock.cycleSession(1);
-                                        event.accepted = true;
-                                    } else if (event.key === Qt.Key_N) {
-                                        dock.startNew();
-                                        event.accepted = true;
+                            ScrollView {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                                TextArea {
+                                    id: composer
+                                    wrapMode: TextArea.Wrap
+                                    // Lecture seule plutôt que désactivé : le champ
+                                    // garde le focus, donc Échap et Alt+←/→.
+                                    readOnly: dock.inTerminal
+                                    font.weight: Font.Medium
+                                    placeholderText: {
+                                        if (dock.showKnowledge)
+                                            return "Chercher dans le savoir…  (⏎ ouvre la première note)";
+                                        if (dock.composingNew && dock.toPilot)
+                                            return ClaudeLive.pilotBusy
+                                                   ? "Le pilote travaille…"
+                                                   : "Demande au pilote : son, fenêtres, apps, notes, ou une tâche de code…";
+                                        if (dock.composingNew)
+                                            return "Demande à Claude…  (⏎ envoie, espace maintenu dicte, ⇧⏎ nouvelle ligne)";
+                                        if (dock.past)
+                                            return "Reprendre cette conversation…";
+                                        if (dock.inTerminal)
+                                            return "Session ouverte dans un terminal : réponds-y (bouton Terminal)";
+                                        return "Répondre à Claude…";
+                                    }
+                                    placeholderTextColor: Qt.alpha(Theme.textPrimary, 0.42)
+                                    font.family: dock.uiFont
+                                    font.pixelSize: 14
+                                    selectionColor: Qt.alpha(Theme.glow(0), 0.45)
+                                    selectedTextColor: Theme.textPrimary
+                                    color: Theme.textPrimary
+                                    background: Item {}
+                                    topPadding: 10
+                                    bottomPadding: 10
+                                    leftPadding: 0
+                                    rightPadding: 0
+
+                                    Keys.onEscapePressed: dock.expanded ? dock.collapse() : dock.closeRequested()
+                                    Keys.onReturnPressed: (event) => {
+                                        if (event.modifiers & Qt.ShiftModifier)
+                                            insert(cursorPosition, "\n");
+                                        else
+                                            dock.submit();
+                                    }
+                                    Keys.onEnterPressed: dock.submit()
+                                    // Espace maintenu : dictée (dock.keyPressed).
+                                    Keys.onReleased: (event) => dock.keyReleased(event)
+                                    // Alt+← / Alt+→ : session précédente / suivante.
+                                    Keys.onPressed: (event) => {
+                                        dock.keyPressed(event);
+                                        if (event.accepted || !(event.modifiers & Qt.AltModifier))
+                                            return;
+                                        if (event.key === Qt.Key_Left) {
+                                            dock.cycleSession(-1);
+                                            event.accepted = true;
+                                        } else if (event.key === Qt.Key_Right) {
+                                            dock.cycleSession(1);
+                                            event.accepted = true;
+                                        } else if (event.key === Qt.Key_N) {
+                                            dock.startNew();
+                                            event.accepted = true;
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        // Le mot d'activation : « Karénine » allumé, le micro
-                        // reste ouvert ; un clic l'éteint.
-                        Text {
-                            Layout.alignment: Qt.AlignVCenter
-                            visible: !dock.overlay && !dock.inTerminal
-                            text: ClaudeLive.voiceWake ? "◉ Karénine" : "○ Karénine"
-                            font.family: dock.uiFont
-                            font.pixelSize: 12
-                            color: ClaudeLive.voiceWake
-                                   ? Theme.glow(0)
-                                   : (wakeMa.containsMouse ? Theme.textPrimary : Theme.textDim)
+                            // Le mot d'activation : « Karénine » allumé, le micro
+                            // reste ouvert ; un clic l'éteint.
+                            Text {
+                                Layout.alignment: Qt.AlignVCenter
+                                visible: !dock.overlay && !dock.inTerminal
+                                text: ClaudeLive.voiceWake ? "◉ Karénine" : "○ Karénine"
+                                font.family: dock.uiFont
+                                font.pixelSize: 12
+                                color: ClaudeLive.voiceWake
+                                       ? Theme.glow(0)
+                                       : (wakeMa.containsMouse ? Theme.textPrimary : Theme.textDim)
 
-                            MouseArea {
-                                id: wakeMa
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: ClaudeLive.voiceWakeToggle()
+                                MouseArea {
+                                    id: wakeMa
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: ClaudeLive.voiceWakeToggle()
+                                }
                             }
-                        }
 
-                        // Parler au pilote plutôt qu'écrire (comme Super+V).
-                        Text {
-                            Layout.alignment: Qt.AlignVCenter
-                            visible: !dock.overlay && !dock.inTerminal
-                            text: ClaudeLive.voicePhase === "idle" ? "🎙"
-                                  : ClaudeLive.voicePhase === "listening" ? "● j'écoute" : "… transcription"
-                            font.family: dock.uiFont
-                            font.pixelSize: 13
-                            color: ClaudeLive.voicePhase === "idle"
-                                   ? (micMa.containsMouse ? Theme.glow(0) : Theme.textDim)
-                                   : Theme.glow(0)
+                            // Parler au pilote plutôt qu'écrire (comme Super+V).
+                            Text {
+                                Layout.alignment: Qt.AlignVCenter
+                                visible: !dock.overlay && !dock.inTerminal
+                                text: ClaudeLive.voicePhase === "idle" ? "🎙"
+                                      : ClaudeLive.voicePhase === "listening" ? "● j'écoute" : "… transcription"
+                                font.family: dock.uiFont
+                                font.pixelSize: 13
+                                color: ClaudeLive.voicePhase === "idle"
+                                       ? (micMa.containsMouse ? Theme.glow(0) : Theme.textDim)
+                                       : Theme.glow(0)
 
-                            MouseArea {
-                                id: micMa
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    if (ClaudeLive.voicePhase === "idle")
-                                        dock.startDictation(false);
-                                    else
-                                        ClaudeLive.voiceToggle(false);
+                                MouseArea {
+                                    id: micMa
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        if (ClaudeLive.voicePhase === "idle")
+                                            dock.startDictation(false);
+                                        else
+                                            ClaudeLive.voiceToggle(false);
+                                    }
+                                }
+                            }
+
+                            // Le bouton d'envoi, qui éclot quand il y a quelque
+                            // chose à envoyer.
+                            Rectangle {
+                                id: sendBtn
+                                readonly property bool on: composer.text.trim().length > 0
+                                                           && !dock.showKnowledge && !dock.inTerminal
+                                Layout.alignment: Qt.AlignVCenter
+                                Layout.preferredWidth: 26
+                                Layout.preferredHeight: 26
+                                radius: 13
+                                color: Theme.glow(0)
+                                opacity: sendBtn.on ? 1 : 0
+                                scale: sendBtn.on ? (sendMa.pressed ? 0.88 : 1) : 0.4
+                                Behavior on opacity { NumberAnimation { duration: 160 } }
+                                Behavior on scale { SpringAnimation { spring: 5; damping: 0.28; epsilon: 0.002 } }
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    anchors.verticalCenterOffset: -1
+                                    text: "↑"
+                                    font.family: dock.uiFont
+                                    font.pixelSize: 15
+                                    font.weight: Font.Bold
+                                    color: "#ffffff"
+                                }
+
+                                MouseArea {
+                                    id: sendMa
+                                    anchors.fill: parent
+                                    enabled: sendBtn.on
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: dock.submit()
                                 }
                             }
                         }
-
-                        // Le bouton d'envoi, qui éclot quand il y a quelque
-                        // chose à envoyer.
-                        Rectangle {
-                            id: sendBtn
-                            readonly property bool on: composer.text.trim().length > 0
-                                                       && !dock.showKnowledge && !dock.inTerminal
-                            Layout.alignment: Qt.AlignVCenter
-                            Layout.preferredWidth: 26
-                            Layout.preferredHeight: 26
-                            radius: 13
-                            color: Theme.glow(0)
-                            opacity: sendBtn.on ? 1 : 0
-                            scale: sendBtn.on ? (sendMa.pressed ? 0.88 : 1) : 0.4
-                            Behavior on opacity { NumberAnimation { duration: 160 } }
-                            Behavior on scale { SpringAnimation { spring: 5; damping: 0.28; epsilon: 0.002 } }
-
-                            Text {
-                                anchors.centerIn: parent
-                                anchors.verticalCenterOffset: -1
-                                text: "↑"
-                                font.family: dock.uiFont
-                                font.pixelSize: 15
-                                font.weight: Font.Bold
-                                color: "#ffffff"
-                            }
-
-                            MouseArea {
-                                id: sendMa
-                                anchors.fill: parent
-                                enabled: sendBtn.on
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: dock.submit()
-                            }
-                        }
                     }
-                }
 
-                Text {
-                    Layout.fillWidth: true
-                    visible: ClaudeLive.lastError.length > 0
-                    text: "⚠ " + ClaudeLive.lastError
-                    elide: Text.ElideRight
-                    font.family: "JetBrains Mono"
-                    font.pixelSize: 10
-                    color: Theme.colorDanger
+                    Text {
+                        Layout.fillWidth: true
+                        visible: ClaudeLive.lastError.length > 0
+                        text: "⚠ " + ClaudeLive.lastError
+                        elide: Text.ElideRight
+                        font.family: "JetBrains Mono"
+                        font.pixelSize: 10
+                        color: Theme.colorDanger
+                    }
                 }
             }
         }

@@ -6,14 +6,19 @@
 //! forwards it over a channel. Each audio service opens its own capture — the
 //! system's audio server (PipeWire) multiplexes capture clients, exactly like
 //! the several concurrent `parec` processes the old shell backends used.
+//! The voice assistant instead reads the echo-cancelled mic through
+//! `pw-record` (`start_voice_capture`): cpal cannot pick a PipeWire node.
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use std::io::Read;
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
-/// A live microphone capture. Dropping it stops the underlying cpal stream.
+/// A live microphone capture. Dropping it stops the underlying cpal stream
+/// (or `pw-record` process).
 pub struct Capture {
     /// Actual capture sample rate reported by the device (e.g. 48000). The DSP
     /// services derive all their frequency math from this, so no resampling is
@@ -21,11 +26,17 @@ pub struct Capture {
     pub sample_rate: u32,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
+    child: Option<Child>,
 }
 
 impl Drop for Capture {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
+        // Killing pw-record closes its pipe, which ends the reading thread.
+        if let Some(mut c) = self.child.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
         if let Some(h) = self.thread.take() {
             let _ = h.join();
         }
@@ -73,11 +84,72 @@ pub fn start_capture() -> Result<(Capture, Receiver<Vec<f32>>), String> {
                 sample_rate,
                 stop,
                 thread: Some(thread),
+                child: None,
             },
             sample_rx,
         )),
         Ok(Err(e)) => Err(e),
         Err(_) => Err("audio capture thread died during init".into()),
+    }
+}
+
+/// The microphone the voice assistant listens to (`ANNA_VOICE_NODE`): the
+/// echo-cancelled source of `modules/audio.nix`, from which PipeWire removes
+/// what the speakers play — « Karénine » is heard over music or a video, and
+/// a video saying it does not wake anna. Music services keep the raw mic.
+fn voice_node() -> String {
+    std::env::var("ANNA_VOICE_NODE").unwrap_or_else(|_| "echo-cancel-source".into())
+}
+
+/// Like `start_capture`, but from the voice node, at 16 kHz. PipeWire falls
+/// back to the default mic when the node does not exist; without `pw-record`,
+/// the default device is opened directly.
+pub fn start_voice_capture() -> Result<(Capture, Receiver<Vec<f32>>), String> {
+    start_node_capture(&voice_node(), 16000).or_else(|e| {
+        eprintln!("anna: audio: {e}, micro par défaut");
+        start_capture()
+    })
+}
+
+/// Mono `f32` samples from a PipeWire node, read from a `pw-record` child.
+fn start_node_capture(node: &str, rate: u32) -> Result<(Capture, Receiver<Vec<f32>>), String> {
+    let mut child = Command::new("pw-record")
+        .args(["--raw", "--target", node, "--format", "f32", "--channels", "1"])
+        .args(["--rate", &rate.to_string(), "-"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("pw-record: {e}"))?;
+    let mut out = child.stdout.take().ok_or("pw-record: pas de sortie")?;
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_thread = Arc::clone(&stop);
+    let (sample_tx, sample_rx) = std::sync::mpsc::channel::<Vec<f32>>();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
+    let thread = std::thread::spawn(move || {
+        // 100 ms per chunk, like a cpal callback at PipeWire's default quantum.
+        let mut buf = vec![0u8; rate as usize / 10 * 4];
+        while !stop_thread.load(Ordering::SeqCst) && out.read_exact(&mut buf).is_ok() {
+            let _ = ready_tx.send(());
+            let chunk = buf
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .collect();
+            if sample_tx.send(chunk).is_err() {
+                break;
+            }
+        }
+    });
+    let capture = Capture {
+        sample_rate: rate,
+        stop,
+        thread: Some(thread),
+        child: Some(child),
+    };
+    // A first chunk proves the stream works; otherwise fall back (dropping
+    // `capture` kills the child and joins the thread).
+    match ready_rx.recv_timeout(std::time::Duration::from_secs(2)) {
+        Ok(()) => Ok((capture, sample_rx)),
+        Err(_) => Err(format!("pw-record --target {node} : aucun son")),
     }
 }
 
