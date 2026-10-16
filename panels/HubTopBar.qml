@@ -6,17 +6,24 @@ import QtCore
 import Quickshell
 import Quickshell.Io
 import "../services"
+import "../widgets"
 
-// La barre du haut des widgets, la même quel que soit l'onglet. Trois
+// La barre du haut des widgets, la même quel que soit l'onglet. Quatre
 // groupes posés sur le verre, chacun dans sa pilule : l'alimentation à
-// gauche, les niveaux (luminosité, volume) au milieu, la capture à droite.
+// gauche, les niveaux (luminosité, volume) au milieu, la capture et la
+// batterie à droite.
 //
-//   ╭ 🔒 ☾ ⇥ ↻ ⏻ ╮     ╭ ☀ ━━●── 80 %  │  🔊 ━━━●─ 64 % ╮  ╭ ⌗ ╮
+//   ╭ 🔒 ☾ ⇥ ↻ ⏻ ╮   ╭ ☀ ━━●── 80 %  │  🔊 ━━━●─ 64 % ╮  ╭ ⌗ ╮  ╭ [87]▸ ╮
 //
 // Verrouiller et mettre en veille partent d'un clic. Se déconnecter,
 // redémarrer et éteindre demandent une confirmation : le premier clic
 // élargit le bouton en rouge (« Éteindre ? ») pendant 3 s, le second agit.
 // Les curseurs se partagent la place qui reste : la barre peut être étroite.
+//
+// Au clavier : Tab passe d'un bouton à l'autre, Entrée ou Espace l'actionne
+// (deux fois pour ce qui se confirme ; Échap renonce). Maj+Entrée sur la
+// capture prend l'écran entier, comme le clic droit. Sur un curseur, ← →
+// (ou ↑ ↓) règlent par pas, Début et Fin vont aux bouts.
 Item {
     id: top
 
@@ -36,9 +43,10 @@ Item {
     }
 
     function run(argv, closeFirst) {
-        // Verrouiller ou dormir : la barre ne doit pas rester ouverte derrière.
+        // Verrouiller ou dormir : la barre ne doit pas rester ouverte derrière,
+        // même appelée par Super (le champ la retiendrait).
         if (closeFirst)
-            Widgets.hubOpen = false;
+            top.bar.dismiss();
         powerProc.command = argv;
         powerProc.running = true;
     }
@@ -51,7 +59,7 @@ Item {
         StandardPaths.writableLocation(StandardPaths.PicturesLocation).toString().replace(/^file:\/\//, "")
 
     function screenshot(region) {
-        Widgets.hubOpen = false;
+        top.bar.dismiss();
         shotTimer.region = region;
         shotTimer.restart();
     }
@@ -163,8 +171,16 @@ Item {
         // Signale un état (muet…) : teinté en permanence.
         property color alertColor: "transparent"
         readonly property bool alerted: ib.alertColor.a > 0
-        readonly property bool hovered: ibMa.containsMouse
+        readonly property bool hovered: ibMa.containsMouse || ib.activeFocus
         signal clicked(int button)
+
+        activeFocusOnTab: true
+        Keys.onPressed: (event) => {
+            if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                ib.clicked(event.modifiers & Qt.ShiftModifier ? Qt.RightButton : Qt.LeftButton);
+                event.accepted = true;
+            }
+        }
 
         Layout.alignment: Qt.AlignVCenter
         implicitWidth: top.btnSize
@@ -182,6 +198,7 @@ Item {
             tint: ib.alerted ? ib.alertColor : ib.tint
             strength: ib.alerted || ib.hovered ? 1 : 0.8
         }
+        FocusRing { gap: 1 }
         MouseArea {
             id: ibMa
             anchors.fill: parent
@@ -202,8 +219,33 @@ Item {
         // En attente du second clic.
         property bool armed: false
 
-        readonly property bool hovered: pbMa.containsMouse
+        readonly property bool hovered: pbMa.containsMouse || pb.activeFocus
         readonly property color danger: Theme.colorDanger
+
+        function press() {
+            if (pb.confirmLabel !== "" && !pb.armed) {
+                pb.armed = true;
+                disarm.restart();
+                return;
+            }
+            pb.armed = false;
+            disarm.stop();
+            top.run(pb.command, pb.closeFirst);
+        }
+
+        activeFocusOnTab: true
+        Keys.onPressed: (event) => {
+            if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                pb.press();
+                event.accepted = true;
+            } else if (event.key === Qt.Key_Escape && pb.armed) {
+                pb.armed = false;
+                disarm.stop();
+                event.accepted = true;
+            }
+        }
+        // Le clavier part ailleurs : plus de confirmation en suspens.
+        onActiveFocusChanged: if (!pb.activeFocus) pb.armed = false
 
         anchors.verticalCenter: parent.verticalCenter
         height: top.btnSize
@@ -251,17 +293,11 @@ Item {
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
-            onClicked: {
-                if (pb.confirmLabel !== "" && !pb.armed) {
-                    pb.armed = true;
-                    disarm.restart();
-                    return;
-                }
-                pb.armed = false;
-                disarm.stop();
-                top.run(pb.command, pb.closeFirst);
-            }
+            onClicked: pb.press()
         }
+
+        // Dans le bouton : il rogne ce qui dépasse (clip).
+        FocusRing { gap: 0 }
     }
 
     // Un curseur fin : il suit la souris pendant le glisser ; la molette
@@ -277,6 +313,20 @@ Item {
         readonly property real shown: dragging ? dragValue : Math.max(0, Math.min(1, value))
         signal moved(real v)
         signal stepped(int dir)
+
+        activeFocusOnTab: true
+        Keys.onPressed: (event) => {
+            var k = event.key;
+            if (k === Qt.Key_Right || k === Qt.Key_Up)
+                sl.stepped(1);
+            else if (k === Qt.Key_Left || k === Qt.Key_Down)
+                sl.stepped(-1);
+            else if (k === Qt.Key_Home || k === Qt.Key_End)
+                sl.moved(k === Qt.Key_Home ? sl.minimum : 1);
+            else
+                return;
+            event.accepted = true;
+        }
 
         Layout.fillWidth: true
         Layout.minimumWidth: 44
@@ -310,9 +360,9 @@ Item {
             height: 10
             radius: 5
             color: "#ffffff"
-            // Visible au survol et pendant le glisser seulement : au repos,
-            // la barre seule suffit.
-            opacity: slMa.containsMouse || sl.dragging ? 1 : 0
+            // Visible au survol, pendant le glisser et au clavier seulement :
+            // au repos, la barre seule suffit.
+            opacity: slMa.containsMouse || sl.dragging || sl.activeFocus ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: 160 } }
             scale: slMa.pressed ? 1.2 : 1
             Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
@@ -339,6 +389,7 @@ Item {
         WheelHandler {
             onWheel: (event) => sl.stepped(event.angleDelta.y > 0 ? 1 : -1)
         }
+        FocusRing { anchors.leftMargin: -6; anchors.rightMargin: -6 }
     }
 
     component Percent: Text {
@@ -448,6 +499,125 @@ Item {
                 icon: "screenshot.svg"
                 onClicked: (button) => top.screenshot(button === Qt.RightButton ? "screen" : "area")
             }
+        }
+
+        // La batterie, tout à droite comme sur un téléphone ; absente sur
+        // une machine sans batterie.
+        Pill {
+            visible: Battery.present
+            Layout.preferredWidth: batteryIcon.width + 22
+
+            BatteryIcon {
+                id: batteryIcon
+                anchors.centerIn: parent
+            }
+        }
+    }
+
+    // La batterie d'un téléphone : un corps arrondi, sa borne à droite, le
+    // niveau qui le remplit et le pourcentage gravé dedans — clair sur la
+    // partie vide, sombre sur la partie pleine. Verte en charge (avec
+    // l'éclair), rouge sous 20 %.
+    component BatteryIcon: Row {
+        id: bat
+        readonly property real level: Math.max(0, Math.min(100, Battery.percent)) / 100
+        readonly property bool charging: Battery.status === "Charging"
+                                         || (Battery.status === "Full" && Battery.percent >= 99)
+        readonly property color tone: bat.charging ? Theme.colorSuccess
+                                    : Battery.percent <= 20 ? Theme.colorDanger
+                                    : Theme.textPrimary
+
+        spacing: 3
+
+        // L'éclair, le temps de la charge.
+        Canvas {
+            id: bolt
+            anchors.verticalCenter: parent.verticalCenter
+            visible: bat.charging
+            width: 7
+            height: 11
+            property color tint: bat.tone
+            onTintChanged: requestPaint()
+            onPaint: {
+                var ctx = getContext("2d");
+                ctx.reset();
+                ctx.fillStyle = bolt.tint;
+                ctx.beginPath();
+                ctx.moveTo(4.4, 0);
+                ctx.lineTo(0, 6.3);
+                ctx.lineTo(3.1, 6.3);
+                ctx.lineTo(2.4, 11);
+                ctx.lineTo(7, 4.5);
+                ctx.lineTo(3.9, 4.5);
+                ctx.closePath();
+                ctx.fill();
+            }
+        }
+
+        // Le corps.
+        Item {
+            anchors.verticalCenter: parent.verticalCenter
+            width: 25
+            height: 12
+
+            Rectangle {
+                id: shell
+                anchors.fill: parent
+                radius: 3.5
+                color: Qt.alpha(Theme.textPrimary, 0.25)
+            }
+
+            // Le niveau, arrondi comme le corps.
+            Item {
+                id: fillClip
+                width: Math.round(shell.width * bat.level)
+                height: shell.height
+                clip: true
+                Behavior on width { NumberAnimation { duration: 400; easing.type: Easing.OutCubic } }
+
+                Rectangle {
+                    width: shell.width
+                    height: shell.height
+                    radius: shell.radius
+                    color: bat.tone
+                    Behavior on color { ColorAnimation { duration: 200 } }
+                }
+            }
+
+            // Le pourcentage : deux fois le même texte, l'un sur le vide,
+            // l'autre — sombre — découpé à la largeur du niveau.
+            Text {
+                id: pctLabel
+                anchors.centerIn: parent
+                text: Battery.percent
+                font.family: top.bar.uiFont
+                font.pixelSize: 9
+                font.weight: Font.Bold
+                font.features: { "tnum": 1 }
+                color: Theme.textPrimary
+            }
+            Item {
+                width: fillClip.width
+                height: shell.height
+                clip: true
+
+                Text {
+                    x: pctLabel.x
+                    y: pctLabel.y
+                    text: pctLabel.text
+                    font: pctLabel.font
+                    color: Theme.bgDeep
+                }
+            }
+        }
+
+        // La borne.
+        Rectangle {
+            anchors.verticalCenter: parent.verticalCenter
+            width: 2
+            height: 4
+            radius: 1
+            color: bat.level >= 0.99 ? bat.tone : Qt.alpha(Theme.textPrimary, 0.25)
         }
     }
 }

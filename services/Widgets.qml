@@ -13,27 +13,32 @@ import Quickshell
 // Les noms sont ceux de `names`, en français comme les outils du pilote.
 // Ceux de `hubTabs` vivent dans la capsule de la barre de conversation, que
 // le flocon agrandit vers le haut (panels/WidgetHub.qml) : un onglet chacun,
-// un seul affiché à la fois.
+// un seul affiché à la fois. « recherche » n'est pas un widget : les
+// résultats de ce qu'on tape dans le champ, qui l'ouvre de lui-même.
 // « camera » reste une carte flottante (FloatingWidgets), « sessions » le
 // dock IA.
 Singleton {
     id: widgets
 
-    readonly property var names: ["stats", "network", "musique", "metronome", "accordeur", "son", "camera", "reglages", "sessions"]
+    readonly property var names: ["stats", "network", "telephone", "musique", "metronome", "accordeur", "son", "camera", "reglages", "sessions"]
 
     // Les onglets des widgets, dans l'ordre de la barre d'onglets.
-    readonly property var hubTabs: ["stats", "network", "musique", "metronome", "accordeur", "reglages"]
+    readonly property var hubTabs: ["recherche", "stats", "network", "telephone", "musique", "metronome", "accordeur", "reglages"]
     readonly property var hubLabels: ({
+        recherche: "Recherche",
         stats: "Système",
         network: "Network",
+        telephone: "Téléphone",
         musique: "Musique",
         metronome: "Métronome",
         accordeur: "Accordeur",
         reglages: "Réglages"
     })
     readonly property var hubIcons: ({
+        recherche: "search.svg",
         stats: "stats.svg",
         network: "server.svg",
+        telephone: "phone.svg",
         musique: "music.svg",
         metronome: "metronome.svg",
         accordeur: "tuner.svg",

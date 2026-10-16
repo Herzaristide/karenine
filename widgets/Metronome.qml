@@ -128,6 +128,16 @@ Item {
                     horizontalAlignment: TextInput.AlignHCenter
                     selectByMouse: true
                     validator: IntValidator { bottom: 20; top: 300 }
+                    // Au clavier : Tab y arrive, ↑ ↓ changent le tempo d'un
+                    // battement (Maj : de dix), Entrée valide ce qu'on a tapé.
+                    activeFocusOnTab: true
+                    Keys.onUpPressed: (event) => bpmInput.nudge(event.modifiers & Qt.ShiftModifier ? 10 : 1)
+                    Keys.onDownPressed: (event) => bpmInput.nudge(event.modifiers & Qt.ShiftModifier ? -10 : -1)
+                    function nudge(d) {
+                        metroPanel.bpm = metroPanel.clampBpm(metroPanel.bpm + d)
+                        text = metroPanel.bpm.toString()
+                    }
+                    FocusRing { radius: 14; gap: 2 }
                     onEditingFinished: {
                         var v = parseInt(text)
                         if (!isNaN(v)) metroPanel.bpm = metroPanel.clampBpm(v)

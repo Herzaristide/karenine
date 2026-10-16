@@ -23,9 +23,10 @@ pub const SENSITIVE: [&str; 3] = ["fermer_fenetre", "commande", "reconstruire_ni
 const OUTPUT_MAX: usize = 4000;
 
 /// The shell's widgets (services/Widgets.qml), plus « tout ».
-const WIDGETS: [&str; 10] = [
+const WIDGETS: [&str; 11] = [
     "stats",
     "network",
+    "telephone",
     "musique",
     "metronome",
     "accordeur",
@@ -113,7 +114,7 @@ pub fn tools() -> Value {
             json!({ "chemin": s("chemin relatif au coffre, tel que chercher_notes le donne") }), &["chemin"]),
         tool("widget",
             "Ouvre, ferme ou bascule un widget de l'interface : « stats » (processeur, mémoire, \
-             disques), « network » (les appareils du réseau Tailscale, avec leurs stats par ssh), « musique » (lecteur en cours, paroles), « metronome » (métronome), « accordeur » (accordeur), \
+             disques), « network » (les appareils du réseau Tailscale, avec leurs stats par ssh), « telephone » (le téléphone relié par KDE Connect : batterie, notifications, le faire sonner), « musique » (lecteur en cours, paroles), « metronome » (métronome), « accordeur » (accordeur), \
              « son » (ouvre les réglages), « camera » (contrôle gestuel), « reglages » \
              (sorties et entrées audio, webcam, luminosité, écran, thème), « sessions » (le dock des sessions Claude et du savoir). « tout » avec \
              « fermer » referme tout.",

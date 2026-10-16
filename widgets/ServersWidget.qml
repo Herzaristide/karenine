@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
+import Quickshell
 import Quickshell.Io
 import "../services"
 
@@ -9,13 +10,16 @@ import "../services"
 // relue toutes les 3 s : un appareil qui rejoint le réseau apparaît seul.
 // Les Linux en ligne sont interrogés par ssh, sans rien installer sur eux ;
 // les autres (téléphone…) montrent leur état, leur système et leur adresse.
+// Sur chaque Linux : une session ssh dans le terminal, le redémarrage et
+// l'extinction ; hors ligne, le réveil par Wake-on-LAN
+// (anna/src/servers.rs::power).
 //
 //   ╭ ● gary         45°C ╮ ╭ ● Pixel 9a          ╮
 //   │ gary · actif 3 j    │ │ android · 100.71…   │
 //   │ Processeur  ▬▬── 12%│ │                     │
 //   │ Mémoire     ▬▬▬─ 3 Go│ │                     │
 //   │ Disque      ▬─── 24%│ │                     │
-//   │ ( Fichiers )        │ │                     │
+//   │ (>_)         (↻) (⏻) │ │                     │
 //   ╰─────────────────────╯ ╰─────────────────────╯
 Item {
     id: root
@@ -59,11 +63,84 @@ Item {
     onVisibleChanged: if (!visible) watchSock.connected = false
 
 
-    // Les fichiers d'un appareil : Dolphin sait parler sftp.
+    // ── Les actions ──────────────────────────────────────────────
+    // Une session sur l'appareil : `ssh` dans le terminal du système
+    // (DefaultApps), chacun avec sa façon de recevoir une commande.
+    function openTerminal(cmd) {
+        var t = DefaultApps.terminal;
+        if (!t || t.argv.length === 0)
+            return;
+        // Les codes d'une entrée .desktop (%U…) n'ont rien à faire ici.
+        var argv = t.argv.filter(a => a.indexOf("%") !== 0);
+        var bin = t.bin.split("/").pop();
+        if (bin === "wezterm")
+            argv = argv.concat(["start", "--"]);
+        else if (bin === "gnome-terminal")
+            argv = argv.concat(["--"]);
+        else if (bin !== "foot" && bin !== "kitty")
+            argv = argv.concat(["-e"]);
+        Quickshell.execDetached(argv.concat(cmd));
+    }
+
+    // Ce que la dernière action a donné, par appareil : { nom: texte }. Il
+    // remplace la ligne sous le nom un moment.
+    property var notices: ({})
+    function notify(name, text) {
+        var n = Object.assign({}, root.notices);
+        n[name] = { text: text, at: Date.now() };
+        root.notices = n;
+    }
+    Timer {
+        interval: 1000
+        repeat: true
+        running: Object.keys(root.notices).length > 0
+        onTriggered: {
+            var n = {};
+            for (var k in root.notices)
+                if (Date.now() - root.notices[k].at < 20000)
+                    n[k] = root.notices[k];
+            root.notices = n;
+        }
+    }
+
+    // Allumer (Wake-on-LAN), éteindre ou redémarrer (ssh), par le client
+    // d'anna. Refusé faute de sudo sans mot de passe : la même commande
+    // s'ouvre dans le terminal, pour le taper.
+    readonly property var powerSays: ({ on: "Réveil envoyé…", off: "Extinction…", reboot: "Redémarrage…" })
+    readonly property var powerCommand: ({ off: "sudo systemctl poweroff", reboot: "sudo systemctl reboot" })
+
+    function power(srv, action) {
+        if (powerProc.running)
+            return;
+        root.notify(srv.name, root.powerSays[action]);
+        powerProc.server = srv;
+        powerProc.action = action;
+        powerProc.command = ["anna", "servers", action, srv.name];
+        powerProc.running = true;
+    }
+
     Process {
-        id: filesProc
-        property string target: ""
-        command: ["dolphin", "--new-window", "sftp://" + filesProc.target + "/"]
+        id: powerProc
+        property var server: null
+        property string action: ""
+        stdout: StdioCollector { id: powerOut }
+        onRunningChanged: {
+            if (running)
+                return;
+            var r = null;
+            try { r = JSON.parse(powerOut.text); } catch (e) { /* anna absent */ }
+            if (!r && powerOut.text.indexOf("Usage") >= 0) {
+                // Le client répond par son aide : un anna d'avant ces actions.
+                root.notify(powerProc.server.name, "anna trop ancien : reconstruis-le.");
+            } else if (!r) {
+                root.notify(powerProc.server.name, "anna ne répond pas.");
+            } else if (!r.ok && root.powerCommand[powerProc.action] && (r.error || "").indexOf("sudo") >= 0) {
+                root.notify(powerProc.server.name, "sudo demande un mot de passe : terminal ouvert.");
+                root.openTerminal(["ssh", "-t", powerProc.server.host, root.powerCommand[powerProc.action]]);
+            } else if (!r.ok) {
+                root.notify(powerProc.server.name, r.error || "Échec.");
+            }
+        }
     }
 
     // ── Petits éléments ──────────────────────────────────────────
@@ -109,6 +186,8 @@ Item {
 
     // La ligne sous le nom.
     function subtitle(srv) {
+        if (root.notices[srv.name])
+            return root.notices[srv.name].text;
         if (root.measured(srv))
             return [srv.hostname, root.formatUptime(srv.uptime_s)].filter(t => t).join("  ·  ");
         if (!srv.online)
@@ -139,6 +218,43 @@ Item {
             if (!best || srv.disks[i].size > best.size)
                 best = srv.disks[i];
         return best;
+    }
+
+    // Le bouton d'une tuile : rond, une icône ; atteint au clavier (Tab), sa
+    // tuile (`tileIndex`) défile en vue.
+    component TileButton: GlassButton {
+        property int tileIndex: 0
+        implicitHeight: 28
+        fontSize: 11
+        onActiveFocusChanged: if (activeFocus) list.positionViewAtIndex(tileIndex, ListView.Contain)
+    }
+
+    // Redémarrer ou éteindre `server` : le premier appui arme le bouton (en
+    // rouge, avec `confirm`) 3 s, le second agit.
+    component PowerAction: TileButton {
+        id: pa
+        property var server
+        property string action
+        property string confirm
+        property bool armed: false
+        text: pa.armed ? pa.confirm : ""
+        danger: pa.armed
+        onActiveFocusChanged: if (!activeFocus) pa.armed = false
+        onClicked: {
+            if (!pa.armed) {
+                pa.armed = true;
+                paDisarm.restart();
+                return;
+            }
+            pa.armed = false;
+            paDisarm.stop();
+            root.power(pa.server, pa.action);
+        }
+        Timer {
+            id: paDisarm
+            interval: 3000
+            onTriggered: pa.armed = false
+        }
     }
 
     component Meter: Item {
@@ -190,6 +306,9 @@ Item {
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         model: root.servers
+        // Toutes les tuiles existent, même hors de vue : Tab les atteint
+        // toutes (quelques appareils, pas des centaines).
+        cacheBuffer: 4000
         // La molette fait défiler les tuiles de côté.
         WheelHandler {
             onWheel: (event) => {
@@ -201,6 +320,7 @@ Item {
         delegate: Rectangle {
             id: tile
             required property var modelData
+            required property int index
             readonly property var disk: root.mainDisk(tile.modelData)
             readonly property bool measured: root.measured(tile.modelData)
             // En ligne pour Tailscale, mais ssh a échoué : son erreur à la place.
@@ -283,15 +403,46 @@ Item {
 
                 Item { Layout.fillHeight: true }
 
-                GlassButton {
-                    Layout.alignment: Qt.AlignLeft
-                    implicitHeight: 28
-                    fontSize: 11
-                    text: "Fichiers"
-                    visible: tile.measured
-                    onClicked: {
-                        filesProc.target = tile.modelData.host;
-                        filesProc.running = true;
+                // Des icônes : en ligne, une session à gauche, redémarrer et
+                // éteindre à droite (à confirmer : le premier appui teinte le
+                // bouton en rouge et dit ce qu'il va faire, 3 s ; le second
+                // agit). Hors ligne : le réveil, si son adresse MAC est connue.
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+
+                    TileButton {
+                        tileIndex: tile.index
+                        icon: Qt.resolvedUrl("../assets/icons/terminal.svg")
+                        // Aussi quand ssh échoue : on y tape la phrase de passe.
+                        visible: tile.modelData.online && tile.modelData.host !== ""
+                        onClicked: root.openTerminal(["ssh", tile.modelData.host])
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    PowerAction {
+                        tileIndex: tile.index
+                        server: tile.modelData
+                        icon: Qt.resolvedUrl("../assets/icons/reboot.svg")
+                        confirm: "Redémarrer ?"
+                        action: "reboot"
+                        visible: tile.measured
+                    }
+                    PowerAction {
+                        tileIndex: tile.index
+                        server: tile.modelData
+                        icon: Qt.resolvedUrl("../assets/icons/power.svg")
+                        confirm: "Éteindre ?"
+                        action: "off"
+                        visible: tile.measured
+                    }
+                    TileButton {
+                        tileIndex: tile.index
+                        icon: Qt.resolvedUrl("../assets/icons/power.svg")
+                        accent: true
+                        visible: !tile.modelData.online && tile.modelData.can_wake === true
+                        onClicked: root.power(tile.modelData, "on")
                     }
                 }
             }

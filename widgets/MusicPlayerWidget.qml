@@ -727,6 +727,32 @@ Item {
                 radius: height / 2
                 color: Qt.alpha(Theme.textPrimary, 0.1)
 
+                // Au clavier : ← → reculent ou avancent de 5 s, Début revient
+                // au début du morceau.
+                readonly property bool seekable: root.hasPlayer && root.player && root.player.canSeek
+                activeFocusOnTab: progressTrack.seekable
+                function seekBy(dt) {
+                    root.player.position = Math.max(0, Math.min(root.player.length, root.player.position + dt));
+                }
+                Keys.onPressed: (event) => {
+                    if (!progressTrack.seekable)
+                        return;
+                    if (event.key === Qt.Key_Left)
+                        progressTrack.seekBy(-5);
+                    else if (event.key === Qt.Key_Right)
+                        progressTrack.seekBy(5);
+                    else if (event.key === Qt.Key_Home)
+                        root.player.position = 0;
+                    else
+                        return;
+                    event.accepted = true;
+                }
+
+                FocusRing {
+                    anchors.topMargin: -5
+                    anchors.bottomMargin: -5
+                }
+
                 readonly property real ratio: {
                     if (!root.hasPlayer || !root.player.length || root.player.length <= 0) return 0;
                     return Math.max(0, Math.min(1, root.player.position / root.player.length));
@@ -747,7 +773,7 @@ Item {
                     border.color: Theme.bgDeep
                     x: parent.width * progressTrack.ratio - width / 2
                     y: (parent.height - height) / 2
-                    visible: seekArea.containsMouse || seekArea.pressed
+                    visible: seekArea.containsMouse || seekArea.pressed || progressTrack.activeFocus
                     Behavior on x { SmoothedAnimation { velocity: 200 } }
                 }
 
@@ -939,14 +965,23 @@ Item {
         implicitWidth: size
         implicitHeight: size
 
+        // Au clavier : Tab, puis Entrée ou Espace (désactivé, Tab le saute).
+        activeFocusOnTab: true
+        Keys.onPressed: (event) => {
+            if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                btn.activated();
+                event.accepted = true;
+            }
+        }
+
         Rectangle {
             id: bg
             anchors.fill: parent
             radius: width / 2
             // Le style de la barre : translucide, teinté pour l'action principale.
             color: btn.accent
-                   ? Qt.alpha(Theme.glow(0), ma.containsMouse ? 0.3 : 0.2)
-                   : Qt.alpha(Theme.textPrimary, ma.containsMouse ? 0.1 : 0.06)
+                   ? Qt.alpha(Theme.glow(0), ma.containsMouse || btn.activeFocus ? 0.3 : 0.2)
+                   : Qt.alpha(Theme.textPrimary, ma.containsMouse || btn.activeFocus ? 0.1 : 0.06)
             opacity: btn.enabled ? 1.0 : 0.35
             border.width: 1
             border.color: btn.accent ? Qt.alpha(Theme.glow(0), 0.42) : Qt.alpha(Theme.textPrimary, 0.1)
@@ -980,5 +1015,7 @@ Item {
             cursorShape: btn.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
             onClicked: if (btn.enabled) btn.activated()
         }
+
+        FocusRing {}
     }
 }

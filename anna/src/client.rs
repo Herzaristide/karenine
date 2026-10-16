@@ -69,7 +69,19 @@ fn build_command(args: &[String]) -> Option<(serde_json::Value, bool)> {
         "servers" => match arg(2) {
             None | Some("list") => (json!({"cmd": "servers_list"}), false),
             Some("watch") => (json!({"cmd": "servers_watch"}), true),
+            Some(action @ ("on" | "off" | "reboot")) => (
+                json!({"cmd": "servers_power", "name": arg(3)?, "action": action}),
+                false,
+            ),
             _ => return None,
+        },
+        "phone" => match arg(2) {
+            None | Some("watch") => (json!({"cmd": "phone_watch"}), true),
+            Some("screen") => (json!({"cmd": "phone_screen", "name": arg(3)?}), false),
+            Some(action) => (
+                json!({"cmd": "phone_action", "action": action, "device": arg(3)?, "arg": arg(4).unwrap_or("")}),
+                false,
+            ),
         },
         "voice" => match arg(2) {
             None | Some("toggle") => (json!({"cmd": "voice_toggle"}), false),
@@ -164,6 +176,11 @@ fn usage() -> ! {
            voice wake [on|off]                    Wake word « Karénine » (toggle)\n\
            voice transcribe <file.wav>            Transcribe a 16 kHz mono WAV\n\
            servers [list] | watch                 Tailnet devices / their stats (ssh)\n\
+           servers on|off|reboot <name>           Wake-on-LAN / power off, reboot (ssh)\n\
+           phone [watch]                          KDE Connect phones: battery, notifications\n\
+           phone ring|ping|browse|clipboard|accept|reject <device>\n\
+           phone share <device> <path> | dismiss <device> <notification>\n\
+           phone screen <name>                    Its screen: the scrcpy command (USB, else Tailscale)\n\
          \n\
          Claude Code hook (in its settings, not by hand):\n\
            hook                                    Forward one event from stdin"
@@ -273,6 +290,18 @@ mod tests {
             parses(&["claude", "transcript", "/x.jsonl"]),
             Command::ClaudeTranscript { .. }
         ));
+        assert!(matches!(parses(&["phone"]), Command::PhoneWatch));
+        assert!(matches!(
+            parses(&["phone", "share", "abc_123", "/tmp/x"]),
+            Command::PhoneAction { .. }
+        ));
+        assert!(matches!(parses(&["phone", "screen", "Pixel 9a"]), Command::PhoneScreen { .. }));
+        for action in ["on", "off", "reboot"] {
+            assert!(matches!(
+                parses(&["servers", action, "gary"]),
+                Command::ServersPower { .. }
+            ));
+        }
     }
 
     /// The hook's message must parse as a daemon command too.

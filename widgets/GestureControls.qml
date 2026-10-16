@@ -28,6 +28,14 @@ Item {
         }
     }
 
+    // Entrée ou Espace : `action()`.
+    function activates(event, action) {
+        if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+            action();
+            event.accepted = true;
+        }
+    }
+
     ColumnLayout {
         id: content
         anchors { left: parent.left; right: parent.right; top: parent.top }
@@ -56,6 +64,11 @@ Item {
                 border.width: 1
                 border.color: Gesture.enabled ? Theme.accentColor : Theme.dividerColor
                 Behavior on color { ColorAnimation { duration: 200 } }
+
+                // Au clavier : Tab, puis Entrée ou Espace.
+                activeFocusOnTab: Gesture.available
+                Keys.onPressed: (event) => popup.activates(event, () => Gesture.setEnabled(!Gesture.enabled))
+                FocusRing {}
 
                 Rectangle {
                     width: 16; height: 16; radius: 8
@@ -121,10 +134,14 @@ Item {
                 Layout.preferredHeight: 32
                 radius: 8
                 color: selected ? Qt.rgba(Theme.accentColor.r, Theme.accentColor.g, Theme.accentColor.b, 0.14)
-                                : (camMa.containsMouse ? Theme.hoverOverlay : "transparent")
+                                : (camMa.containsMouse || activeFocus ? Theme.hoverOverlay : "transparent")
                 border.width: 1
                 border.color: selected ? Theme.accentColor : Theme.dividerColor
                 Behavior on color { ColorAnimation { duration: 120 } }
+
+                activeFocusOnTab: true
+                Keys.onPressed: (event) => popup.activates(event, () => Gesture.setCamera(camRow.modelData.path))
+                FocusRing { radius: camRow.radius + gap }
 
                 RowLayout {
                     anchors { fill: parent; leftMargin: 12; rightMargin: 12 }

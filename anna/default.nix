@@ -57,6 +57,9 @@ pkgs.rustPlatform.buildRustPackage {
     #   ssh (openssh)
     #     → the stats of the tailnet devices (servers.rs); the tailscale CLI
     #       itself is left to the ambient PATH, to match its daemon
+    #   busctl (systemd)
+    #     → the KDE Connect phones, over kdeconnectd's D-Bus API (phone.rs);
+    #       kdeconnectd itself comes from the NixOS configuration
     #   wpctl (wireplumber), brightnessctl, playerctl, wl-paste (wl-clipboard),
     #   xdg-open (xdg-utils), grimblast
     #     → the pilot's desk tools (claude/desk.rs)
@@ -97,6 +100,7 @@ pkgs.rustPlatform.buildRustPackage {
             xdg-utils
             grimblast
             openssh
+            systemd
             (whisper-cpp.override { vulkanSupport = true; })
             vulkan-tools
           ]

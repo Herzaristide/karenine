@@ -44,6 +44,31 @@ pub enum Command {
     ServersWatch,
     /// Print the devices of the tailnet: `[{"name","host","os",…}, …]`.
     ServersList,
+    /// Turn a device `on` (Wake-on-LAN), `off` or `reboot` (ssh), see
+    /// servers.rs::power: `{"ok":true}` or `{"ok":false,"error":"…"}`.
+    ServersPower {
+        name: String,
+        action: String,
+    },
+
+    // ── phones (KDE Connect, see phone.rs) ────────────────────────────────
+    /// Keep connection open; daemon pushes `{"phone":{"running",
+    /// "phones":[Phone…]}}` every 2 s.
+    PhoneWatch,
+    /// Act on a device (phone.rs::act): `{"ok":true}` or
+    /// `{"ok":false,"error":"…"}`.
+    PhoneAction {
+        device: String,
+        action: String,
+        #[serde(default)]
+        arg: String,
+    },
+    /// How to show phone `name`'s screen (phone.rs::screen):
+    /// `{"ok":true,"command":["scrcpy",…]}`, for the shell to launch in the
+    /// session, or `{"ok":false,"error":"…"}`.
+    PhoneScreen {
+        name: String,
+    },
 
     // ── audio services (native cpal + rustfft) ────────────────────────────
     /// Keep connection open; daemon captures the mic and pushes one

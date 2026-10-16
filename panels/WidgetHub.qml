@@ -17,7 +17,7 @@ import "../widgets"
 //   │                                                │
 //   │      le widget de l'onglet, à l'horizontale     │  fondu croisé et léger
 //   │                                                │  glissement d'un onglet
-//   │  ▦ Système  ▤ Network  ▶ Musique  △ Métronome…   │  à l'autre
+//   │  ⌕ Recherche  ▦ Système  ▤ Network  ▶ Musique…  │  à l'autre
 //   │ ────────────────────────────────────────────── │
 //   │ ❄  Demander à Karénine…                     🎤 │  le champ, inchangé
 //   ╰────────────────────────────────────────────────╯
@@ -26,13 +26,55 @@ import "../widgets"
 // et règle la hauteur de la capsule ; ce composant remplit ce qu'on lui
 // donne. Un onglet n'existe que tant qu'il est affiché (Loader) : caché, son
 // widget ne fait plus tourner ses processus (sondes, lecteur, micro).
-Item {
+//
+// Au clavier, tout s'atteint : Tab et Maj+Tab passent d'un contrôle à
+// l'autre (la barre du haut, le widget, les onglets, puis le champ), Entrée
+// ou Espace actionne, les flèches règlent ce qui se règle. Ailleurs, et
+// dans le champ vide, ← → changent de widget ; Ctrl+Tab aussi. Échap rend
+// le clavier au champ. Une portée de focus : la barre sait qu'il est ici.
+FocusScope {
     id: hub
 
     // La barre de conversation : sa teinte et sa police.
     required property var bar
     // De 0 à 1 : la part de la capsule ouverte (ConversationBar.expand).
     property real expand: 0
+    // L'onglet « Recherche » : la liste des résultats, que la barre fournit
+    // (elle tient la sélection au clavier et les contrôles des réglages).
+    property Component searchPage: null
+
+    // Échap : le clavier retourne au champ.
+    signal leave()
+
+    // L'onglet d'à côté (dir : 1 ou -1), en boucle. Le clavier, s'il était
+    // dans le widget qui s'en va, passe sur les onglets.
+    function step(dir) {
+        var n = Widgets.hubTabs.length;
+        if (content.activeFocus)
+            tabBar.forceActiveFocus();
+        Widgets.hubTab = Widgets.hubTabs[(hub.current + dir + n) % n];
+    }
+
+    // Le clavier sur les onglets (↑ depuis le champ).
+    function enter() {
+        tabBar.forceActiveFocus();
+    }
+
+    Keys.onPressed: (event) => {
+        var ctrl = event.modifiers & Qt.ControlModifier;
+        if (ctrl && (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)) {
+            hub.step(event.key === Qt.Key_Backtab ? -1 : 1);
+            event.accepted = true;
+        } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
+            // Ce qui se règle aux flèches (curseurs, sélecteurs) les garde ;
+            // ailleurs, elles passent au widget d'à côté.
+            hub.step(event.key === Qt.Key_Left ? -1 : 1);
+            event.accepted = true;
+        } else if (event.key === Qt.Key_Escape) {
+            hub.leave();
+            event.accepted = true;
+        }
+    }
 
     readonly property int pad: 14
     readonly property int tabsH: 40
@@ -42,8 +84,11 @@ Item {
 
     // La hauteur de chaque widget, à l'horizontale.
     readonly property var heights: ({
+        // Trois rangées de tuiles de résultats (ConversationBar.searchPage).
+        recherche: 300,
         stats: 196,
         network: 196,
+        telephone: 196,
         musique: 210,
         metronome: 150,
         accordeur: 150,
@@ -87,7 +132,7 @@ Item {
     }
 
     // ── Le widget ────────────────────────────────────────────────
-    Item {
+    FocusScope {
         id: content
         x: hub.pad + 4
         y: hub.pad + hub.topH + 2 * hub.gap + 1
@@ -106,6 +151,8 @@ Item {
                 width: content.width
                 height: hub.heights[page.modelData] || 200
                 active: hub.expand > 0 && (page.isCurrent || page.opacity > 0)
+                // Celui qui s'efface n'est plus atteignable, ni au clic ni à Tab.
+                enabled: page.isCurrent
                 // Créé par petits morceaux, entre les images : les gros widgets
                 // (musique, réglages) ne figent plus le début de l'ouverture.
                 asynchronous: true
@@ -119,8 +166,10 @@ Item {
                     Behavior on x { NumberAnimation { duration: 420; easing.type: Easing.OutQuint } }
                 }
 
-                sourceComponent: page.modelData === "stats" ? statsPage
+                sourceComponent: page.modelData === "recherche" ? hub.searchPage
+                               : page.modelData === "stats" ? statsPage
                                : page.modelData === "network" ? serversPage
+                               : page.modelData === "telephone" ? phonePage
                                : page.modelData === "musique" ? musicPage
                                : page.modelData === "metronome" ? metronomePage
                                : page.modelData === "accordeur" ? tunerPage
@@ -131,6 +180,7 @@ Item {
 
     Component { id: statsPage; HardwareStats {} }
     Component { id: serversPage; ServersWidget {} }
+    Component { id: phonePage; PhoneWidget {} }
     Component { id: musicPage; MusicPlayerWidget {} }
     Component { id: metronomePage; Metronome { active: true } }
     Component { id: tunerPage; Tuner { active: true } }
@@ -147,6 +197,16 @@ Item {
 
         readonly property real tabW: width / Widgets.hubTabs.length
 
+        // Un seul arrêt de Tab pour toute la barre : ← → changent d'onglet
+        // (le hub s'en charge), Début et Fin vont aux extrémités.
+        activeFocusOnTab: true
+        Keys.onPressed: (event) => {
+            if (event.key === Qt.Key_Home || event.key === Qt.Key_End) {
+                Widgets.hubTab = Widgets.hubTabs[event.key === Qt.Key_Home ? 0 : Widgets.hubTabs.length - 1];
+                event.accepted = true;
+            }
+        }
+
         // La pastille de l'onglet actif : la même que l'indicateur du
         // micro, qui glisse d'un onglet à l'autre.
         Rectangle {
@@ -158,6 +218,8 @@ Item {
             color: Qt.alpha(hub.bar.hue(0), 0.16)
             border.width: 1
             border.color: Qt.alpha(hub.bar.hue(0), 0.38)
+
+            FocusRing { watch: tabBar; gap: 2 }
         }
 
         Repeater {
@@ -213,6 +275,10 @@ Item {
 
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
+                        // Huit onglets se partagent la largeur : un nom trop
+                        // long s'abrège plutôt que de déborder sur le voisin.
+                        width: Math.min(implicitWidth, tabBar.tabW - 16 - 7 - 10)
+                        elide: Text.ElideRight
                         text: Widgets.hubLabels[tab.modelData]
                         font.family: hub.bar.uiFont
                         font.pixelSize: 12

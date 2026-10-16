@@ -412,10 +412,24 @@ Item {
                     required property int index
                     readonly property real pct: disk.modelData.size > 0 ? disk.modelData.used / disk.modelData.size : 0
 
+                    function open() {
+                        hwPanel.openTarget = disk.modelData.mount;
+                        openFolderProc.running = true;
+                    }
+
+                    // Au clavier aussi : Tab, puis Entrée ou Espace.
+                    activeFocusOnTab: true
+                    Keys.onPressed: (event) => {
+                        if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                            disk.open();
+                            event.accepted = true;
+                        }
+                    }
+
                     Layout.fillWidth: true
                     Layout.preferredHeight: 52
                     radius: 16
-                    color: Qt.alpha(Theme.textPrimary, diskMa.containsMouse ? 0.09 : 0.05)
+                    color: Qt.alpha(Theme.textPrimary, diskMa.containsMouse || disk.activeFocus ? 0.09 : 0.05)
                     border.width: 1
                     border.color: Qt.alpha(Theme.textPrimary, 0.08)
                     Behavior on color { ColorAnimation { duration: 140 } }
@@ -468,11 +482,10 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            hwPanel.openTarget = disk.modelData.mount;
-                            openFolderProc.running = true;
-                        }
+                        onClicked: disk.open()
                     }
+
+                    FocusRing { radius: disk.radius + gap }
                 }
             }
         }

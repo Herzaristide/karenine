@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import "../services"
+import "../widgets"
 
 // Une carte flottante de FloatingWidgets : un en-tête qu'on attrape pour la
 // déplacer, une croix, et le widget lui-même. Le widget n'existe que tant que
@@ -52,6 +53,10 @@ Rectangle {
         card.raised();
     }
 
+    // Le clavier, une fois la carte cliquée (la surface le prend à la
+    // demande) : Tab parcourt ses contrôles, Échap la ferme.
+    Keys.onEscapePressed: Widgets.apply(card.name, "fermer")
+
     // Avale les clics hors en-tête, et ramène la carte devant.
     MouseArea {
         anchors.fill: parent
@@ -90,19 +95,29 @@ Rectangle {
         }
 
         Rectangle {
+            id: closeBtn
             anchors.right: parent.right
             anchors.rightMargin: 8
             anchors.verticalCenter: parent.verticalCenter
             width: 20
             height: 20
             radius: 10
-            color: closeMa.containsMouse ? Theme.hoverOverlay : "transparent"
+            color: closeMa.containsMouse || closeBtn.activeFocus ? Theme.hoverOverlay : "transparent"
+
+            activeFocusOnTab: true
+            Keys.onPressed: (event) => {
+                if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                    Widgets.apply(card.name, "fermer");
+                    event.accepted = true;
+                }
+            }
+            FocusRing { gap: 1 }
 
             Text {
                 anchors.centerIn: parent
                 text: "×"
                 font.pixelSize: 14
-                color: closeMa.containsMouse ? Theme.textPrimary : Theme.textDim
+                color: closeMa.containsMouse || closeBtn.activeFocus ? Theme.textPrimary : Theme.textDim
             }
 
             MouseArea {

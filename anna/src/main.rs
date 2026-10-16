@@ -31,6 +31,7 @@
 //!   - theme    : accent/palette (set/mode/palette-color/get/watch)
 //!   - hwstats  : hardware stats (hwstats_get / hwstats_watch)
 //!   - servers  : tailnet devices, stats over ssh (servers_watch / servers_list)
+//!   - phone    : KDE Connect phones (phone_watch / phone_action)
 //!   - gesture  : webcam control (gesture_get/set/toggle/watch)
 //!   - claude   : live Claude Code sessions (claude_hook/list/watch/focus)
 
@@ -45,6 +46,7 @@ mod hwstats;
 mod metronome;
 mod msi;
 mod paths;
+mod phone;
 mod protocol;
 mod servers;
 mod state;
@@ -87,7 +89,7 @@ async fn main() {
                 tokio::time::sleep(Duration::from_secs(3600)).await;
             }
         }
-        Some("gesture" | "claude" | "pilot" | "voice" | "servers") => {
+        Some("gesture" | "claude" | "pilot" | "voice" | "servers" | "phone") => {
             client::run(&args);
         }
         // Claude Code hook: must stay silent and exit 0 whatever happens.
@@ -418,6 +420,43 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
         Command::ServersList => {
             let json = serde_json::to_string(&servers::load().await).unwrap_or_default();
             let _ = write_line(&mut writer, &json).await;
+        }
+
+        Command::ServersPower { name, action } => {
+            let reply = match servers::power(&name, &action).await {
+                Ok(()) => serde_json::json!({ "ok": true }),
+                Err(e) => serde_json::json!({ "ok": false, "error": e }),
+            };
+            let _ = write_line(&mut writer, &reply.to_string()).await;
+        }
+
+        // ── phones (KDE Connect) ─────────────────────────────────────────
+        Command::PhoneWatch => {
+            let mut interval = tokio::time::interval(Duration::from_secs(2));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                let json = serde_json::json!({ "phone": phone::sample().await }).to_string();
+                if write_line(&mut writer, &json).await.is_err() {
+                    break; // socket closed
+                }
+            }
+        }
+
+        Command::PhoneAction { device, action, arg } => {
+            let reply = match phone::act(&device, &action, &arg).await {
+                Ok(()) => serde_json::json!({ "ok": true }),
+                Err(e) => serde_json::json!({ "ok": false, "error": e }),
+            };
+            let _ = write_line(&mut writer, &reply.to_string()).await;
+        }
+
+        Command::PhoneScreen { name } => {
+            let reply = match phone::screen(&name).await {
+                Ok(command) => serde_json::json!({ "ok": true, "command": command }),
+                Err(e) => serde_json::json!({ "ok": false, "error": e }),
+            };
+            let _ = write_line(&mut writer, &reply.to_string()).await;
         }
 
         // ── audio services ───────────────────────────────────────────────
