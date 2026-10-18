@@ -5,15 +5,17 @@ import QtQuick.Layouts
 import QtCore
 import Quickshell
 import Quickshell.Io
+import Quickshell.Bluetooth
 import "../services"
 import "../widgets"
 
 // La barre du haut des widgets, la même quel que soit l'onglet. Quatre
 // groupes posés sur le verre, chacun dans sa pilule : l'alimentation à
-// gauche, les niveaux (luminosité, volume) au milieu, la capture et la
-// batterie à droite.
+// gauche, les niveaux (luminosité, volume) au milieu, le Bluetooth et la
+// capture, puis la batterie à droite. Le Bluetooth déplie la liste des
+// appareils (widgets/BluetoothMenu.qml).
 //
-//   ╭ 🔒 ☾ ⇥ ↻ ⏻ ╮   ╭ ☀ ━━●── 80 %  │  🔊 ━━━●─ 64 % ╮  ╭ ⌗ ╮  ╭ [87]▸ ╮
+//   ╭ 🔒 ☾ ⇥ ↻ ⏻ ╮   ╭ ☀ ━━●── 80 %  │  🔊 ━━━●─ 64 % ╮  ╭ ᛒ ⌗ ╮  ╭ [87]▸ ╮
 //
 // Chaque bouton d'alimentation agit dès le premier clic, sans confirmation.
 // Les curseurs se partagent la place qui reste : la barre peut être étroite.
@@ -308,6 +310,24 @@ Item {
         color: Theme.textSecondary
     }
 
+    // ── Le Bluetooth ─────────────────────────────────────────────
+    // Un menu déplié sous son bouton (widgets/BluetoothMenu.qml) ; un clic
+    // à côté, ou la capsule qui se referme, le replie.
+    property bool btOpen: false
+    readonly property bool btPowered: Bluetooth.defaultAdapter !== null && Bluetooth.defaultAdapter.enabled
+    readonly property bool btConnected: top.btPowered
+                                        && Bluetooth.defaultAdapter.devices.values.some(d => d.connected)
+    onVisibleChanged: if (!top.visible) top.btOpen = false
+
+    MouseArea {
+        visible: top.btOpen
+        x: -2000
+        y: top.height
+        width: top.width + 4000
+        height: 4000
+        onClicked: top.btOpen = false
+    }
+
     // ── La barre ─────────────────────────────────────────────────
     RowLayout {
         anchors.fill: parent
@@ -395,14 +415,42 @@ Item {
             }
         }
 
-        // La capture.
+        // Le Bluetooth et la capture.
         Pill {
-            Layout.preferredWidth: top.height
+            Layout.preferredWidth: toolsRow.width + 8
 
-            IconButton {
+            Row {
+                id: toolsRow
                 anchors.centerIn: parent
-                icon: "screenshot.svg"
-                onClicked: (button) => top.screenshot(button === Qt.RightButton ? "screen" : "area")
+                spacing: 0
+
+                // Teinté quand un appareil est connecté, éteint avec
+                // l'adaptateur ; absent sans adaptateur.
+                IconButton {
+                    id: btButton
+                    visible: Bluetooth.defaultAdapter !== null
+                    icon: "bluetooth.svg"
+                    tint: top.btConnected ? Theme.accentColor
+                        : top.btPowered ? Theme.iconColor : Theme.textDim
+                    onClicked: top.btOpen = !top.btOpen
+                }
+                IconButton {
+                    icon: "screenshot.svg"
+                    onClicked: (button) => top.screenshot(button === Qt.RightButton ? "screen" : "area")
+                }
+            }
+
+            // Le menu, sous le bouton, aligné sur son bord droit.
+            BluetoothMenu {
+                id: btMenu
+                visible: top.btOpen
+                open: top.btOpen
+                fontFamily: top.bar.uiFont
+                anchors.top: parent.bottom
+                anchors.topMargin: 8
+                anchors.right: parent.right
+                anchors.rightMargin: toolsRow.width - btButton.x - btButton.width
+                Keys.onEscapePressed: top.btOpen = false
             }
         }
 
