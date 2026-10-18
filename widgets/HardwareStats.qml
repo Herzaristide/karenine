@@ -17,6 +17,7 @@ Item {
     property real ramUsedBytes: 0
     property string gpuName: "Chargement..."
     property string gpuUsage: ""
+    property bool gpuAsleep: false
 
     // ── Historique des courbes : 80 points à 2 Hz, soit 40 s ──
     // (les trois courbes sont des Canvas redessinés en JS à chaque mesure :
@@ -265,8 +266,8 @@ Item {
     // ── Live stats from the anna daemon ──────────────────────────────────
     // All hardware polling (CPU/RAM/GPU/temps/disks) moved out of QML into the
     // native `anna` engine. We open one Unix socket, subscribe with
-    // `hwstats_watch`, and receive one JSON snapshot every 250 ms (GPU and
-    // disks refresh slower on the daemon side, they cost a process). The derived
+    // `hwstats_watch`, and receive one JSON snapshot every 500 ms (the GPU
+    // refreshes slower on the daemon side, and not at all while it sleeps). The derived
     // state below (histories, formatting) stays here; the disks are shown by
     // the Explorer (FileExplorer.qml).
     function applyStats(s) {
@@ -296,6 +297,8 @@ Item {
         } else {
             hwPanel.gpuUsage = "";
         }
+        // Endormie, anna la laisse dormir : rien n'est lu (la lire la réveillerait).
+        hwPanel.gpuAsleep = s.gpu_asleep === true;
         hwPanel.gpuTemp = s.gpu_temp > 0 ? s.gpu_temp + "°C" : "";
     }
 
@@ -581,6 +584,7 @@ Item {
                 detail: hwPanel.remote ? hwPanel.serverGpuDetail
                       : hwPanel.gpuUsage.length > 0
                         ? hwPanel.gpuUsage.substring(hwPanel.gpuUsage.indexOf("—") + 2)
+                        : hwPanel.gpuAsleep ? "En veille · " + hwPanel.gpuName
                         : hwPanel.gpuName
                 history: hwPanel.gpuHistory
                 tone: Theme.colorGpu

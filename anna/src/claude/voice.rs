@@ -150,6 +150,11 @@ impl Endpointer {
         self.speaking
     }
 
+    /// The last frame fed was speech.
+    pub fn in_speech(&self) -> bool {
+        self.speaking && self.silence == 0.0
+    }
+
     /// How loud the last frame was relative to speech, 0–1, for the bar.
     pub fn meter(frame: &[f32]) -> f32 {
         (rms(frame) * 12.0).min(1.0)
@@ -417,6 +422,10 @@ pub fn transcribe(wav_path: &std::path::Path) -> Result<String, String> {
 
 /// While speech goes on, the recording is transcribed again this often.
 const PARTIAL_EVERY: Duration = Duration::from_millis(500);
+/// A partial transcript made this long after the last loud frame (a word's
+/// soft ending stays under the threshold) already holds the whole request:
+/// it is kept as the final one instead of transcribing everything again.
+const FINAL_MARGIN: f32 = 0.4;
 
 pub struct Voice {
     phase: Mutex<Phase>,
@@ -784,6 +793,10 @@ impl Voice {
         // « Karénine », or the detector was wrong and the turn stops there.
         let woken = self.woken.load(Ordering::SeqCst);
         let mut confirmed = false;
+        // Where speech was last heard (samples into `all`), and the last
+        // partial transcript with how much of `all` it covered.
+        let mut speech_end = 0usize;
+        let mut last_partial_text: Option<(usize, String)> = None;
         let outcome = 'listen: loop {
             if self.stop.load(Ordering::SeqCst) {
                 // Stopped by hand: only what followed real speech counts.
@@ -808,7 +821,11 @@ impl Voice {
                     *lock(&self.level) = Endpointer::meter(&frame);
                     self.publish();
                 }
-                match ep.feed(&frame) {
+                let fed = ep.feed(&frame);
+                if ep.in_speech() {
+                    speech_end = all.len() - pending.len();
+                }
+                match fed {
                     Endpoint::More => {}
                     // Key held: silences are pauses; only a runaway hold ends.
                     _ if hold && (all.len() as f32) < rate as f32 * HOLD_MAX => {}
@@ -819,6 +836,7 @@ impl Voice {
             // capture channel: nothing is lost, the pass is just late.
             if (hold || woken || ep.heard_speech()) && last_partial.elapsed() >= PARTIAL_EVERY {
                 if let Some(Ok(text)) = self.transcribe_warm(&all, rate) {
+                    last_partial_text = Some((all.len(), text.clone()));
                     // The wake word isn't part of the request.
                     let text = match (woken, strip_wake(&text)) {
                         (true, Some(rest)) => {
@@ -842,6 +860,16 @@ impl Voice {
         };
         if outcome == Endpoint::Nothing {
             return Ok(None);
+        }
+
+        // The last partial came after the end of speech: it is the final
+        // transcript already. Not with a held key: the noise floor is then
+        // measured on speech, and loud frames say little.
+        if let Some((covered, text)) = last_partial_text {
+            let margin = (rate as f32 * FINAL_MARGIN) as usize;
+            if !hold && !text.is_empty() && covered >= speech_end + margin {
+                return Ok(Some(text));
+            }
         }
 
         self.set_phase(Phase::Transcribing);

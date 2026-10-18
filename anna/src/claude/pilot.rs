@@ -70,6 +70,10 @@ pub struct Pilot {
     /// Bumped on every start, so a dying process can tell it was replaced.
     generation: AtomicU32,
     busy: AtomicBool,
+    /// A text block is streaming into the log's last entry.
+    in_text: AtomicBool,
+    /// The current message's text came streamed: its final copy is skipped.
+    streamed: AtomicBool,
     turns: AtomicU32,
     last: Mutex<Instant>,
     log: Mutex<VecDeque<Value>>,
@@ -109,6 +113,8 @@ impl Pilot {
             proc: AsyncMutex::new(None),
             generation: AtomicU32::new(0),
             busy: AtomicBool::new(false),
+            in_text: AtomicBool::new(false),
+            streamed: AtomicBool::new(false),
             turns: AtomicU32::new(0),
             last: Mutex::new(Instant::now()),
             log: Mutex::new(VecDeque::new()),
@@ -142,6 +148,7 @@ impl Pilot {
     pub async fn reset(&self) {
         self.stop().await;
         lock(&self.log).clear();
+        self.in_text.store(false, Ordering::SeqCst);
         self.busy.store(false, Ordering::SeqCst);
         self.publish();
     }
@@ -183,6 +190,8 @@ impl Pilot {
                 "--output-format",
                 "stream-json",
                 "--verbose",
+                // The reply shows up word by word, not once it is whole.
+                "--include-partial-messages",
                 "--model",
                 &model,
                 "--system-prompt",
@@ -247,6 +256,8 @@ impl Pilot {
                 };
                 for b in blocks {
                     match b.get("type").and_then(Value::as_str) {
+                        // Already in the log, streamed piece by piece.
+                        Some("text") if self.streamed.load(Ordering::SeqCst) => {}
                         Some("text") => {
                             let t = b.get("text").and_then(Value::as_str).unwrap_or("").trim();
                             if !t.is_empty() {
@@ -273,6 +284,59 @@ impl Pilot {
                     self.push("error", why);
                 }
                 self.busy.store(false, Ordering::SeqCst);
+                self.publish();
+            }
+            Some("stream_event") => {
+                if let Some(event) = v.get("event") {
+                    self.on_stream(event);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// A piece of the message being written (`--include-partial-messages`):
+    /// the reply grows in the log's last entry as the text comes.
+    fn on_stream(&self, event: &Value) {
+        match event.get("type").and_then(Value::as_str) {
+            Some("message_start") => {
+                self.streamed.store(false, Ordering::SeqCst);
+                self.in_text.store(false, Ordering::SeqCst);
+            }
+            Some("content_block_delta") => {
+                if event.pointer("/delta/type").and_then(Value::as_str) != Some("text_delta") {
+                    return;
+                }
+                let piece = event
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                if self.in_text.load(Ordering::SeqCst) {
+                    let mut log = lock(&self.log);
+                    if let Some(Value::String(text)) =
+                        log.back_mut().and_then(|e| e.get_mut("text"))
+                    {
+                        text.push_str(piece);
+                    }
+                } else {
+                    // Nothing shown before the first words.
+                    let piece = piece.trim_start();
+                    if piece.is_empty() {
+                        return;
+                    }
+                    self.push("reply", piece);
+                    self.in_text.store(true, Ordering::SeqCst);
+                    self.streamed.store(true, Ordering::SeqCst);
+                }
+                self.publish();
+            }
+            Some("content_block_stop") if self.in_text.swap(false, Ordering::SeqCst) => {
+                let mut log = lock(&self.log);
+                if let Some(Value::String(text)) = log.back_mut().and_then(|e| e.get_mut("text")) {
+                    let end = text.trim_end().len();
+                    text.truncate(end);
+                }
+                drop(log);
                 self.publish();
             }
             _ => {}
@@ -398,6 +462,29 @@ fn context_block(sessions: &[super::Session], clipboard: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_streamed_reply_grows_in_one_entry() {
+        let pilot = Pilot::new(Sessions::new());
+        let delta = |t: &str| {
+            json!({ "type": "stream_event", "event": { "type": "content_block_delta",
+                "delta": { "type": "text_delta", "text": t } } })
+            .to_string()
+        };
+        pilot.on_event(r#"{"type":"stream_event","event":{"type":"message_start"}}"#);
+        pilot.on_event(&delta(" Volume"));
+        pilot.on_event(&delta(" à 30 %. "));
+        // The whole message, as the CLI sends it before the block's end.
+        pilot.on_event(
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Volume à 30 %."}]}}"#,
+        );
+        pilot.on_event(r#"{"type":"stream_event","event":{"type":"content_block_stop"}}"#);
+        let log: Vec<Value> = lock(&pilot.log).iter().cloned().collect();
+        assert_eq!(
+            log,
+            vec![json!({ "kind": "reply", "text": "Volume à 30 %." })]
+        );
+    }
 
     #[test]
     fn action_lines_name_the_tool_and_its_arguments() {

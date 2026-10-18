@@ -1,37 +1,46 @@
 //! Native hardware-stats collector — replaces the per-widget shell-outs that
 //! `widgets/HardwareStats.qml` used to spawn every second (cpuinfo, /proc/stat,
-//! meminfo, dmidecode, nvidia-smi/amdgpu sysfs, hwmon temps, df).
+//! meminfo, dmidecode, nvidia-smi/amdgpu sysfs, hwmon temps).
 //!
-//! A `Collector` keeps the small amount of state needed across samples (the
-//! previous /proc/stat totals for the CPU-usage delta, plus one-shot caches for
-//! values that never change: CPU model name and RAM brand). `sample()` returns
-//! a fully-populated `HwStats` snapshot, serialized as one JSON line by the
-//! daemon's `hwstats_watch` handler.
+//! A `Collector` keeps the previous /proc/stat totals for the CPU-usage
+//! delta. What never changes (CPU model, RAM brand, GPU name) is read once
+//! for the daemon's lifetime, and the GPU reading is shared by every
+//! collector: the widget and the lock screen watching at once cost one
+//! `nvidia-smi`, not two. `sample()` returns a fully-populated `HwStats`
+//! snapshot, serialized as one JSON line by the daemon's `hwstats_watch`
+//! handler.
+//!
+//! GPU: a laptop's NVIDIA card sleeps (runtime D3) when unused, and
+//! `nvidia-smi` wakes it — 1.8 s for the call, then ~22 s awake. Read every
+//! second, it would never sleep again. So a suspended card is only reported
+//! asleep (one sysfs read), and an idle one is read again only after
+//! `GPU_IDLE_EVERY`, long enough for it to suspend in between; a busy one
+//! (in use anyway) is read every `GPU_BUSY_EVERY`.
 
 use serde::Serialize;
 use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-// Les mesures qui coûtent un processus (nvidia-smi ~20 ms CPU, df) gardent
-// leur propre rythme, quelle que soit la cadence demandée par le client :
-// seuls CPU, RAM et températures (lus dans /proc et /sys) suivent chaque tick.
-const GPU_EVERY: Duration = Duration::from_secs(1);
-const DISKS_EVERY: Duration = Duration::from_secs(5);
+const GPU_BUSY_EVERY: Duration = Duration::from_secs(1);
+/// Longer than the driver's ~22 s before it suspends an unused card.
+const GPU_IDLE_EVERY: Duration = Duration::from_secs(30);
 
-type GpuReading = (bool, u8, u64, u64, u32);
+#[derive(Clone, Copy, Default)]
+struct GpuReading {
+    /// Live utilization/memory data is available (not just a name).
+    present: bool,
+    /// The card is suspended: nothing was read, so as not to wake it.
+    asleep: bool,
+    usage: u8,
+    mem_used: u64,
+    mem_total: u64,
+    temp: u32,
+}
 
 // ── Snapshot payload (JSON sent to Quickshell) ──────────────────────────────
-
-#[derive(Serialize, Default, Clone)]
-pub struct DiskInfo {
-    pub source: String,
-    pub mount: String,
-    /// Whole gibibytes, matching the old `df -BG` output the QML parsed.
-    pub size_gb: u64,
-    pub used_gb: u64,
-    pub avail_gb: u64,
-}
 
 #[derive(Serialize, Default, Clone)]
 pub struct HwStats {
@@ -48,12 +57,12 @@ pub struct HwStats {
     pub gpu_name: String,
     /// True when live utilization/memory data is available (not just a name).
     pub gpu_present: bool,
+    /// The card sleeps (left alone so that it keeps sleeping).
+    pub gpu_asleep: bool,
     pub gpu_usage: u8,
     pub gpu_mem_used_mib: u64,
     pub gpu_mem_total_mib: u64,
     pub gpu_temp: u32,
-
-    pub disks: Vec<DiskInfo>,
 }
 
 // ── Collector ───────────────────────────────────────────────────────────────
@@ -61,11 +70,6 @@ pub struct HwStats {
 pub struct Collector {
     prev_cpu_total: u64,
     prev_cpu_active: u64,
-    cpu_name: Option<String>,
-    ram_brand: Option<String>, // Some("") once attempted with no result
-    gpu_name: Option<String>,
-    gpu_cache: Option<(Instant, GpuReading)>,
-    disks_cache: Option<(Instant, Vec<DiskInfo>)>,
 }
 
 impl Collector {
@@ -73,62 +77,35 @@ impl Collector {
         Self {
             prev_cpu_total: 0,
             prev_cpu_active: 0,
-            cpu_name: None,
-            ram_brand: None,
-            gpu_name: None,
-            gpu_cache: None,
-            disks_cache: None,
         }
     }
 
     pub fn sample(&mut self) -> HwStats {
         let cpu_usage = self.cpu_usage();
         let (ram_total, ram_used) = read_ram();
-        let (gpu_present, gpu_usage, gpu_mem_used, gpu_mem_total, gpu_temp_smi) = self.gpu_cached();
+        let gpu = gpu_cached();
         let (cpu_temp, gpu_temp_hwmon) = read_temps();
 
         HwStats {
-            cpu_name: self.cpu_name().to_string(),
+            cpu_name: cpu_name().to_string(),
             cpu_usage,
             cpu_temp,
             ram_total,
             ram_used,
-            ram_brand: self.ram_brand().to_string(),
-            gpu_name: self.gpu_name().to_string(),
-            gpu_present,
-            gpu_usage,
-            gpu_mem_used_mib: gpu_mem_used,
-            gpu_mem_total_mib: gpu_mem_total,
+            ram_brand: ram_brand().to_string(),
+            gpu_name: gpu_name().to_string(),
+            gpu_present: gpu.present,
+            gpu_asleep: gpu.asleep,
+            gpu_usage: gpu.usage,
+            gpu_mem_used_mib: gpu.mem_used,
+            gpu_mem_total_mib: gpu.mem_total,
             // Prefer the amdgpu hwmon reading; fall back to nvidia-smi's value.
             gpu_temp: if gpu_temp_hwmon > 0 {
                 gpu_temp_hwmon
             } else {
-                gpu_temp_smi
+                gpu.temp
             },
-            disks: self.disks_cached(),
         }
-    }
-
-    fn gpu_cached(&mut self) -> GpuReading {
-        match self.gpu_cache {
-            Some((at, reading)) if at.elapsed() < GPU_EVERY => reading,
-            _ => {
-                let reading = self.read_gpu();
-                self.gpu_cache = Some((Instant::now(), reading));
-                reading
-            }
-        }
-    }
-
-    fn disks_cached(&mut self) -> Vec<DiskInfo> {
-        if let Some((at, disks)) = &self.disks_cache {
-            if at.elapsed() < DISKS_EVERY {
-                return disks.clone();
-            }
-        }
-        let disks = read_disks();
-        self.disks_cache = Some((Instant::now(), disks.clone()));
-        disks
     }
 
     // ── CPU ────────────────────────────────────────────────────────────────
@@ -174,37 +151,96 @@ impl Collector {
         self.prev_cpu_active = active;
         usage.min(100)
     }
+}
 
-    fn cpu_name(&mut self) -> &str {
-        if self.cpu_name.is_none() {
-            let name = fs::read_to_string("/proc/cpuinfo")
-                .ok()
-                .and_then(|c| {
-                    c.lines()
-                        .find(|l| l.starts_with("model name"))
-                        .and_then(|l| l.split(':').nth(1))
-                        .map(|s| s.trim().to_string())
-                })
-                .unwrap_or_default();
-            self.cpu_name = Some(name);
-        }
-        self.cpu_name.as_deref().unwrap_or("")
+// ── Read once ───────────────────────────────────────────────────────────────
+
+fn cpu_name() -> &'static str {
+    static NAME: OnceLock<String> = OnceLock::new();
+    NAME.get_or_init(|| {
+        fs::read_to_string("/proc/cpuinfo")
+            .ok()
+            .and_then(|c| {
+                c.lines()
+                    .find(|l| l.starts_with("model name"))
+                    .and_then(|l| l.split(':').nth(1))
+                    .map(|s| s.trim().to_string())
+            })
+            .unwrap_or_default()
+    })
+}
+
+/// `sudo dmidecode`, once.
+fn ram_brand() -> &'static str {
+    static BRAND: OnceLock<String> = OnceLock::new();
+    BRAND.get_or_init(read_ram_brand)
+}
+
+/// From `nvidia-smi` when it answered once, else `lspci` (once).
+fn gpu_name() -> &'static str {
+    if let Some(name) = NVIDIA_NAME.get() {
+        return name;
     }
+    static LSPCI: OnceLock<String> = OnceLock::new();
+    LSPCI.get_or_init(gpu_name_from_lspci)
+}
 
-    // ── RAM brand (dmidecode, once) ─────────────────────────────────────────
+static NVIDIA_NAME: OnceLock<String> = OnceLock::new();
 
-    fn ram_brand(&mut self) -> &str {
-        if self.ram_brand.is_none() {
-            self.ram_brand = Some(read_ram_brand());
+/// The NVIDIA display controller's sysfs directory, if there is one.
+fn nvidia_device() -> Option<&'static PathBuf> {
+    static DEV: OnceLock<Option<PathBuf>> = OnceLock::new();
+    DEV.get_or_init(|| {
+        fs::read_dir("/sys/bus/pci/devices")
+            .ok()?
+            .flatten()
+            .map(|e| e.path())
+            .find(|d| {
+                let read = |f: &str| fs::read_to_string(d.join(f)).unwrap_or_default();
+                read("vendor").trim() == "0x10de" && read("class").trim().starts_with("0x03")
+            })
+    })
+    .as_ref()
+}
+
+// ── GPU ─────────────────────────────────────────────────────────────────────
+
+/// The last live reading, shared by every collector, and how long it holds.
+static GPU_CACHE: Mutex<Option<(Instant, Duration, GpuReading)>> = Mutex::new(None);
+
+fn gpu_cached() -> GpuReading {
+    // A sleeping card is left alone — checked on every tick, it costs one
+    // sysfs read and never wakes it.
+    if let Some(dev) = nvidia_device() {
+        let status = fs::read_to_string(dev.join("power/runtime_status")).unwrap_or_default();
+        if status.trim() == "suspended" {
+            return GpuReading {
+                asleep: true,
+                ..Default::default()
+            };
         }
-        self.ram_brand.as_deref().unwrap_or("")
     }
+    let mut cache = GPU_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, ttl, reading)) = *cache {
+        if at.elapsed() < ttl {
+            return reading;
+        }
+    }
+    let reading = read_gpu();
+    // Idle: give the card the time to suspend before asking again.
+    let ttl = if reading.present && reading.usage == 0 {
+        GPU_IDLE_EVERY
+    } else {
+        GPU_BUSY_EVERY
+    };
+    *cache = Some((Instant::now(), ttl, reading));
+    reading
+}
 
-    // ── GPU ──────────────────────────────────────────────────────────────────
-
-    /// Returns (present, usage%, mem_used_mib, mem_total_mib, temp_from_smi).
-    fn read_gpu(&mut self) -> GpuReading {
-        // 1) NVIDIA via nvidia-smi.
+fn read_gpu() -> GpuReading {
+    // 1) NVIDIA via nvidia-smi (only if there is such a card: a failing
+    //    nvidia-smi still costs a process every second).
+    if nvidia_device().is_some() {
         if let Some(out) = run_stdout(
             "nvidia-smi",
             &[
@@ -213,50 +249,32 @@ impl Collector {
             ],
         ) {
             let line = out.lines().next().unwrap_or("").trim();
-            if !line.is_empty() {
-                let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
-                if parts.len() >= 5 {
-                    if self.gpu_name.is_none() {
-                        self.gpu_name = Some(parts[0].to_string());
-                    }
-                    let usage = parts[1].parse::<u8>().unwrap_or(0);
-                    let mem_used = parts[2].parse::<u64>().unwrap_or(0);
-                    let mem_total = parts[3].parse::<u64>().unwrap_or(0);
-                    let temp = parts[4].parse::<u32>().unwrap_or(0);
-                    return (true, usage.min(100), mem_used, mem_total, temp);
-                }
+            let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+            if parts.len() >= 5 {
+                let _ = NVIDIA_NAME.set(parts[0].to_string());
+                return GpuReading {
+                    present: true,
+                    asleep: false,
+                    usage: parts[1].parse::<u8>().unwrap_or(0).min(100),
+                    mem_used: parts[2].parse().unwrap_or(0),
+                    mem_total: parts[3].parse().unwrap_or(0),
+                    temp: parts[4].parse().unwrap_or(0),
+                };
             }
         }
-
-        // 2) AMD via amdgpu sysfs — live polling TEMPORARILY DISABLED.
-        // Reading gpu_busy_percent (and the amdgpu hwmon temp in read_temps)
-        // every second re-arms the driver's runtime-PM autosuspend timer, which
-        // pins a *headless* discrete card (display driven by the iGPU) at boost
-        // clocks (~115 W) instead of letting it BACO-suspend. Unlike NVML,
-        // rocm-smi/sysfs offer no way to query without re-arming PM, so until a
-        // proper idle back-off lands we only detect the card (a wake-safe stat)
-        // and report its name — never touch the SMU — so it can sleep. NVIDIA
-        // above is unaffected (nvidia-smi does not re-arm runtime PM).
-        if amdgpu_device_dir().is_some() {
-            if self.gpu_name.is_none() {
-                self.gpu_name = Some(gpu_name_from_lspci());
-            }
-            return (false, 0, 0, 0, 0);
-        }
-
-        // 3) No live data — just a name (if any).
-        if self.gpu_name.is_none() {
-            self.gpu_name = Some(gpu_name_from_lspci());
-        }
-        (false, 0, 0, 0, 0)
     }
 
-    fn gpu_name(&mut self) -> &str {
-        if self.gpu_name.is_none() {
-            self.gpu_name = Some(gpu_name_from_lspci());
-        }
-        self.gpu_name.as_deref().unwrap_or("")
-    }
+    // 2) AMD via amdgpu sysfs — live polling TEMPORARILY DISABLED.
+    // Reading gpu_busy_percent (and the amdgpu hwmon temp in read_temps)
+    // every second re-arms the driver's runtime-PM autosuspend timer, which
+    // pins a *headless* discrete card (display driven by the iGPU) at boost
+    // clocks (~115 W) instead of letting it BACO-suspend. Unlike NVML,
+    // rocm-smi/sysfs offer no way to query without re-arming PM, so until a
+    // proper idle back-off lands we only detect the card (a wake-safe stat)
+    // and report its name — never touch the SMU — so it can sleep.
+    //
+    // 3) No live data — just a name (gpu_name()).
+    GpuReading::default()
 }
 
 // ── Free functions ───────────────────────────────────────────────────────────
@@ -383,72 +401,7 @@ fn read_temps() -> (u32, u32) {
     }
     (cpu_temp, gpu_temp)
 }
-
-/// Enumerate mounted filesystems via `df`, mirroring the old QML pipeline:
-/// `df -BG --output=source,size,used,avail,target` minus pseudo filesystems,
-/// dropping /boot.
-fn read_disks() -> Vec<DiskInfo> {
-    let out = match run_stdout(
-        "df",
-        &[
-            "-BG",
-            "--output=source,size,used,avail,target",
-            "-x",
-            "tmpfs",
-            "-x",
-            "devtmpfs",
-            "-x",
-            "efivarfs",
-            "-x",
-            "overlay",
-        ],
-    ) {
-        Some(o) => o,
-        None => return Vec::new(),
-    };
-
-    let mut disks = Vec::new();
-    for line in out.lines().skip(1) {
-        let p: Vec<&str> = line.split_whitespace().collect();
-        if p.len() < 5 {
-            continue;
-        }
-        let mount = p[4].to_string();
-        if mount == "/boot" || mount.starts_with("/boot/") {
-            continue;
-        }
-        let size = parse_leading_u64(p[1]);
-        if size == 0 {
-            continue;
-        }
-        disks.push(DiskInfo {
-            source: p[0].to_string(),
-            mount,
-            size_gb: size,
-            used_gb: parse_leading_u64(p[2]),
-            avail_gb: parse_leading_u64(p[3]),
-        });
-    }
-    disks
-}
-
 // ── Small helpers ────────────────────────────────────────────────────────────
-
-/// Find the amdgpu card's `device` directory (the one exposing
-/// gpu_busy_percent / mem_info_vram_*), via /sys/class/hwmon/*/name == amdgpu.
-fn amdgpu_device_dir() -> Option<String> {
-    for entry in fs::read_dir("/sys/class/hwmon").ok()?.flatten() {
-        let dir = entry.path();
-        let name = fs::read_to_string(dir.join("name")).unwrap_or_default();
-        if name.trim() == "amdgpu" {
-            let dev = dir.join("device");
-            if dev.join("gpu_busy_percent").exists() {
-                return dev.to_str().map(str::to_string);
-            }
-        }
-    }
-    None
-}
 
 fn gpu_name_from_lspci() -> String {
     let out = match run_stdout("lspci", &[]) {
