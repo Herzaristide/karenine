@@ -535,9 +535,6 @@ PanelWindow { // qmllint disable uncreatable-type
         id: volumeControl
         Row {
             spacing: 8
-            // Le niveau n'est sondé que tant que la tuile est là.
-            Component.onCompleted: Audio.active = true
-            Component.onDestruction: Audio.active = false
             BarSlider {
                 anchors.verticalCenter: parent.verticalCenter
                 implicitWidth: 140

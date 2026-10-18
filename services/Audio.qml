@@ -1,84 +1,34 @@
 pragma Singleton
 import QtQuick
-import Quickshell.Io
+import Quickshell.Services.Pipewire
 
-// État du volume pour la carte de réglage. Ne sonde `wpctl` que pendant que
-// `active` est vrai, c'est-à-dire tant qu'une carte volume est affichée —
-// aucun sondage ne tourne quand le dock est fermé.
+// Le volume de la sortie par défaut, lu et réglé par Pipewire. Ses propriétés
+// suivent PipeWire en direct : un changement venu d'ailleurs (touches du
+// clavier, anna, pavucontrol) s'affiche aussitôt, sans sondage.
 QtObject {
     id: root
 
-    property bool active: false
-    property real level: 0.0
-    property bool muted: false
+    readonly property PwNode sink: Pipewire.defaultAudioSink
+    readonly property bool ready: root.sink !== null && root.sink.ready && root.sink.audio !== null
 
+    readonly property real level: root.ready ? root.sink.audio.volume : 0.0
+    readonly property bool muted: root.ready && root.sink.audio.muted
     readonly property int percent: Math.round(level * 100)
 
-    property Process readProc: Process {
-        command: ["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"]
-        stdout: StdioCollector { id: readOut }
-        onRunningChanged: {
-            if (running)
-                return;
-            var m = readOut.text.trim().match(/Volume:\s*([\d.]+)(\s*\[MUTED\])?/);
-            if (m) {
-                root.level = parseFloat(m[1]);
-                root.muted = m[2] !== undefined;
-            }
-        }
+    // Sans suivi, les propriétés audio d'un nœud ne sont jamais renseignées.
+    property PwObjectTracker tracker: PwObjectTracker {
+        objects: [root.sink]
     }
 
-    // Un `Process` déjà en cours ignore `running = true` : sans file d'attente,
-    // trois clics rapides sur « + » n'en monteraient qu'un. On empile, et le
-    // rafraîchissement n'a lieu qu'une fois la file vidée.
-    property var _queue: []
-
-    property Process writeProc: Process {
-        onRunningChanged: {
-            if (running)
-                return;
-            root._pump();
-            if (!running)
-                root.refresh();
-        }
-    }
-
-    property Timer poll: Timer {
-        interval: 2000
-        repeat: true
-        running: root.active
-        triggeredOnStart: true
-        onTriggered: root.refresh()
-    }
-
-    function refresh() {
-        if (!readProc.running)
-            readProc.running = true;
-    }
-
-    function _run(argv) {
-        root._queue.push(argv);
-        root._pump();
-    }
-
-    function _pump() {
-        if (writeProc.running || root._queue.length === 0)
-            return;
-        writeProc.command = root._queue.shift();
-        writeProc.running = true;
-    }
-
-    // Capped at 100 %: past it PipeWire amplifies in software and clips.
-    function up()         { _run(["wpctl", "set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", "5%+"]); }
-    function down()       { _run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"]); }
-    // Un niveau absolu (0–1), pour un curseur. Seul le dernier compte : ceux
-    // encore en file sont remplacés, sinon un glisser empilerait des dizaines
-    // d'appels à wpctl. Le niveau affiché suit tout de suite.
+    // Plafonné à 100 % : au-delà, PipeWire amplifie en logiciel et sature.
     function set(v) {
-        v = Math.max(0, Math.min(1, v));
-        root.level = v;
-        root._queue = root._queue.filter(a => a[1] !== "set-volume");
-        _run(["wpctl", "set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", v.toFixed(2)]);
+        if (root.ready)
+            root.sink.audio.volume = Math.max(0, Math.min(1, v));
     }
-    function toggleMute() { _run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]); }
+    function up()         { set(root.level + 0.05); }
+    function down()       { set(root.level - 0.05); }
+    function toggleMute() {
+        if (root.ready)
+            root.sink.audio.muted = !root.sink.audio.muted;
+    }
 }

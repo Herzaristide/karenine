@@ -30,10 +30,6 @@ CardFrame {
     tapEnabled: card.control !== "volume"
     onPrimaryActivated: Search.activate(card.item, "open")
 
-    // Le sondage de wpctl ne tourne que tant qu'une carte volume est affichée.
-    Component.onCompleted:   if (card.control === "volume") Audio.active = true
-    Component.onDestruction: if (card.control === "volume") Audio.active = false
-
     // Curseur stylisé : trois barres, la hauteur suit le niveau.
     Item {
         anchors.centerIn: parent

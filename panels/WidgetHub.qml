@@ -107,7 +107,6 @@ FocusScope {
     HubTopBar {
         id: topBar
         bar: hub.bar
-        live: hub.expand > 0
         x: hub.pad + 4
         y: hub.pad
         width: hub.width - 2 * (hub.pad + 4)

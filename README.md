@@ -63,7 +63,9 @@ désactive que sa propre fonction s'il manque.
 | --- | --- | --- |
 | `fd` | `services/FileSource.qml` | la recherche de fichiers ne renvoie rien |
 | `jq` | `services/ClaudeSource.qml` | les conversations Claude ne sont pas indexées |
-| `wpctl` (wireplumber) | `services/Audio.qml` | la carte volume n'affiche ni ne règle rien |
+| `wpctl` (wireplumber) | `widgets/DeviceSettings.qml` | le choix de la sortie, de l'entrée et de la webcam est vide |
+| `brightnessctl` | `services/Brightness.qml` | le réglage de luminosité n'apparaît pas |
+| `udevadm` (systemd) | `services/Brightness.qml` | la luminosité ne suit plus les changements faits ailleurs (touches, anna) |
 | `grimblast` | `services/SettingSource.qml` | la carte capture d'écran ne fait rien |
 | `xdg-mime`, `xdg-open` (xdg-utils) | `services/DefaultApps.qml`, `FileSource` | les rôles retombent sur le premier outil connu du `$PATH` |
 | `claude-desktop` | `services/ClaudeSource.qml` | les sessions Claude Desktop ne s'ouvrent pas (celles du CLI, si) |

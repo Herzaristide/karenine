@@ -3,6 +3,7 @@ singleton Theme 1.0 Theme.qml
 singleton Battery 1.0 Battery.qml
 singleton Fuzzy 1.0 Fuzzy.qml
 singleton Audio 1.0 Audio.qml
+singleton Brightness 1.0 Brightness.qml
 singleton Search 1.0 Search.qml
 AppSource 1.0 AppSource.qml
 FileSource 1.0 FileSource.qml

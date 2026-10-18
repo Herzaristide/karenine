@@ -29,8 +29,6 @@ Item {
 
     // La barre de conversation : sa teinte, sa police.
     required property var bar
-    // Affichée : volume et luminosité se rafraîchissent.
-    property bool live: false
 
     implicitHeight: 38
 
@@ -73,54 +71,6 @@ Item {
                      + Qt.formatDateTime(new Date(), "yyyyMMdd_HHmmss") + ".png";
             // Détaché et sans shell : la sélection dure le temps qu'il faut.
             Quickshell.execDetached(["grimblast", "--notify", "copysave", shotTimer.region, path]);
-        }
-    }
-
-    // ── La luminosité ────────────────────────────────────────────
-    // Le rétroéclairage (brightnessctl) : l'écran du portable. Le réglage
-    // disparaît là où il n'y en a pas.
-    // 0–1 ; -1 : pas de rétroéclairage.
-    property real brightness: -1
-    readonly property bool hasBacklight: top.brightness >= 0
-
-    Process {
-        id: brightProc
-        command: ["brightnessctl", "-m", "-c", "backlight"]
-        stdout: StdioCollector {
-            // « intel_backlight,backlight,96000,100%,96000 »
-            onStreamFinished: {
-                var f = text.trim().split("\n")[0].split(",");
-                top.brightness = f.length >= 5 && parseInt(f[4]) > 0
-                                 ? parseInt(f[2]) / parseInt(f[4]) : -1;
-            }
-        }
-    }
-
-    Process {
-        id: setBrightProc
-    }
-
-    function setBrightness(v) {
-        // Jamais tout à fait noir : 5 % au minimum.
-        v = Math.max(0.05, Math.min(1, v));
-        top.brightness = v;
-        if (setBrightProc.running)
-            return;
-        setBrightProc.command = ["brightnessctl", "-c", "backlight", "set", Math.round(v * 100) + "%"];
-        setBrightProc.running = true;
-    }
-
-    // Volume (service Audio, wpctl) et luminosité relus toutes les 2 s tant
-    // que c'est affiché.
-    Timer {
-        interval: 2000
-        repeat: true
-        running: top.live
-        triggeredOnStart: true
-        onTriggered: {
-            Audio.refresh();
-            if (!brightProc.running && !brightSlider.dragging)
-                brightProc.running = true;
         }
     }
 
@@ -442,27 +392,27 @@ Item {
                 spacing: 6
 
                 IconButton {
-                    visible: top.hasBacklight
+                    visible: Brightness.present
                     icon: "brightness.svg"
                     // Un clic : pleine luminosité, ou la moitié si on y est.
-                    onClicked: top.setBrightness(top.brightness > 0.95 ? 0.5 : 1)
+                    onClicked: Brightness.set(Brightness.level > 0.95 ? 0.5 : 1)
                 }
                 LevelSlider {
                     id: brightSlider
-                    visible: top.hasBacklight
-                    value: top.brightness
+                    visible: Brightness.present
+                    value: Brightness.level
                     minimum: 0.05
-                    onMoved: (v) => top.setBrightness(v)
-                    onStepped: (dir) => top.setBrightness(top.brightness + dir * 0.05)
+                    onMoved: (v) => Brightness.set(v)
+                    onStepped: (dir) => Brightness.set(Brightness.level + dir * 0.05)
                 }
                 Percent {
-                    visible: top.hasBacklight
+                    visible: Brightness.present
                     text: Math.round(brightSlider.shown * 100) + " %"
                 }
 
                 // Le séparateur.
                 Rectangle {
-                    visible: top.hasBacklight
+                    visible: Brightness.present
                     Layout.leftMargin: 6
                     Layout.rightMargin: 2
                     Layout.preferredWidth: 1
