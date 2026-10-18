@@ -12,11 +12,9 @@ QtObject {
 
     // Il n'existe pas de « moteur par défaut » au niveau du système sous Linux :
     // Chromium garde le sien dans sa propre base, pas dans un réglage lisible.
-    // C'est donc un choix de configuration, et il tient sur ces trois lignes.
+    // C'est donc un choix de configuration, et il tient sur cette ligne.
     readonly property var engines: [
-        { id: "web",  name: "Google",          url: "https://www.google.com/search?q=%s" },
-        { id: "nix",  name: I18n.tr("search.nixOptions"), url: "https://search.nixos.org/options?query=%s" },
-        { id: "gh",   name: "GitHub",          url: "https://github.com/search?q=%s" }
+        { id: "web",  name: "Google",          url: "https://www.google.com/search?q=%s" }
     ]
 
     signal produced(int seq, var items)
