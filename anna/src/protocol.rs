@@ -40,8 +40,13 @@ pub enum Command {
 
     // ── tailnet devices (tailscale + ssh) ─────────────────────────────────
     /// Keep connection open; daemon pushes `{"servers":[ServerStats…]}` every
-    /// few seconds, re-reading the list each time.
-    ServersWatch,
+    /// few seconds, re-reading the list each time. With `name`, only that
+    /// device is asked over ssh (the one the shell shows); the others report
+    /// what Tailscale says of them.
+    ServersWatch {
+        #[serde(default)]
+        name: Option<String>,
+    },
     /// Print the devices of the tailnet: `[{"name","host","os",…}, …]`.
     ServersList,
     /// Turn a device `on` (Wake-on-LAN), `off` or `reboot` (ssh), see

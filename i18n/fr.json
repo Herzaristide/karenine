@@ -206,7 +206,6 @@
   "review.merge": "Fusionner",
   "review.noChanges": "aucune modification en cours",
   "search.apps": "Applications",
-  "search.conversations": "Conversations",
   "search.files": "Fichiers",
   "search.folder": "dossier",
   "search.openAddress": "Ouvrir l'adresse",
@@ -286,5 +285,17 @@
   "widget.notifications": "Notifications",
   "widget.player": "Lecteur",
   "widget.settings": "Réglages",
-  "widget.stats": "Système"
+  "widget.stats": "Système",
+  "wifi.connecting": "Connexion à {ssid}…",
+  "wifi.disconnected": "Non connecté",
+  "wifi.join": "Rejoindre",
+  "wifi.network": "Réseau",
+  "wifi.networks": "Réseaux",
+  "wifi.none": "Aucun réseau visible",
+  "wifi.off": "Wi-Fi coupé",
+  "wifi.password": "Mot de passe",
+  "wifi.searching": "Recherche…",
+  "wifi.title": "Wi-Fi",
+  "wifi.turnOff": "Couper",
+  "wifi.turnOn": "Allumer"
 }

@@ -331,14 +331,17 @@ Singleton {
         }
     }
 
-    // (Re)connexion tant que le daemon est absent — il redémarre avec la session.
+    // (Re)connexion tant que le daemon est absent — il redémarre avec la
+    // session. Chaque flux compte : l'un peut tomber sans les autres.
     Timer {
         interval: 3000
-        running: !watchSock.connected
+        running: !watchSock.connected || !pilotSock.connected || !voiceSock.connected
+                 || (live.transcriptPath.length > 0 && !transcriptSock.connected)
         repeat: true
         triggeredOnStart: true
         onTriggered: {
-            watchSock.connected = true;
+            if (!watchSock.connected)
+                watchSock.connected = true;
             if (!pilotSock.connected)
                 pilotSock.connected = true;
             if (!voiceSock.connected)

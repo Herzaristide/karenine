@@ -47,8 +47,6 @@ Item {
     readonly property bool measured: !hwPanel.remote
         || (hwPanel.server !== null && hwPanel.server.online && hwPanel.server.ssh && !hwPanel.server.error)
 
-    onMachineChanged: hwPanel.reset()
-
     // Une autre machine : rien de ce qu'on montrait ne vaut pour elle.
     function reset() {
         hwPanel.server = null;
@@ -139,7 +137,8 @@ I18n.tr("stats.load", { n: s.load1.toLocaleString(I18n.locale, "f", 2) })].filte
             }
         }
         onConnectedChanged: {
-            if (connected) write('{"cmd":"servers_watch"}\n');
+            // Seulement celui qu'on montre : anna n'interroge pas les autres.
+            if (connected) write(JSON.stringify({ cmd: "servers_watch", name: hwPanel.machine }) + "\n");
         }
     }
 
@@ -336,7 +335,9 @@ I18n.tr("stats.load", { n: s.load1.toLocaleString(I18n.locale, "f", 2) })].filte
             serversSock.connected = false;
         }
     }
-    onRemoteChanged: {
+    // Un autre serveur, ou celle-ci : le flux suivi change.
+    onMachineChanged: {
+        hwPanel.reset();
         statsSock.connected = false;
         serversSock.connected = false;
         if (hwPanel.visible) connectTimer.restart();

@@ -75,13 +75,14 @@ own feature if missing.
 | Tool | Used by | Without it |
 | --- | --- | --- |
 | `fd` | `services/FileSource.qml` | file search returns nothing |
-| `jq` | `services/ClaudeSource.qml` | Claude conversations are not indexed |
+| `jq` | `services/claude-index.sh` | Claude Desktop conversations are not indexed |
 | `wpctl` (wireplumber) | `widgets/DeviceSettings.qml` | the choice of output, input and webcam is empty |
 | `brightnessctl` | `services/Brightness.qml` | the brightness setting does not appear |
 | `udevadm` (systemd) | `services/Brightness.qml` | brightness no longer follows changes made elsewhere (keys, anna) |
+| `upowerd` (UPower service) | `services/Battery.qml` | the battery level and its warnings do not appear |
+| `nmcli` (NetworkManager) | `widgets/WifiSettings.qml` | the Wi-Fi section of the settings does not appear |
 | `grimblast` | `services/SettingSource.qml` | the screenshot card does nothing |
 | `xdg-mime`, `xdg-open` (xdg-utils) | `services/DefaultApps.qml`, `FileSource` | roles fall back to the first known tool in `$PATH` |
-| `claude-desktop` | `services/ClaudeSource.qml` | Claude Desktop sessions do not open (CLI ones do) |
 
 The editor, file manager, terminal and browser are **never** hard-coded
 names: `DefaultApps` resolves them from `xdg-mime` and `$TERMINAL`, falling

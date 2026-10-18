@@ -206,7 +206,6 @@
   "review.merge": "Merge",
   "review.noChanges": "no pending changes",
   "search.apps": "Applications",
-  "search.conversations": "Conversations",
   "search.files": "Files",
   "search.folder": "folder",
   "search.openAddress": "Open the address",
@@ -286,5 +285,17 @@
   "widget.notifications": "Notifications",
   "widget.player": "Player",
   "widget.settings": "Settings",
-  "widget.stats": "System"
+  "widget.stats": "System",
+  "wifi.connecting": "Connecting to {ssid}…",
+  "wifi.disconnected": "Not connected",
+  "wifi.join": "Join",
+  "wifi.network": "Network",
+  "wifi.networks": "Networks",
+  "wifi.none": "No network in range",
+  "wifi.off": "Wi-Fi is off",
+  "wifi.password": "Password",
+  "wifi.searching": "Searching…",
+  "wifi.title": "Wi-Fi",
+  "wifi.turnOff": "Turn off",
+  "wifi.turnOn": "Turn on"
 }

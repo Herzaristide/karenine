@@ -20,7 +20,7 @@ panels/              Top-level chrome (Wayland windows)
 widgets/             Panel contents
   FileExplorer, HardwareStats, PhoneWidget, NotificationCenter, NotificationCard,
   MusicPlayerWidget, Metronome,
-  Tuner, ChromaGraph, MiniGraph, GestureControls, Settings, DeviceSettings
+  Tuner, ChromaGraph, MiniGraph, GestureControls, Settings, DeviceSettings, WifiSettings
 i18n/                One dictionary per language (en.json, fr.json…)
 anna/                Single Rust daemon (see Backend)
 assets/              nixos.svg

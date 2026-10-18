@@ -411,14 +411,14 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
         }
 
         // ── tailnet devices ──────────────────────────────────────────────
-        Command::ServersWatch => {
+        Command::ServersWatch { name } => {
             let mut memory = servers::Memory::default();
             let mut interval = tokio::time::interval(Duration::from_secs(3));
             // A slow server delays the next round rather than stacking them.
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 interval.tick().await;
-                let stats = servers::sample_all(&mut memory).await;
+                let stats = servers::sample_all(&mut memory, name.as_deref()).await;
                 let json = serde_json::json!({ "servers": stats }).to_string();
                 if write_line(&mut writer, &json).await.is_err() {
                     break; // socket closed
@@ -925,9 +925,16 @@ async fn follow_transcript(
 ) {
     use claude::transcript;
 
-    // Only Claude Code's own transcripts.
+    // Only Claude Code's own transcripts. Compared by path components, `..`
+    // refused: `projects/../../x.jsonl` starts with the right text but leads
+    // elsewhere.
     let projects = paths::home_dir().join(".claude/projects");
-    if !path.starts_with(&*projects.to_string_lossy()) || !path.ends_with(".jsonl") {
+    let asked = std::path::Path::new(&path);
+    let inside = asked.starts_with(&projects)
+        && !asked
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir));
+    if !inside || !path.ends_with(".jsonl") {
         let _ = write_response(writer, &Response::err("not a Claude transcript")).await;
         return;
     }

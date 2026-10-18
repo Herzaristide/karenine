@@ -17,3 +17,4 @@ NotificationCard 1.0 NotificationCard.qml
 NotificationCenter 1.0 NotificationCenter.qml
 NotesWidget 1.0 NotesWidget.qml
 BluetoothMenu 1.0 BluetoothMenu.qml
+WifiSettings 1.0 WifiSettings.qml

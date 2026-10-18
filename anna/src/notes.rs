@@ -443,39 +443,56 @@ async fn watch(places: Vec<(PathBuf, &'static str)>, notes: PathBuf) {
     let mut sizes: HashMap<PathBuf, u64> = HashMap::new();
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        for (folder, prefix) in &places {
-            let Ok(entries) = std::fs::read_dir(folder) else { continue };
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().into_owned();
-                let path = entry.path();
-                if !is_shot(&name, prefix) || done.contains(&path) {
-                    continue;
-                }
-                let Ok(meta) = entry.metadata() else { continue };
-                let fresh = meta.modified().map(|m| m >= start).unwrap_or(false);
-                if !fresh || meta.len() == 0 {
-                    continue;
-                }
-                if sizes.get(&path) != Some(&meta.len()) {
-                    sizes.insert(path, meta.len());
-                    continue;
-                }
-                sizes.remove(&path);
-                done.insert(path.clone());
-                let notes = notes.clone();
-                let added = tokio::task::spawn_blocking(move || {
-                    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-                    Store::open(&notes).add_image(&bytes, "png")
-                })
-                .await;
-                match added {
-                    Ok(Ok(_)) => {}
-                    Ok(Err(e)) => eprintln!("anna: capture vers les notes : {e}"),
-                    Err(e) => eprintln!("anna: capture vers les notes : {e}"),
-                }
+        // The folders are read on a blocking thread: a slow disk must not
+        // stall the daemon's other connections.
+        let scan_places = places.clone();
+        let found = tokio::task::spawn_blocking(move || fresh_shots(&scan_places, start))
+            .await
+            .unwrap_or_default();
+        for (path, len) in found {
+            if done.contains(&path) {
+                continue;
+            }
+            if sizes.get(&path) != Some(&len) {
+                sizes.insert(path, len);
+                continue;
+            }
+            sizes.remove(&path);
+            done.insert(path.clone());
+            let notes = notes.clone();
+            let added = tokio::task::spawn_blocking(move || {
+                let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+                Store::open(&notes).add_image(&bytes, "png")
+            })
+            .await;
+            match added {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => eprintln!("anna: capture vers les notes : {e}"),
+                Err(e) => eprintln!("anna: capture vers les notes : {e}"),
             }
         }
     }
+}
+
+/// The non-empty screenshots of `places` written since `start`, with their
+/// size.
+fn fresh_shots(places: &[(PathBuf, &'static str)], start: SystemTime) -> Vec<(PathBuf, u64)> {
+    let mut out = Vec::new();
+    for (folder, prefix) in places {
+        let Ok(entries) = std::fs::read_dir(folder) else { continue };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !is_shot(&name, prefix) {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else { continue };
+            let fresh = meta.modified().map(|m| m >= start).unwrap_or(false);
+            if fresh && meta.len() > 0 {
+                out.push((entry.path(), meta.len()));
+            }
+        }
+    }
+    out
 }
 
 // ── The command line ────────────────────────────────────────────────────────

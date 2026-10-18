@@ -68,7 +68,7 @@ fn build_command(args: &[String]) -> Option<(serde_json::Value, bool)> {
         },
         "servers" => match arg(2) {
             None | Some("list") => (json!({"cmd": "servers_list"}), false),
-            Some("watch") => (json!({"cmd": "servers_watch"}), true),
+            Some("watch") => (json!({"cmd": "servers_watch", "name": arg(3)}), true),
             Some(action @ ("on" | "off" | "reboot")) => (
                 json!({"cmd": "servers_power", "name": arg(3)?, "action": action}),
                 false,
@@ -175,7 +175,7 @@ fn usage() -> ! {
            voice hold | release                   Push-to-talk: record until release\n\
            voice wake [on|off]                    Wake word « Karénine » (toggle)\n\
            voice transcribe <file.wav>            Transcribe a 16 kHz mono WAV\n\
-           servers [list] | watch                 Tailnet devices / their stats (ssh)\n\
+           servers [list] | watch [name]          Tailnet devices / their stats (ssh)\n\
            servers on|off|reboot <name>           Wake-on-LAN / power off, reboot (ssh)\n\
            phone [watch]                          KDE Connect phones: battery, network\n\
            phone ring|ping|browse|clipboard|accept|reject <device>\n\
@@ -296,6 +296,14 @@ mod tests {
             Command::PhoneAction { .. }
         ));
         assert!(matches!(parses(&["phone", "screen", "Pixel 9a"]), Command::PhoneScreen { .. }));
+        assert!(matches!(
+            parses(&["servers", "watch"]),
+            Command::ServersWatch { name: None }
+        ));
+        assert!(matches!(
+            parses(&["servers", "watch", "gary"]),
+            Command::ServersWatch { name: Some(n) } if n == "gary"
+        ));
         for action in ["on", "off", "reboot"] {
             assert!(matches!(
                 parses(&["servers", action, "gary"]),

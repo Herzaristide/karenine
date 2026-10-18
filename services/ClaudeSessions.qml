@@ -6,8 +6,7 @@ import Quickshell.Io
 // Les conversations Claude vues depuis le shell : l'index de ce qui existe sur
 // le disque.
 //
-// Un seul indexeur pour deux consommateurs — la recherche de la barre
-// ([ClaudeSource]) et l'historique du dock IA.
+// Son consommateur : l'historique du dock IA.
 //
 // Sur le disque, une session Claude Code est un JSONL append-only :
 //   ~/.claude/projects/<cwd-slugifié>/<sessionId>.jsonl

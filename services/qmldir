@@ -11,7 +11,7 @@ WebSource 1.0 WebSource.qml
 SettingSource 1.0 SettingSource.qml
 WallpaperSource 1.0 WallpaperSource.qml
 NoteSource 1.0 NoteSource.qml
-ClaudeSource 1.0 ClaudeSource.qml
+CursorProbe 1.0 CursorProbe.qml
 singleton ClaudeSessions 1.0 ClaudeSessions.qml
 singleton ClaudeLive 1.0 ClaudeLive.qml
 singleton DefaultApps 1.0 DefaultApps.qml

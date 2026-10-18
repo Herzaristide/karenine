@@ -39,7 +39,13 @@ Singleton {
 
         onNotification: (n) => {
             n.tracked = true;
-            var t = Object.assign({}, root._times);
+            // Les heures des notifications fermées depuis s'en vont.
+            var open = server.trackedNotifications.values.map(x => String(x.id));
+            var t = {};
+            Object.keys(root._times).forEach(id => {
+                if (open.indexOf(id) >= 0)
+                    t[id] = root._times[id];
+            });
             t[n.id] = new Date();
             root._times = t;
             if (n.transient) {

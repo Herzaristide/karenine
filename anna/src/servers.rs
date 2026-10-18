@@ -25,11 +25,12 @@
 //! to 255.255.255.255. It only reaches a machine on the same LAN as this one,
 //! with WoL enabled in its firmware and NIC.
 //!
-//! GPU: NVIDIA through `nvidia-smi` (it does not wake the card), AMD through
-//! amdgpu's sysfs. Reading an AMD card's activity re-arms its runtime-PM
-//! autosuspend timer (5 s): a headless discrete card read every sample would
-//! never sleep again (~115 W at boost, see hwstats.rs). So a suspended card
-//! is only reported asleep, and an active one is read live at most every
+//! GPU: NVIDIA through `nvidia-smi`, AMD through amdgpu's sysfs. Both keep a
+//! card awake: `nvidia-smi` wakes a runtime-suspended laptop card, and
+//! reading an AMD card's activity re-arms its runtime-PM autosuspend timer
+//! (5 s). Read every sample, a discrete card would never sleep again (~115 W
+//! at boost, see hwstats.rs). So a suspended card is only reported asleep
+//! (one sysfs read), and an active one is read live at most every
 //! `GPU_EVERY`, letting it suspend in between when idle.
 
 use serde::{Deserialize, Serialize};
@@ -250,9 +251,11 @@ ip -o -4 addr 2>/dev/null; echo @@; ";
 /// The GPUs, through `sh` (it needs variables). Per amdgpu card, one line
 /// `amd <pci> <runtime status> <vram total>`, followed when it is active and
 /// `$1` is 1 by `<busy %> <vram used> <millidegrees>` (`-` unreadable); when
-/// `$2` is 1, its lspci line as `name <pci> …`. Then `nvidia <csv>` per
-/// NVIDIA card. A suspended card is never read: on recent kernels the read
-/// fails (EBUSY) without waking it, on older ones it would wake it.
+/// `$2` is 1, its lspci line as `name <pci> …`. Then `nvstate <runtime
+/// status>` per card bound to the NVIDIA driver, followed when none is
+/// suspended and `$1` is 1 by `nvidia <csv>` per NVIDIA card. A suspended
+/// card is never read: on recent kernels an AMD read fails (EBUSY) without
+/// waking it, on older ones it would wake it, and `nvidia-smi` always does.
 const GPU_SCRIPT: &str = "sh -c 'for d in /sys/class/drm/card[0-9]/device; do \
 [ -r $d/mem_info_vram_total ] || continue; \
 s=$(cat $d/power/runtime_status 2>/dev/null || echo active); \
@@ -263,10 +266,14 @@ l=\"$l $(cat $d/gpu_busy_percent 2>/dev/null || echo -) $(cat $d/mem_info_vram_u
 $(cat $d/hwmon/hwmon*/temp1_input 2>/dev/null | head -1)\"; fi; \
 echo \"$l\"; \
 if [ \"$2\" = 1 ]; then lspci -s $a 2>/dev/null | sed \"s/^/name $a /\"; fi; done; \
+nv=active; for d in /sys/bus/pci/drivers/nvidia/0000:*; do [ -e $d ] || continue; \
+s=$(cat $d/power/runtime_status 2>/dev/null || echo active); echo \"nvstate $s\"; \
+[ \"$s\" = suspended ] && nv=suspended; done; \
+if [ \"$nv\" != suspended ] && [ \"$1\" = 1 ]; then \
 nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu \
---format=csv,noheader,nounits 2>/dev/null | sed \"s/^/nvidia /\"' sh";
+--format=csv,noheader,nounits 2>/dev/null | sed \"s/^/nvidia /\"; fi' sh";
 
-/// An active AMD card is read live at most this often (see the module doc).
+/// An active card is read live at most this often (see the module doc).
 const GPU_EVERY: Duration = Duration::from_secs(15);
 
 /// What a sample remembers for the next ones, per server (by name).
@@ -281,8 +288,9 @@ pub struct Memory {
 }
 
 /// Sample every device at once: over ssh those that run it and are online,
-/// from Tailscale alone the others.
-pub async fn sample_all(memory: &mut Memory) -> Vec<ServerStats> {
+/// from Tailscale alone the others. With `only`, ssh asks that device alone
+/// (the one shown): the others need no connection every few seconds.
+pub async fn sample_all(memory: &mut Memory, only: Option<&str>) -> Vec<ServerStats> {
     let mut wake = load_wake();
     let known = wake.clone();
     let tasks: Vec<_> = load()
@@ -294,8 +302,9 @@ pub async fn sample_all(memory: &mut Memory) -> Vec<ServerStats> {
                 .get(&s.name)
                 .map_or(true, |(at, _)| at.elapsed() >= GPU_EVERY);
             let names = !memory.gpu_names.contains_key(&s.name);
+            let asked = only.is_none_or(|n| n == s.name);
             tokio::spawn(async move {
-                let result = if s.online && !s.host.is_empty() {
+                let result = if asked && s.online && !s.host.is_empty() {
                     let script = format!("{SCRIPT}{GPU_SCRIPT} {} {}", live as u8, names as u8);
                     Some(run_script(&s.host, &script).await)
                 } else {
@@ -670,6 +679,8 @@ fn gpu(server: &str, text: &str, memory: &mut Memory) -> Option<RemoteGpu> {
     // (PCI address, the card, read live this time)
     let mut amd: Vec<(String, RemoteGpu, bool)> = Vec::new();
     let mut nvidia: Option<RemoteGpu> = None;
+    // An NVIDIA card is bound (Some), suspended or not.
+    let mut nv_asleep: Option<bool> = None;
     for line in text.lines() {
         let f: Vec<&str> = line.split_whitespace().collect();
         let num = |i: usize| f.get(i).and_then(|v| v.parse::<u64>().ok());
@@ -694,6 +705,10 @@ fn gpu(server: &str, text: &str, memory: &mut Memory) -> Option<RemoteGpu> {
                 };
                 amd.push((f[1].to_string(), card, read));
             }
+            Some("nvstate") => {
+                let asleep = f.get(1) == Some(&"suspended");
+                nv_asleep = Some(nv_asleep.unwrap_or(false) || asleep);
+            }
             Some("nvidia") if nvidia.is_none() => {
                 // `name, utilization, memory used, memory total, temperature` (MiB).
                 let c: Vec<&str> = line["nvidia".len()..].split(',').map(str::trim).collect();
@@ -715,8 +730,29 @@ fn gpu(server: &str, text: &str, memory: &mut Memory) -> Option<RemoteGpu> {
     if !names.is_empty() {
         memory.gpu_names.insert(server.to_string(), names);
     }
-    if nvidia.is_some() {
-        return nvidia;
+    // NVIDIA: read live at most every GPU_EVERY, never while suspended (the
+    // read would wake it); in between, the last measures stand.
+    if let Some(card) = nvidia {
+        memory
+            .gpu
+            .insert(server.to_string(), (Instant::now(), card.clone()));
+        return Some(card);
+    }
+    if let Some(asleep) = nv_asleep {
+        let last = memory.gpu.get(server).map(|(_, c)| c.clone());
+        let name = last
+            .as_ref()
+            .map(|c| c.name.clone())
+            .unwrap_or_else(|| "NVIDIA".into());
+        return Some(match last {
+            Some(c) if !asleep => c,
+            _ => RemoteGpu {
+                name,
+                asleep,
+                usage: -1,
+                ..Default::default()
+            },
+        });
     }
 
     let (pci, mut card, read) = amd.into_iter().max_by_key(|(_, c, _)| c.mem_total)?;
@@ -924,5 +960,27 @@ mod tests {
         let g = gpu("box", text, &mut mem).unwrap();
         assert_eq!(g.name, "GeForce RTX 3070");
         assert_eq!((g.usage, g.mem_total, g.temp), (12, 8192 * 1024 * 1024, 47));
+    }
+
+    #[test]
+    fn nvidia_gpu_sleeps_then_keeps_its_last_reading() {
+        let mut mem = Memory::default();
+        // Suspended: nvidia-smi was not run, the card is only said asleep.
+        let g = gpu("box", "nvstate suspended", &mut mem).unwrap();
+        assert!(g.asleep);
+        assert_eq!((g.name.as_str(), g.usage), ("NVIDIA", -1));
+
+        // Awake and read live.
+        let text = "nvstate active\nnvidia GeForce RTX 3070, 12, 900, 8192, 47";
+        let g = gpu("box", text, &mut mem).unwrap();
+        assert_eq!((g.usage, g.asleep), (12, false));
+
+        // Awake, not read this time: the last measures stand.
+        let g = gpu("box", "nvstate active", &mut mem).unwrap();
+        assert_eq!((g.name.as_str(), g.usage, g.asleep), ("GeForce RTX 3070", 12, false));
+
+        // Asleep again: its name is kept, its measures are not.
+        let g = gpu("box", "nvstate suspended", &mut mem).unwrap();
+        assert_eq!((g.name.as_str(), g.usage, g.asleep), ("GeForce RTX 3070", -1, true));
     }
 }

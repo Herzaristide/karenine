@@ -1,9 +1,10 @@
 pragma Singleton
 import QtQuick
 import Quickshell
-import Quickshell.Io
+import Quickshell.Services.UPower
 
-// Battery state, polled from sysfs (a singleton: one poll for every reader).
+// Battery state, from UPower (a singleton: one source for every reader).
+// UPower pushes each change over D-Bus: no polling, no process.
 // On battery, it warns once at `lowAt` and once more at `criticalAt`, through
 // the desktop notification server (services/Notifications.qml, via
 // notify-send); plugging the charger in closes those warnings and re-arms them.
@@ -11,9 +12,36 @@ import Quickshell.Io
 QtObject {
     id: battery
 
-    property bool   present: false
-    property int    percent: 0
-    property string status:  ""
+    // The aggregate of the machine's batteries, as UPower exposes it.
+    readonly property var device: UPower.displayDevice
+
+    readonly property bool   present: battery.device !== null && battery.device.ready
+                                      && battery.device.isLaptopBattery && battery.device.isPresent
+    // UPower gives 0–1 (an older Quickshell gave 0–100).
+    readonly property int    percent: {
+        if (!battery.present)
+            return 0;
+        var p = battery.device.percentage;
+        return Math.round(p <= 1 ? p * 100 : p);
+    }
+    // The sysfs names the readers expect: "Charging", "Discharging", "Full",
+    // "Not charging".
+    readonly property string status: {
+        if (!battery.present)
+            return "";
+        switch (battery.device.state) {
+            case UPowerDeviceState.Charging:         return "Charging";
+            case UPowerDeviceState.Discharging:      return "Discharging";
+            case UPowerDeviceState.Empty:            return "Discharging";
+            case UPowerDeviceState.FullyCharged:     return "Full";
+            case UPowerDeviceState.PendingCharge:    return "Not charging";
+            case UPowerDeviceState.PendingDischarge: return "Not charging";
+            default:                                 return "Unknown";
+        }
+    }
+
+    onPercentChanged: battery.check()
+    onStatusChanged: battery.check()
 
     readonly property int lowAt: 15
     readonly property int criticalAt: 5
@@ -57,39 +85,5 @@ QtObject {
         }
     }
 
-    property Process poller: Process {
-        id: batteryProc
-        command: [
-            "sh", "-c",
-            "bat=$(ls -d /sys/class/power_supply/BAT* 2>/dev/null | head -n1); " +
-            "if [ -n \"$bat\" ]; then " +
-            "  cap=$(cat \"$bat/capacity\" 2>/dev/null); " +
-            "  st=$(cat \"$bat/status\" 2>/dev/null); " +
-            "  echo \"$cap|$st\"; " +
-            "fi"
-        ]
-        stdout: StdioCollector { id: batteryOut }
-        onRunningChanged: {
-            if (running) return;
-            const line = batteryOut.text.trim();
-            if (line.length === 0) {
-                battery.present = false;
-                return;
-            }
-            const parts = line.split('|');
-            battery.percent = parseInt(parts[0]);
-            battery.status  = parts.length > 1 ? parts[1] : "";
-            battery.present = !isNaN(battery.percent);
-            battery.check();
-        }
-    }
-
-    property Timer refresh: Timer {
-        interval: 3000
-        repeat:   true
-        running:  true
-        onTriggered: if (!batteryProc.running) batteryProc.running = true;
-    }
-
-    Component.onCompleted: batteryProc.running = true
+    Component.onCompleted: battery.check()
 }

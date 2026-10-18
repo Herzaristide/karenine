@@ -3,7 +3,6 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Quickshell
-import Quickshell.Io
 import Quickshell.Wayland
 import "../services"
 
@@ -499,28 +498,18 @@ Scope {
         repeat: true
         running: dock.grab && !cardHover.hovered && !Gesture.active
         onRunningChanged: dock.closest = -1
-        onTriggered: {
-            if (!cursorProbe.running)
-                cursorProbe.running = true;
-        }
+        onTriggered: cursorProbe.probe()
     }
 
-    Process {
+    CursorProbe {
         id: cursorProbe
-        command: ["hyprctl", "cursorpos"]
-        stdout: StdioCollector {
-            id: cursorOut
-            onStreamFinished: dock.cursorAt(cursorOut.text)
-        }
+        onMeasured: (x, y) => dock.cursorAt(x, y)
     }
 
-    function cursorAt(line) {
-        var xy = line.trim().split(",");
+    function cursorAt(x, y) {
         var s = dock.screen;
-        if (xy.length !== 2 || !s || !dock.grab)
+        if (!s || !dock.grab)
             return;
-        var x = parseFloat(xy[0]);
-        var y = parseFloat(xy[1]);
         // La carte, en coordonnées de l'écran : le panneau commence après sa
         // marge.
         var p = card.mapToItem(null, 0, 0);
@@ -542,7 +531,6 @@ Scope {
         property color dot: Theme.textDim
         property bool hasDot: false
         property bool active: false
-        property bool pulsing: false
         signal activated()
 
         // Les pastilles des réglages de la barre de conversation.
@@ -567,14 +555,6 @@ Scope {
                 height: 7
                 radius: 3.5
                 color: chip.dot
-
-                SequentialAnimation on opacity {
-                    running: chip.pulsing
-                    loops: Animation.Infinite
-                    alwaysRunToEnd: true
-                    NumberAnimation { to: 0.35; duration: 800; easing.type: Easing.InOutSine }
-                    NumberAnimation { to: 1.0; duration: 800; easing.type: Easing.InOutSine }
-                }
             }
 
             Text {

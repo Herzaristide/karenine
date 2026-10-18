@@ -142,6 +142,8 @@ impl Outcome {
         })
     }
 
+    /// The inverse of `parse`, for the tests.
+    #[cfg(test)]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Allow => "allow",

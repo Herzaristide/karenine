@@ -95,8 +95,17 @@ Singleton {
         target: Hyprland
         function onRawEvent(event) {
             if (event.name === "configreloaded")
-                Qt.callLater(display._syncWorkspaces);
+                reloadSettle.restart();
         }
+    }
+
+    // Les rechargements viennent en rafale quand l'accent défile (mode
+    // arc-en-ciel des réglages, un par couleur) : une seule resynchronisation,
+    // une fois la rafale passée, au lieu de trois hyprctl à chaque couleur.
+    Timer {
+        id: reloadSettle
+        interval: 800
+        onTriggered: display._syncWorkspaces()
     }
 
     function _syncWorkspaces() {

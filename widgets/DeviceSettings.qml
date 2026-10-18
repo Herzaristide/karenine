@@ -5,8 +5,8 @@ import Quickshell.Io
 import "../services"
 
 // Les périphériques, première colonne des réglages : la sortie et l'entrée
-// du son, la webcam. Le volume et la luminosité, eux, sont dans la barre du
-// haut des widgets (HubTopBar).
+// du son, la webcam, le Wi-Fi (WifiSettings). Le volume, la luminosité et
+// le Bluetooth, eux, sont dans la barre du haut des widgets (HubTopBar).
 //
 // Son et webcam sont des nœuds PipeWire : `wpctl status` les liste (le
 // défaut marqué d'un *), `wpctl set-default` en change — une webcam par
@@ -169,5 +169,9 @@ ColumnLayout {
         label: I18n.tr("settings.video.webcam")
         kind: "video"
         visible: root.nodes.video.length > 0
+    }
+
+    WifiSettings {
+        Layout.fillWidth: true
     }
 }

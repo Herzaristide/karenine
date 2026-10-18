@@ -113,8 +113,16 @@ fn translate(dir: &Path, lang: &str, key: &str, args: &[(&str, &str)]) -> String
 mod tests {
     use super::*;
 
+    /// A folder of its own per call: the tests run in parallel, and one
+    /// rewriting the files while another reads them made it read them empty.
     fn dicts() -> PathBuf {
-        let d = std::env::temp_dir().join(format!("anna-i18n-{}", std::process::id()));
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let d = std::env::temp_dir().join(format!(
+            "anna-i18n-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(
             d.join("en.json"),

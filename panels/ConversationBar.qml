@@ -3,7 +3,6 @@ import QtQuick
 import QtQuick.Effects
 import QtQuick.Shapes
 import Quickshell
-import Quickshell.Io
 import Quickshell.Wayland
 import "../services"
 
@@ -203,29 +202,21 @@ PanelWindow { // qmllint disable uncreatable-type
         onTriggered: {
             if (bar.pointerInside)
                 bar.closest = 0;
-            else if (!cursorProbe.running)
-                cursorProbe.running = true;
+            else
+                cursorProbe.probe();
         }
     }
 
-    Process {
+    CursorProbe {
         id: cursorProbe
-        command: ["hyprctl", "cursorpos"]
-        stdout: StdioCollector {
-            id: cursorOut
-            onStreamFinished: bar.cursorAt(cursorOut.text)
-        }
+        onMeasured: (x, y) => bar.cursorAt(x, y)
     }
 
-    // `hyprctl cursorpos` : « x, y », en coordonnées logiques, comme celles
-    // de l'écran.
-    function cursorAt(line) {
-        var xy = line.trim().split(",");
+    // En coordonnées logiques, comme celles de l'écran.
+    function cursorAt(x, y) {
         var s = bar.screen;
-        if (xy.length !== 2 || !s || !bar.typing || DragState.active)
+        if (!s || !bar.typing || DragState.active)
             return;
-        var x = parseFloat(xy[0]);
-        var y = parseFloat(xy[1]);
 
         // Le rectangle de la capsule (widgets compris) seule : y ajouter les
         // suggestions ferait sauter la distance quand elles apparaissent ou
@@ -924,7 +915,7 @@ PanelWindow { // qmllint disable uncreatable-type
                             radius: 3.5
                             color: bar.hue(dot.index * 0.14)
                             SequentialAnimation on opacity {
-                                running: ClaudeLive.pilotBusy
+                                running: ClaudeLive.pilotBusy && bar.shown
                                 loops: Animation.Infinite
                                 PauseAnimation { duration: dot.index * 160 }
                                 NumberAnimation { to: 0.25; duration: 420; easing.type: Easing.InOutSine }
@@ -1504,8 +1495,10 @@ PanelWindow { // qmllint disable uncreatable-type
             width: 28
             height: 28
 
-            // Transcription ou pilote au travail : il tourne doucement.
-            readonly property bool turning: ClaudeLive.voicePhase === "transcribing" || ClaudeLive.pilotBusy
+            // Transcription ou pilote au travail : il tourne doucement. Pas
+            // barre cachée : personne ne le voit.
+            readonly property bool turning: bar.shown
+                                            && (ClaudeLive.voicePhase === "transcribing" || ClaudeLive.pilotBusy)
             // Revient droit une fois le travail fini.
             onTurningChanged: if (!turning) settle.restart()
 

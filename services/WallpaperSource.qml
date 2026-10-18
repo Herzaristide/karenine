@@ -7,8 +7,9 @@ import Quickshell.Io
 // Taper « fond » les liste toutes ; taper un bout de nom filtre. Ouvrir une
 // carte la met en fond, à chaud — le lecteur ne redémarre pas.
 //
-// La liste est relue à chaque recherche : c'est un `find` sur un seul dossier,
-// et une vidéo qu'on vient d'y déposer apparaît sans rien relancer.
+// La liste est gardée `freshMs` : les lettres d'une même frappe la
+// réutilisent au lieu de relancer `wallpaper list` chacune. Au-delà, elle est
+// relue : une vidéo qu'on vient de déposer apparaît sans rien relancer.
 QtObject {
     id: src
 
@@ -23,11 +24,19 @@ QtObject {
     property int    runSeq:   -1
     property string runQuery: ""
 
+    readonly property int freshMs: 10000
+    property string _list: ""
+    property double _listAt: 0
+
     function search(query, seq) {
-        // Une seule liste en vol : la précédente est périmée, on la laisse
-        // finir mais on ne publiera que la dernière.
         src.runSeq = seq;
         src.runQuery = query;
+        if (src._listAt > 0 && Date.now() - src._listAt < src.freshMs) {
+            src._parse(seq, query, src._list);
+            return;
+        }
+        // Une seule liste en vol : la précédente est périmée, on la laisse
+        // finir mais on ne publiera que la dernière.
         if (!listProc.running)
             listProc.running = true;
     }
@@ -36,10 +45,18 @@ QtObject {
         command: ["wallpaper", "list"]
         stdout: StdioCollector { id: listOut }
         onRunningChanged: {
-            if (running || src.runSeq < 0)
+            if (running)
                 return;
-            src._parse(src.runSeq, src.runQuery, listOut.text);
+            src._list = listOut.text;
+            src._listAt = Date.now();
+            if (src.runSeq >= 0)
+                src._parse(src.runSeq, src.runQuery, src._list);
         }
+    }
+
+    // Une vidéo mise en fond change la liste (son « * ») : relue au prochain coup.
+    function _forget() {
+        src._listAt = 0;
     }
 
     function _parse(seq, query, text) {
@@ -80,7 +97,9 @@ QtObject {
     }
 
     function activate(item, actionId) {
-        if (actionId === "open")
+        if (actionId === "open") {
             Quickshell.execDetached(["wallpaper", "set", item.payload.path]);
+            src._forget();
+        }
     }
 }
