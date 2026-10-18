@@ -157,16 +157,16 @@ ColumnLayout {
     }
 
     // ── Les lignes ───────────────────────────────────────────────
-    Heading { text: "Son" }
-    DeviceRow { label: "Sortie"; kind: "sink" }
-    DeviceRow { label: "Entrée"; kind: "source" }
+    Heading { text: I18n.tr("settings.sound") }
+    DeviceRow { label: I18n.tr("settings.sound.output"); kind: "sink" }
+    DeviceRow { label: I18n.tr("settings.sound.input"); kind: "source" }
 
     Heading {
         Layout.topMargin: 10
-        text: "Vidéo"
+        text: I18n.tr("settings.video")
     }
     DeviceRow {
-        label: "Webcam"
+        label: I18n.tr("settings.video.webcam")
         kind: "video"
         visible: root.nodes.video.length > 0
     }

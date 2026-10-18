@@ -12,7 +12,7 @@ Rectangle {
     property bool error: false
     // Une invite PAM peut demander une réponse en clair (code 2FA…).
     property bool echo: false
-    property string placeholder: "Mot de passe…"
+    property string placeholder: I18n.tr("auth.password")
     // Où renvoyer Maj+Tab (le champ utilisateur du greeter).
     property Item backtabTarget: null
 

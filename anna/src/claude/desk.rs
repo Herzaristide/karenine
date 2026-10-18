@@ -4,8 +4,7 @@
 //! Every call lands in the daemon (`desk` command), never in the MCP process:
 //! the daemon owns the sessions, the theme and the bar, and is the one place
 //! that asks the user before anything that can't be undone. The tools that
-//! do (`SENSITIVE`) wait for a yes in the bar's bubble, like a permission
-//! request from any Claude session.
+//! do (`SENSITIVE`) wait for a yes in the dock (see permission.rs).
 //!
 //! Hyprland is driven through its Lua dispatchers — the only syntax its Lua
 //! configuration accepts (see gesture/output.rs). Only forms whose arguments
@@ -23,10 +22,12 @@ pub const SENSITIVE: [&str; 3] = ["fermer_fenetre", "commande", "reconstruire_ni
 const OUTPUT_MAX: usize = 4000;
 
 /// The shell's widgets (services/Widgets.qml), plus « tout ».
-const WIDGETS: [&str; 10] = [
+const WIDGETS: [&str; 12] = [
     "explorer",
     "stats",
     "telephone",
+    "notifications",
+    "notes",
     "lecteur",
     "musique",
     "son",
@@ -111,9 +112,19 @@ pub fn tools() -> Value {
             json!({ "requete": s("mots à chercher") }), &["requete"]),
         tool("ouvrir_note", "Ouvre une note du coffre dans Obsidian.",
             json!({ "chemin": s("chemin relatif au coffre, tel que chercher_notes le donne") }), &["chemin"]),
+        tool("creer_note",
+            "Crée une note dans l'onglet Notes de l'interface (les notes rapides façon Keep, pas le coffre \
+             Obsidian) : un pense-bête, une liste, une idée à garder sous la main.",
+            json!({ "texte": s("le contenu de la note ; une liste : une ligne par élément"),
+                    "epingler": json!({ "type": "boolean", "description": "en tête des notes ; défaut : non" }) }),
+            &["texte"]),
+        tool("lire_notes",
+            "Les notes de l'onglet Notes (notes rapides façon Keep, pas le coffre Obsidian), épinglées d'abord ; \
+             les images y figurent par leur chemin.",
+            json!({ "recherche": s("mots que la note doit contenir ; vide : toutes") }), &[]),
         tool("widget",
             "Ouvre, ferme ou bascule un widget de l'interface : « explorer » (les dossiers du PC), « stats » (processeur, mémoire et carte graphique, de ce PC ou \
-             d'un serveur du réseau Tailscale par ssh, avec terminal, redémarrage, extinction et réveil), « telephone » (le téléphone relié par KDE Connect : batterie, notifications, le faire sonner), « lecteur » (lecteur en cours, paroles), « musique » (métronome et accordeur), \
+             d'un serveur du réseau Tailscale par ssh, avec terminal, redémarrage, extinction et réveil, et en dessous le téléphone), « telephone » (ouvre « stats », où est la carte du téléphone relié par KDE Connect : batterie, réseau, le faire sonner), « notifications » (les notifications reçues, ne pas déranger), « notes » (les notes façon Keep : texte et images collés), « lecteur » (lecteur en cours, paroles), « musique » (métronome et accordeur), \
              « son » (ouvre les réglages), « camera » (contrôle gestuel), « reglages » \
              (sorties et entrées audio, webcam, luminosité, écran, thème), « sessions » (le dock des sessions Claude et du savoir). « tout » avec \
              « fermer » referme tout.",
@@ -162,7 +173,7 @@ fn shell_send(line: &str) -> Result<(), String> {
         .map_err(|e| format!("l'interface (quickshell) ne répond pas : {e}"))
 }
 
-/// One line describing a call, for the bubble and the dock's thread.
+/// One line describing a call, for the dock: its request and its thread.
 pub fn describe(tool: &str, args: &Value) -> String {
     let s = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or("");
     match tool {
@@ -620,7 +631,14 @@ pub fn run_tool(tool: &str, args: &Value) -> Result<String, String> {
                 "fenetre" => "active",
                 _ => "output",
             };
-            launch(&["grimblast", "--notify", "copysave", target])?;
+            // In /tmp under the shell's name: it lands in the notes too
+            // (notes.rs::watch_screenshots).
+            let secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let path = format!("/tmp/screenshot-{secs}.png");
+            launch(&["grimblast", "--notify", "copysave", target, &path])?;
             Ok("capture lancée".into())
         }
         "widget" => {
@@ -633,6 +651,11 @@ pub fn run_tool(tool: &str, args: &Value) -> Result<String, String> {
             })
         }
         "chercher_notes" => Ok(search_notes(&s("requete"))),
+        "creer_note" => crate::notes::pilot_create(
+            &s("texte"),
+            args.get("epingler").and_then(Value::as_bool).unwrap_or(false),
+        ),
+        "lire_notes" => Ok(cut(&crate::notes::pilot_read(&s("recherche")))),
         "ouvrir_note" => {
             let rel = s("chemin");
             let p = vault().join(&rel);
@@ -694,6 +717,7 @@ mod tests {
             .map(|t| t["name"].as_str().unwrap())
             .collect();
         assert!(names.contains(&"volume") && names.contains(&"lancer_session"));
+        assert!(names.contains(&"creer_note") && names.contains(&"lire_notes"));
         for t in list.as_array().unwrap() {
             assert_eq!(t["inputSchema"]["type"], "object", "{}", t["name"]);
         }

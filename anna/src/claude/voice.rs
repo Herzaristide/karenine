@@ -255,13 +255,16 @@ pub fn model_path() -> PathBuf {
 
 /// What Whisper is known to "hear" in silence or noise — credits from the
 /// subtitles it was trained on. Never a request.
-const HALLUCINATIONS: [&str; 6] = [
+const HALLUCINATIONS: [&str; 9] = [
     "sous-titres réalisés par",
     "sous-titrage",
     "amara.org",
     "merci d'avoir regardé",
     "abonnez-vous",
     "vocabulaire :",
+    "vocabulary:",
+    "thanks for watching",
+    "subtitles by",
 ];
 
 /// whisper.cpp's text output, joined into one request. Its markers for
@@ -380,14 +383,21 @@ pub fn vocabulary() -> String {
         ]
         .map(String::from),
     );
-    format!("Vocabulaire : {}.", words.join(", "))
+    crate::i18n::tr_in(
+        &crate::i18n::voice_lang(),
+        "whisper.vocabulary",
+        &[("words", &words.join(", "))],
+    )
 }
 
-/// Transcribe a WAV file with whisper.cpp, in French.
+/// Transcribe a WAV file with whisper.cpp, in the spoken language.
 pub fn transcribe(wav_path: &std::path::Path) -> Result<String, String> {
     let model = model_path();
     if !model.is_file() {
-        return Err(format!("modèle Whisper absent : {}", model.display()));
+        return Err(crate::i18n::tr_args(
+            "voice.no_model",
+            &[("path", &model.display().to_string())],
+        ));
     }
     let threads = std::thread::available_parallelism()
         .map(|n| n.get().min(8))
@@ -398,7 +408,7 @@ pub fn transcribe(wav_path: &std::path::Path) -> Result<String, String> {
         .arg(&model)
         .args([
             "-l",
-            "fr",
+            &crate::i18n::voice_lang(),
             "-nt",
             "-np",
             "-t",
@@ -414,8 +424,8 @@ pub fn transcribe(wav_path: &std::path::Path) -> Result<String, String> {
         return Err(String::from_utf8_lossy(&out.stderr)
             .lines()
             .last()
-            .unwrap_or("whisper-cli a échoué")
-            .to_string());
+            .map(str::to_string)
+            .unwrap_or_else(|| crate::i18n::tr("voice.whisper_failed")));
     }
     Ok(clean_transcript(&String::from_utf8_lossy(&out.stdout)))
 }
@@ -566,7 +576,11 @@ impl Voice {
         }
         {
             let mut slot = lock(&self.server);
-            if slot.as_mut().is_some_and(|s| s.alive()) {
+            // A server started for another language is restarted.
+            if slot
+                .as_mut()
+                .is_some_and(|s| s.alive() && s.lang == crate::i18n::voice_lang())
+            {
                 self.starting.store(false, Ordering::SeqCst);
                 return;
             }
@@ -575,7 +589,7 @@ impl Voice {
         let server = Arc::clone(&self.server);
         let starting = Arc::clone(&self.starting);
         std::thread::spawn(move || {
-            match whisper::Server::start(&model, &vocabulary()) {
+            match whisper::Server::start(&model, &vocabulary(), &crate::i18n::voice_lang()) {
                 Ok(s) => *lock(&server) = Some(s),
                 Err(e) => eprintln!("anna: voix : {e}"),
             }
@@ -765,7 +779,7 @@ impl Voice {
             match rx.recv_timeout(Duration::from_millis(200)) {
                 Ok(c) => Ok(Some(c)),
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),
-                Err(_) => Err("le micro s'est fermé".into()),
+                Err(_) => Err(crate::i18n::tr("voice.mic_closed")),
             }
         });
         drop(capture);

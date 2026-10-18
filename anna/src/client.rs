@@ -177,9 +177,9 @@ fn usage() -> ! {
            voice transcribe <file.wav>            Transcribe a 16 kHz mono WAV\n\
            servers [list] | watch                 Tailnet devices / their stats (ssh)\n\
            servers on|off|reboot <name>           Wake-on-LAN / power off, reboot (ssh)\n\
-           phone [watch]                          KDE Connect phones: battery, notifications\n\
+           phone [watch]                          KDE Connect phones: battery, network\n\
            phone ring|ping|browse|clipboard|accept|reject <device>\n\
-           phone share <device> <path> | dismiss <device> <notification>\n\
+           phone share <device> <path>\n\
            phone screen <name>                    Its screen: the scrcpy command (USB, else Tailscale)\n\
          \n\
          Claude Code hook (in its settings, not by hand):\n\

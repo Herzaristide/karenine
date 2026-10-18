@@ -1,58 +1,60 @@
 ---
 title: Widgets
 group: Structure
-summary: Le contenu des panneaux — stats, notes, contrôles, graphes et outils musicaux.
-links: [panels, backend, audio-tools, theme, shell]
+summary: The panels' content — stats, notes, controls, graphs and music tools.
+links: [panels, backend, audio-tools, theme, shell, languages]
 ---
 
 # Widgets (`widgets/`)
 
-Le **contenu** affiché dans les [panneaux](#panels). Chaque widget est un
-composant QML autonome.
+The **content** shown in the [panels](#panels). Each widget is a standalone
+QML component.
 
-| Widget | Rôle |
+| Widget | Role |
 | --- | --- |
-| `FileExplorer.qml` | L'onglet « Explorer » : les dossiers du PC. Les favoris à gauche (les dossiers du dossier personnel, cachés exceptés, puis `/etc/nixos`), le chemin cliquable segment par segment, le contenu en tuiles (les images en miniature). Comme dans un gestionnaire de fichiers, un clic sélectionne et un double clic entre dans un dossier ou ouvre un fichier (`xdg-open`, la barre s'efface) ; une tuile se glisse vers une autre application (Dolphin, navigateur, messagerie…), qui reçoit le fichier comme depuis un gestionnaire de fichiers. Sélection multiple : Ctrl+clic ajoute ou retire, Maj+clic prend une plage, un clic dans le vide désélectionne ; glisser une tuile sélectionnée emporte toute la sélection ; une pastille dit combien sont sélectionnés, et la vide ; les boutons montrent les fichiers cachés, ouvrent le dossier dans le gestionnaire de fichiers ou un terminal. Le dossier est gardé d'un onglet à l'autre. Au-dessus des favoris, un sélecteur passe de cette machine aux serveurs du tailnet (la liste d'`anna servers list`, ceux qu'on atteint par ssh) : le serveur est monté par `sshfs` (`host:/`, sous `$XDG_RUNTIME_DIR/karenine-sshfs/<nom>`, `BatchMode` : une clé ssh est nécessaire) et reste monté jusqu'au passage à une autre machine ; ses favoris sont les dossiers de son dossier personnel et sa config NixOS (la racine passe par le disque « / », le chemin ou ↑) ; le terminal y ouvre une session ssh dans le même dossier ; pas de miniatures à distance. En bas, sur toute la largeur, une pastille par disque physique de la machine montrée (`df -l` et `lsblk`, par ssh à distance), avec leur remplissage ; un clic va à leur point de montage principal. Un relevé raté (ssh) garde les disques affichés et réessaie 5 s plus tard. |
-| `HardwareStats.qml` | L'onglet « Système » : processeur, mémoire et carte graphique (le pourcentage en grand, la courbe derrière). En haut, un sélecteur (`MachinePicker`) passe de cette machine à un serveur du tailnet : son relevé vient d'anna (`servers_watch`, par ssh, toutes les 3 s), carte graphique comprise (NVIDIA par `nvidia-smi` ; AMD par sysfs, la carte qui a le plus de VRAM : en veille, elle n'est pas lue pour ne pas la réveiller et la tuile dit « En veille » ; éveillée, elle est relue au plus toutes les 15 s, pour la laisser se rendormir) ; à droite, son nom, depuis quand il tourne et sa charge, ou l'erreur de ssh, puis ses actions : terminal (une session ssh dans le terminal du système), redémarrer et éteindre (deux appuis ; sans sudo sans mot de passe, le terminal s'ouvre pour le taper) ; hors ligne, allumer par Wake-on-LAN, une fois sa MAC relevée en ligne. Le choix de la machine est le même pour l'Explorer et l'onglet Système (`Widgets.machine`). |
-| `NotesWidget.qml` | Prise de notes. |
-| `PhoneWidget.qml` | L'onglet « Téléphone » : le téléphone relié par KDE Connect (anna, `phone.rs`). Sa carte (batterie, réseau mobile ; « Écran » l'affiche dans une fenêtre scrcpy, faire sonner, fichiers, presse-papier ; un fichier déposé dessus lui est envoyé), et ses notifications à côté. Accepte ou refuse une demande d'appairage. |
-| `GlassButton.qml` | Le bouton des widgets, dans le style de la barre (pilule translucide, teintée si `accent`). |
-| `MachinePicker.qml` | Le choix de la machine, partagé par l'Explorer et l'onglet Système : une pastille au nom de la machine montrée, qui déroule celle-ci et les serveurs du tailnet joignables par ssh (`anna servers list`), en ligne ou non. Le choix va dans `Widgets.machine`, le même pour tous les onglets ; chacun le suit (l'Explorer monte le serveur par sshfs en revenant à l'écran, et revient à la machine montée si le montage échoue). |
-| `FocusRing.qml` | Le contour de ce qui a le clavier, partagé par tous les contrôles. |
-| `MusicPlayerWidget.qml` | Lecteur de musique. |
-| `Tuner.qml` | Accordeur — voir [Outils musicaux](#audio-tools). |
-| `Metronome.qml` | Métronome — voir [Outils musicaux](#audio-tools). |
-| `ChromaGraph.qml` | Chromagramme — voir [Outils musicaux](#audio-tools). |
-| `MiniGraph.qml` | Petit graphe réutilisable. |
-| `Settings.qml` | Réglages, en quatre colonnes : périphériques ; écran, accordeur (le la de référence, persisté par le singleton `Tuning` dans `tuner.json`), voix (le mot d'éveil « Karénine », via `ClaudeLive.voiceWakeToggle()` — anna le retient) ; apparence ; palette (l'onglet Réglages de `WidgetHub`). |
-| `DeviceSettings.qml` | Première colonne des réglages : sortie et entrée du son, webcam (nœuds PipeWire, `wpctl set-default`) ; la luminosité est dans la barre du haut (`HubTopBar`). |
+| `FileExplorer.qml` | The “Explorer” tab: the computer's folders. Favorites on the left (the folders of the home directory, hidden ones excepted, then `/etc/nixos`), the path clickable segment by segment, the content as tiles (images as thumbnails). As in a file manager, a click selects and a double click enters a folder or opens a file (`xdg-open`, the bar fades out); a tile can be dragged to another application (Dolphin, browser, messaging…), which receives the file as from a file manager. Multiple selection: Ctrl+click adds or removes, Shift+click takes a range, a click in the void deselects; dragging a selected tile carries the whole selection; a chip says how many are selected, and clears them; the buttons show hidden files, open the folder in the file manager or a terminal. The folder is kept from one tab to another. Above the favorites, a picker switches from this machine to the tailnet's servers (the list from `anna servers list`, those reachable over ssh): the server is mounted with `sshfs` (`host:/`, under `$XDG_RUNTIME_DIR/karenine-sshfs/<name>`, `BatchMode`: an ssh key is required) and stays mounted until switching to another machine; its favorites are the folders of its home directory and its NixOS config (the root goes through the “/” disk, the path or ↑); the terminal opens an ssh session in the same folder there; no thumbnails remotely. At the bottom, full width, one chip per physical disk of the machine shown (`df -l` and `lsblk`, over ssh remotely), with how full it is; a click goes to its main mount point. A failed sample (ssh) keeps the disks shown and retries 5 s later. |
+| `HardwareStats.qml` | The “System” tab: processor, memory and graphics card (the percentage large, the curve behind). At the top, a picker (`MachinePicker`) switches from this machine to a tailnet server: its sample comes from anna (`servers_watch`, over ssh, every 3 s), graphics card included (NVIDIA through `nvidia-smi`; AMD through sysfs, the card with the most VRAM: asleep, it is not read so as not to wake it and the tile says “Asleep”; awake, it is re-read at most every 15 s, to let it go back to sleep); on the right, its name, how long it has been up and its load, or the ssh error, then its actions: terminal (an ssh session in the system terminal), reboot and shut down (two presses; without password-less sudo, the terminal opens to type it); offline, power on with Wake-on-LAN, once its MAC has been recorded online. The machine choice is the same for the Explorer and the System tab (`Widgets.machine`). |
+| `PhoneWidget.qml` | The phone linked through KDE Connect (anna, `phone.rs`), a wide, low card at the bottom of the “System” tab (`HardwareStats.qml`), whatever machine is picked there; `telephone` opens that tab. Its card: state, mobile network, battery; “Screen” shows it in a scrcpy window, ring, clipboard. Its notifications reach the “Notifications” tab, sent by `kdeconnectd` like any other. Accepts or declines a pairing request. |
+| `NotificationCenter.qml` | The “Notifications” tab: the desktop notifications not closed yet, newest first (`services/Notifications.qml`, the shell being the `org.freedesktop.Notifications` server). Nothing pops up over the screen. Each one (`NotificationCard.qml`): icon or image, application, time, title, text, its actions, an inline reply field when the application offers one; a click runs its default action, ✕ or a right click closes it. “Clear all” closes them all. |
+| `NotesWidget.qml` | The “Notes” tab: a Keep-like wall of cards, kept on this machine only (`anna notes …`, `notes.rs`: `~/.local/share/anna/notes/notes.json` and one file per image). A note is written in the bar: type it, then pick “Create a note” among the results (`services/NoteSource.qml`, which also lists the matching notes; picking one opens the tab). At the top of the tab, “Paste”; Ctrl+V on the wall turns the clipboard into a note: an image (a screenshot, an image copied from a browser), an image file copied from a file manager, or text. Every screenshot also lands there by itself: the daemon watches `/tmp/screenshot-*.png` (Print keys, search, pilot) and `<Pictures>/capture-*.png` (the top bar), and the tab reloads when `notes.json` changes. The cards, in columns that scroll, pinned ones first then the most recent: a click edits the text (an image's caption; Escape or a click elsewhere saves, emptying a text note deletes it), a double click opens an image; on hover, at the top right (icons `pin`, `copy`, `terminal`, `trash`), pin, copy back to the clipboard, open in Claude Code (`claude` in the system terminal, from the home directory, the note as its first message — an image by its path), delete. |
+| `GlassButton.qml` | The widgets' button, in the bar's style (translucent pill, tinted if `accent`). |
+| `MachinePicker.qml` | The machine choice, shared by the Explorer and the System tab: a chip named after the machine shown, which unrolls it and the tailnet servers reachable over ssh (`anna servers list`), online or not. The choice goes into `Widgets.machine`, the same for every tab; each one follows it (the Explorer mounts the server with sshfs when it comes back on screen, and goes back to the mounted machine if mounting fails). |
+| `FocusRing.qml` | The outline of what has the keyboard, shared by all controls. |
+| `MusicPlayerWidget.qml` | Music player. |
+| `Tuner.qml` | Tuner — see [Music tools](#audio-tools). |
+| `Metronome.qml` | Metronome — see [Music tools](#audio-tools). |
+| `ChromaGraph.qml` | Chromagram — see [Music tools](#audio-tools). |
+| `MiniGraph.qml` | Small reusable graph. |
+| `Settings.qml` | Settings, in columns: devices; screen, tuner (the reference A, persisted by the `Tuning` singleton in `tuner.json`), voice (the wake word “Karénine”, through `ClaudeLive.voiceWakeToggle()` — anna remembers it — and the **voice language**), **interface language**; appearance; palette (the Settings tab of `WidgetHub`). The two languages are separate settings: see [Languages](#languages). |
+| `DeviceSettings.qml` | First column of the settings: sound output and input, webcam (PipeWire nodes, `wpctl set-default`); brightness is in the top bar (`HubTopBar`). |
 
-## Clavier
+## Keyboard
 
-Toute action d'un widget s'atteint sans la souris. Le contour à la teinte de
-la barre (`FocusRing.qml`) montre ce qui a le clavier ; un clic ne le fait
-pas apparaître.
+Every widget action is reachable without the mouse. The outline in the bar's
+tint (`FocusRing.qml`) shows what has the keyboard; a click does not make it
+appear.
 
-| Touche | Effet |
+| Key | Effect |
 | --- | --- |
-| ↑ (champ vide) | Ouvre les widgets ; une seconde fois, passe sur les onglets. |
-| ↑ ↓ (texte tapé) | Parcourent les suggestions, au-dessus de la barre (↑ y entre par la meilleure, contre la barre ; ↓ depuis elle revient au champ). Entrée ouvre la suggestion retenue ; ← → règlent le volume ou l'accent retenu. |
-| Flèches, Entrée, Retour arrière (dans l'Explorer) | Promènent le curseur dans le dossier, ouvrent le fichier ou entrent dans le dossier (Entrée sur plusieurs sélectionnés : les ouvre tous), remontent au parent. Maj+flèches étendent la sélection, Espace ajoute ou retire, Ctrl+A prend tout, Échap vide la sélection. Taper les premières lettres d'un nom y saute ; le bouton « précédent » de la souris remonte aussi. |
-| ↓ (dans le champ) | Referme les widgets. |
-| Tab / Maj+Tab | Passe d'un contrôle à l'autre : barre du haut, widget, onglets, champ. |
-| Entrée / Espace | Actionne le bouton, la tuile ou la pastille. |
-| Maj+Entrée | Sur la capture : l'écran entier (comme le clic droit). |
-| ← → / ↑ ↓ | Règlent les curseurs (volume, luminosité), la position du morceau (±5 s), le tempo, le la, les sélecteurs de couleur (Maj : pas plus grand). |
-| ← → | Changent de widget : depuis le champ vide, les onglets, ou tout contrôle qui n'en fait rien d'autre. Ctrl+Tab aussi (Ctrl+Maj+Tab : en arrière). |
-| Échap | Rend le clavier au champ ; dans le champ, lâche la suggestion retenue, puis referme les widgets, puis la barre ; sur un bouton d'alimentation armé, renonce. |
+| ↑ (empty field) | Opens the widgets; a second time, moves to the tabs. |
+| ↑ ↓ (text typed) | Browse the suggestions, above the bar (↑ enters through the best one, against the bar; ↓ from it goes back to the field). Enter opens the chosen suggestion; ← → adjust the chosen volume or accent. |
+| Arrows, Enter, Backspace (in the Explorer) | Move the cursor in the folder, open the file or enter the folder (Enter on several selected: opens them all), go up to the parent. Shift+arrows extend the selection, Space adds or removes, Ctrl+A takes everything, Esc clears the selection. Typing the first letters of a name jumps there; the mouse's “back” button goes up too. |
+| ↓ (in the field) | Closes the widgets. |
+| Tab / Shift+Tab | Move from one control to the next: top bar, widget, tabs, field. |
+| Enter / Space | Press the button, the tile or the chip. |
+| Shift+Enter | On the screenshot: the whole screen (like right click). |
+| ← → / ↑ ↓ | Adjust sliders (volume, brightness), the track position (±5 s), the tempo, the A, the color pickers, the voice language (Shift: bigger step). |
+| ← → | Change widget: from the empty field, the tabs, or any control that does nothing else with them. Ctrl+Tab too (Ctrl+Shift+Tab: backwards). |
+| Esc | Gives the keyboard back to the field; in the field, drops the chosen suggestion, then closes the widgets, then the bar; on an armed power button, gives up. |
 
-Se déconnecter, redémarrer et éteindre demandent toujours deux appuis. La
-carte flottante (contrôle gestuel) prend le clavier une fois cliquée ; Échap
-la ferme.
+Logging out, rebooting and shutting down always take two presses. The
+floating card (gesture control) takes the keyboard once clicked; Esc closes
+it.
 
 ## Relations
 
-- Affichés par les [panneaux](#panels), sélectionnés via l'[IPC du shell](#shell).
-- Les widgets musicaux (`Tuner`, `Metronome`, `ChromaGraph`) s'appuient sur des
-  [scripts backend](#backend) — regroupés dans [Outils musicaux](#audio-tools).
-- Leurs couleurs proviennent du [thème](#theme).
+- Shown by the [panels](#panels), selected through the [shell's IPC](#shell).
+- The music widgets (`Tuner`, `Metronome`, `ChromaGraph`) rely on
+  [backend services](#backend) — grouped in [Music tools](#audio-tools).
+- Their colors come from the [theme](#theme), their text from the
+  [dictionaries](#languages).

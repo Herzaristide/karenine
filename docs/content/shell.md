@@ -1,53 +1,56 @@
 ---
-title: Le shell & l'IPC
+title: The shell & IPC
 group: Structure
-summary: shell.qml, point d'entrée Quickshell, et le pilotage externe par FIFO.
+summary: shell.qml, the Quickshell entry point, and external control through a FIFO.
 links: [architecture, panels, widgets, configuration]
 ---
 
-# Le shell & l'IPC
+# The shell & IPC
 
-`shell.qml` est le **point d'entrée Quickshell** : il monte la barre de
-conversation, les widgets flottants, la bulle des sessions et le dock IA.
-Quels widgets sont ouverts, et où, vit dans le singleton `services/Widgets.qml`.
+`shell.qml` is the **Quickshell entry point**: it mounts the conversation
+bar, the floating widgets and the AI dock. Which widgets
+are open, and where, lives in the `services/Widgets.qml` singleton.
 
-## Pilotage externe (IPC via FIFO)
+## External control (IPC through a FIFO)
 
-Le shell écoute une **FIFO** `/tmp/qs-panel.fifo`, ce qui permet de le piloter
-depuis n'importe quel script ou raccourci — et c'est par là qu'anna ouvre les
-widgets quand le pilote appelle son outil MCP `widget` :
+The shell listens on a **FIFO**, `/tmp/qs-panel.fifo`, so it can be driven
+from any script or shortcut — and that is how anna opens widgets when the
+pilot calls its `widget` MCP tool:
 
 ```bash
-echo "widget:stats"          > /tmp/qs-panel.fifo   # bascule un widget
-echo "widget:lecteur:ouvrir" > /tmp/qs-panel.fifo   # ouvrir | fermer | basculer
-echo "widget:tout:fermer"    > /tmp/qs-panel.fifo   # referme tout
-echo "dock"                  > /tmp/qs-panel.fifo   # fait monter / renvoie la barre
-echo "voix"                  > /tmp/qs-panel.fifo   # parle au pilote
-echo "close"                 > /tmp/qs-panel.fifo   # ferme tout
+echo "widget:stats"          > /tmp/qs-panel.fifo   # toggles a widget
+echo "widget:lecteur:ouvrir" > /tmp/qs-panel.fifo   # ouvrir | fermer | basculer (open | close | toggle)
+echo "widget:tout:fermer"    > /tmp/qs-panel.fifo   # closes everything
+echo "dock"                  > /tmp/qs-panel.fifo   # raises / sends back the bar
+echo "voix"                  > /tmp/qs-panel.fifo   # talks to the pilot
+echo "close"                 > /tmp/qs-panel.fifo   # closes everything
 ```
 
-Les widgets :
+These names are identifiers, shared with the pilot's tools: they do not
+change with the interface language.
 
-| Nom | Widget |
+The widgets:
+
+| Name | Widget |
 | --- | --- |
-| `explorer` | Les dossiers du PC |
-| `stats` | Stats matérielles |
-| `lecteur` | Lecteur |
-| `musique` | Métronome et accordeur (`metronome` et `accordeur` y mènent aussi) |
-| `son` | Volume, sorties et entrées audio |
-| `camera` | Contrôle gestuel |
-| `reglages` | Fenêtre de réglages |
-| `sessions` | Dock IA (sessions Claude, savoir) |
+| `explorer` | The computer's folders |
+| `stats` | Hardware stats |
+| `lecteur` | Player |
+| `musique` | Metronome and tuner (`metronome` and `accordeur` lead there too) |
+| `son` | Volume, audio outputs and inputs |
+| `camera` | Gesture control |
+| `reglages` | Settings window |
+| `sessions` | AI dock (Claude sessions, knowledge) |
 
-Les anciens `widget:N` restent compris (0 = stats, 1 = sessions, 3 = musique,
-4 = lecteur), ainsi que `controls` (son) et `camera`.
+The old `widget:N` are still understood (0 = stats, 1 = sessions,
+3 = musique, 4 = lecteur), as well as `controls` (son) and `camera`.
 
-En pratique, ces messages sont typiquement émis par des keybinds Hyprland dans
-la configuration NixOS qui consomme karenine.
+In practice, these messages are typically sent by Hyprland keybinds in the
+NixOS configuration that consumes karenine.
 
-## Ce que monte le shell
+## What the shell mounts
 
-- La barre de conversation et les widgets flottants : voir [Panneaux](#panels).
-- Le contenu des widgets : voir [Widgets](#widgets).
-- L'écran cible de la barre est un [réglage codé en dur](#configuration)
+- The conversation bar and the floating widgets: see [Panels](#panels).
+- The widgets' content: see [Widgets](#widgets).
+- The bar's target screen is a [hard-coded setting](#configuration)
   (`primaryScreen`).

@@ -213,7 +213,7 @@ Item {
                     implicitHeight: 38
                     accent: true
                     fontSize: 13
-                    text: metroPanel.metroRunning ? "■  Arrêter" : "▶  Lancer"
+                    text: metroPanel.metroRunning ? "■  " + I18n.tr("common.stop") : "▶  " + I18n.tr("metronome.start")
                     onClicked: metroPanel.metroRunning = !metroPanel.metroRunning
                 }
                 // 2 → 3 → 4 → 5 → 6 → 2
@@ -232,7 +232,7 @@ Item {
             }
             GlassButton {
                 Layout.fillWidth: true
-                text: "Tap tempo"
+                text: I18n.tr("metronome.tap")
                 onClicked: metroPanel.tapTempo()
             }
         }

@@ -9,13 +9,12 @@
 //!   waiting  — Claude is blocked on the user (a permission prompt, a question)
 //!   idle     — the turn is over; the session waits for the next prompt
 //!
-//! Subscribers (`claude_watch`) get the full list on every change, plus an
-//! `alert` when something deserves the user's attention: a session started
-//! waiting, or a long turn just finished.
+//! Subscribers (`claude_watch`) get the full list on every change.
 //!
-//! Permission requests can also be answered from the bar (`permission.rs`):
-//! while one is open, its session carries a `request` the UI turns into
-//! buttons, and the answer travels back to the hook that is holding Claude.
+//! Permission requests are Claude Code's own business: its terminal dialog
+//! answers them. Only the pilot asks from the dock (`permission.rs`): while
+//! one of its requests is open, the pilot's session carries a `request` the
+//! dock turns into buttons.
 //!
 //! Nothing is persisted: a session reappears with its next event after a
 //! daemon restart. Sessions whose `claude` process is gone are reaped.
@@ -39,10 +38,6 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, oneshot};
-
-/// A turn shorter than this ends silently: a quick exchange happens with the
-/// user watching, an alert would only be noise.
-const DONE_ALERT_AFTER: u64 = 20;
 
 /// Sessions without a known process are forgotten after this much silence.
 const STALE_AFTER: u64 = 6 * 3600;
@@ -94,7 +89,7 @@ pub struct Session {
     pub prompt: String,
     /// While waiting: what for.
     pub message: String,
-    /// An open permission request the bar can answer, if any.
+    /// An open permission request of the pilot, if any.
     pub request: Option<Request>,
     /// Started from the dock: it can be sent follow-ups and stopped there.
     pub managed: bool,
@@ -112,7 +107,7 @@ pub struct Session {
     seq: u64,
 }
 
-/// A permission request waiting for an answer from the bar.
+/// A permission request of the pilot, waiting for an answer from the dock.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Request {
     /// Handle for `claude_decide`.
@@ -132,7 +127,7 @@ pub enum Outcome {
     Allow,
     Always,
     Deny,
-    /// Left to the terminal's own dialog (or nobody answered).
+    /// Nobody answered (no dock, or not in time).
     Terminal,
 }
 
@@ -157,21 +152,11 @@ impl Outcome {
     }
 }
 
-/// Something worth surfacing outside the bar's dots.
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct Alert {
-    pub id: String,
-    pub project: String,
-    /// "waiting", "permission" or "done".
-    pub kind: &'static str,
-    pub text: String,
-}
-
 #[derive(Default)]
 struct Inner {
     sessions: HashMap<String, Session>,
     next_seq: u64,
-    /// Open permission requests: the hook connection holding each one.
+    /// Open permission requests: where each one's answer goes.
     pending: HashMap<u64, oneshot::Sender<Outcome>>,
     next_req: u64,
 }
@@ -269,19 +254,18 @@ impl Inner {
     }
 
     /// Fold one event into the state. Returns whether anything visible
-    /// changed, and the alert it raises, if any.
-    fn apply(&mut self, ev: &HookEvent, pid: Option<u32>, t: u64) -> (bool, Option<Alert>) {
+    /// changed.
+    fn apply(&mut self, ev: &HookEvent, pid: Option<u32>, t: u64) -> bool {
         if ev.session_id.is_empty() {
-            return (false, None);
+            return false;
         }
 
         if ev.hook_event_name == "SessionEnd" {
-            return (self.sessions.remove(&ev.session_id).is_some(), None);
+            return self.sessions.remove(&ev.session_id).is_some();
         }
 
         let (s, is_new) = self.upsert(ev, pid, t);
         let before = (s.state, s.prompt.clone(), s.message.clone());
-        let mut alert = None;
 
         match ev.hook_event_name.as_str() {
             "SessionStart" => {}
@@ -305,41 +289,13 @@ impl Inner {
                 } else {
                     s.state = State::Waiting;
                     s.message = excerpt(&ev.message, PROMPT_EXCERPT);
-                    if before.0 != State::Waiting {
-                        alert = Some(Alert {
-                            id: s.id.clone(),
-                            project: s.project.clone(),
-                            kind: "waiting",
-                            text: if s.message.is_empty() {
-                                "attend ta réponse".into()
-                            } else {
-                                s.message.clone()
-                            },
-                        });
-                    }
                 }
             }
             "Stop" => {
-                let was_busy = before.0 != State::Idle;
                 s.state = State::Idle;
                 s.message.clear();
-                if was_busy
-                    && s.turn_started > 0
-                    && t.saturating_sub(s.turn_started) >= DONE_ALERT_AFTER
-                {
-                    alert = Some(Alert {
-                        id: s.id.clone(),
-                        project: s.project.clone(),
-                        kind: "done",
-                        text: if s.prompt.is_empty() {
-                            "terminé".into()
-                        } else {
-                            s.prompt.clone()
-                        },
-                    });
-                }
             }
-            _ => return (is_new, None),
+            _ => return is_new,
         }
 
         let changed =
@@ -347,7 +303,7 @@ impl Inner {
         if before.0 != s.state {
             s.since = t;
         }
-        (changed, alert)
+        changed
     }
 
     /// A session the dock just started: shown at once, working on `prompt`,
@@ -381,15 +337,15 @@ impl Inner {
     }
 
     /// Open a permission request on the event's session: it turns waiting,
-    /// and carries the request until `close_request`. Returns its handle, the
-    /// receiver the answer will arrive on, and the alert to raise.
+    /// and carries the request until `close_request`. Returns its handle and
+    /// the receiver the answer will arrive on.
     fn open_request(
         &mut self,
         ev: &HookEvent,
         pid: Option<u32>,
         t: u64,
         (tool, summary, always): (&str, &str, &str),
-    ) -> (u64, oneshot::Receiver<Outcome>, Alert) {
+    ) -> (u64, oneshot::Receiver<Outcome>) {
         let req = self.next_req;
         self.next_req += 1;
         let (tx, rx) = oneshot::channel();
@@ -407,16 +363,10 @@ impl Inner {
             summary: summary.into(),
             always: always.into(),
         });
-        let alert = Alert {
-            id: s.id.clone(),
-            project: s.project.clone(),
-            kind: "permission",
-            text: s.message.clone(),
-        };
-        (req, rx, alert)
+        (req, rx)
     }
 
-    /// Hand an answer to the hook holding request `req`. False if the
+    /// Hand an answer to whoever waits on request `req`. False if the
     /// request is unknown or already closed.
     fn decide(&mut self, req: u64, outcome: Outcome) -> bool {
         self.pending
@@ -425,8 +375,8 @@ impl Inner {
     }
 
     /// The request is over, however it ended: take it off its session.
-    /// Answered from the bar, the turn resumes; left to the terminal, the
-    /// session keeps waiting there. Returns whether anything changed.
+    /// Answered, the turn resumes; unanswered, the session keeps waiting.
+    /// Returns whether anything changed.
     fn close_request(&mut self, req: u64, outcome: Outcome, t: u64) -> bool {
         self.pending.remove(&req);
         let Some(s) = self
@@ -481,7 +431,7 @@ impl Sessions {
                     std::path::Path::new(&format!("/proc/{pid}")).exists()
                 });
                 if removed {
-                    me.publish(None);
+                    me.publish();
                 }
             }
         });
@@ -493,9 +443,8 @@ impl Sessions {
     }
 
     pub fn apply(&self, ev: &HookEvent, pid: Option<u32>) {
-        let (changed, alert) = self.lock().apply(ev, pid, now());
-        if changed || alert.is_some() {
-            self.publish(alert);
+        if self.lock().apply(ev, pid, now()) {
+            self.publish();
         }
     }
 
@@ -509,17 +458,17 @@ impl Sessions {
 
     pub fn adopt(&self, id: &str, cwd: &str, pid: u32, prompt: &str, transcript: &str) {
         self.lock().adopt(id, cwd, pid, prompt, transcript, now());
-        self.publish(None);
+        self.publish();
     }
 
     pub fn release(&self, id: &str) {
         if self.lock().release(id) {
-            self.publish(None);
+            self.publish();
         }
     }
 
-    /// Whether anything (the bar) is watching: without it, a permission
-    /// request has nobody to answer it but the terminal.
+    /// Whether anything (the shell) is watching: without it, a permission
+    /// request has nobody to answer it.
     pub fn watched(&self) -> bool {
         self.tx.receiver_count() > 0
     }
@@ -530,8 +479,8 @@ impl Sessions {
         pid: Option<u32>,
         what: (&str, &str, &str),
     ) -> (u64, oneshot::Receiver<Outcome>) {
-        let (req, rx, alert) = self.lock().open_request(ev, pid, now(), what);
-        self.publish(Some(alert));
+        let (req, rx) = self.lock().open_request(ev, pid, now(), what);
+        self.publish();
         (req, rx)
     }
 
@@ -541,22 +490,17 @@ impl Sessions {
 
     pub fn close_request(&self, req: u64, outcome: Outcome) {
         if self.lock().close_request(req, outcome, now()) {
-            self.publish(None);
+            self.publish();
         }
     }
 
-    /// The line pushed to watchers: the whole list, and the alert if any.
-    pub fn snapshot_line(&self, alert: Option<&Alert>) -> String {
-        let sessions = self.list();
-        match alert {
-            Some(a) => serde_json::json!({ "sessions": sessions, "alert": a }),
-            None => serde_json::json!({ "sessions": sessions }),
-        }
-        .to_string()
+    /// The line pushed to watchers: the whole list.
+    pub fn snapshot_line(&self) -> String {
+        serde_json::json!({ "sessions": self.list() }).to_string()
     }
 
-    fn publish(&self, alert: Option<Alert>) {
-        let _ = self.tx.send(self.snapshot_line(alert.as_ref()));
+    fn publish(&self) {
+        let _ = self.tx.send(self.snapshot_line());
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<String> {
@@ -584,7 +528,7 @@ mod tests {
     #[test]
     fn a_turn_goes_working_then_idle() {
         let mut i = Inner::default();
-        assert!(i.apply(&ev("SessionStart"), Some(42), 100).0);
+        assert!(i.apply(&ev("SessionStart"), Some(42), 100));
         assert_eq!(state(&i), State::Idle);
         assert_eq!(i.sessions["abc"].project, "karenine");
 
@@ -604,29 +548,16 @@ mod tests {
     }
 
     #[test]
-    fn short_turns_end_silently_long_ones_alert() {
-        let mut i = Inner::default();
-        i.apply(&ev("UserPromptSubmit"), None, 100);
-        assert_eq!(i.apply(&ev("Stop"), None, 105).1, None);
-
-        i.apply(&ev("UserPromptSubmit"), None, 200);
-        let alert = i.apply(&ev("Stop"), None, 260).1.expect("long turn alerts");
-        assert_eq!(alert.kind, "done");
-        assert_eq!(alert.project, "karenine");
-    }
-
-    #[test]
-    fn permission_prompt_waits_and_alerts_once() {
+    fn permission_prompt_waits_until_the_tool_runs() {
         let mut i = Inner::default();
         i.apply(&ev("UserPromptSubmit"), None, 100);
 
         let mut n = ev("Notification");
         n.message = "Claude needs your permission to use Bash".into();
-        let (_, alert) = i.apply(&n, None, 101);
+        assert!(i.apply(&n, None, 101));
         assert_eq!(state(&i), State::Waiting);
-        assert_eq!(alert.expect("alerts").kind, "waiting");
-        // A repeated notification while still waiting doesn't alert again.
-        assert_eq!(i.apply(&n, None, 102).1, None);
+        // A repeated notification while still waiting changes nothing.
+        assert!(!i.apply(&n, None, 102));
 
         // The user said yes: the tool ran.
         i.apply(&ev("PostToolUse"), None, 103);
@@ -641,7 +572,7 @@ mod tests {
 
         let mut n = ev("Notification");
         n.message = "Claude is waiting for your input".into();
-        assert_eq!(i.apply(&n, None, 160).1, None);
+        i.apply(&n, None, 160);
         assert_eq!(state(&i), State::Idle);
 
         let mut typed = ev("Notification");
@@ -655,11 +586,11 @@ mod tests {
     fn session_end_removes_and_unknown_events_are_ignored() {
         let mut i = Inner::default();
         i.apply(&ev("SessionStart"), None, 100);
-        assert_eq!(i.apply(&ev("SubagentStop"), None, 101), (false, None));
-        assert!(i.apply(&ev("SessionEnd"), None, 102).0);
+        assert!(!i.apply(&ev("SubagentStop"), None, 101));
+        assert!(i.apply(&ev("SessionEnd"), None, 102));
         assert!(i.sessions.is_empty());
         // An end for a session we never saw changes nothing.
-        assert!(!i.apply(&ev("SessionEnd"), None, 103).0);
+        assert!(!i.apply(&ev("SessionEnd"), None, 103));
     }
 
     #[test]
@@ -702,17 +633,16 @@ mod tests {
     }
 
     #[test]
-    fn a_request_answered_from_the_bar_resumes_the_turn() {
+    fn an_answered_request_resumes_the_turn() {
         let mut i = Inner::default();
         i.apply(&ev("UserPromptSubmit"), Some(9), 100);
 
-        let (req, mut rx, alert) = i.open_request(
+        let (req, mut rx) = i.open_request(
             &ev("PermissionRequest"),
             None,
             101,
             ("Bash", "npm test", ""),
         );
-        assert_eq!(alert.kind, "permission");
         assert_eq!(state(&i), State::Waiting);
         let r = i.sessions["abc"].request.clone().expect("request is shown");
         assert_eq!((r.req, r.tool.as_str()), (req, "Bash"));
@@ -727,15 +657,15 @@ mod tests {
     }
 
     #[test]
-    fn a_request_left_to_the_terminal_keeps_waiting() {
+    fn an_unanswered_request_keeps_waiting() {
         let mut i = Inner::default();
-        let (req, _rx, _) =
+        let (req, _rx) =
             i.open_request(&ev("PermissionRequest"), None, 100, ("Write", "a.rs", ""));
         assert!(i.close_request(req, Outcome::Terminal, 101));
-        assert_eq!(state(&i), State::Waiting, "the terminal's dialog is up");
+        assert_eq!(state(&i), State::Waiting);
         assert!(
             i.sessions["abc"].request.is_none(),
-            "but the bar can't answer it"
+            "the dock can no longer answer it"
         );
         assert!(!i.decide(req, Outcome::Allow));
     }

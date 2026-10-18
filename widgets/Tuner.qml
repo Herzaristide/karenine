@@ -107,7 +107,7 @@ Item {
                 Layout.alignment: Qt.AlignHCenter
                 text: tuner.freq > 0
                       ? tuner.freq.toFixed(1) + " Hz  ·  " + (tuner.cents > 0 ? "+" : "") + tuner.cents + " ¢"
-                      : "Joue une note…"
+                      : I18n.tr("tuner.play")
                 font.family: "Inter"
                 font.pixelSize: 12
                 color: Theme.textSecondary
@@ -184,7 +184,7 @@ Item {
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
                     anchors.bottom: parent.bottom
-                    text: "juste"
+                    text: I18n.tr("tuner.inTune")
                     font.family: "Inter"
                     font.pixelSize: 10
                     color: tuner.inTune ? Theme.colorSuccess : Theme.textDim

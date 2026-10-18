@@ -26,7 +26,7 @@ Item {
     // Le greeter laisse changer d'utilisateur ; le lock, jamais.
     property bool userEditable: false
     // Invite PAM courante (un second facteur remplace « Mot de passe… »).
-    property string prompt: "Mot de passe…"
+    property string prompt: I18n.tr("auth.password")
     property bool echoInput: false
 
     // Sections supplémentaires, empilées sous la saisie.

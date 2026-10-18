@@ -1,40 +1,53 @@
 ---
 title: Configuration
-group: Utilisation
-summary: Les deux valeurs par défaut codées en dur — écran de la barre et couleur d'accent.
-links: [shell, theme, installation]
+group: Usage
+summary: The hard-coded defaults — the bar's screen and the accent color — and the settings kept on disk.
+links: [shell, theme, installation, languages]
 ---
 
 # Configuration
 
-karenine a **deux valeurs par défaut codées en dur** :
+karenine has **two hard-coded defaults**:
 
-## Écran de la barre
+## The bar's screen
 
-Dans `shell.qml` :
+In `shell.qml`:
 
 ```qml
 primaryScreen: "DP-1"
 ```
 
-C'est la sortie qui reçoit la barre par défaut (voir [Le shell](#shell)) ; la
-config Nix substitue cette ligne. Le réglage « Écran » de la fenêtre de
-paramètres passe devant : il désigne l'écran par son **modèle** (stable d'une
-machine à l'autre, contrairement au connecteur) et il est **persisté** dans
-`~/.local/share/quickshell/by-shell/<id>/display.json`. Si l'écran choisi
-est débranché, la barre retombe sur `primaryScreen`, puis sur le premier écran.
+It is the output that gets the bar by default (see [The shell](#shell)); the
+Nix configuration substitutes this line. The “Screen” setting of the settings
+window takes precedence: it names the screen by its **model** (stable from
+one machine to another, unlike the connector) and is **persisted** in
+`~/.local/share/quickshell/by-shell/<id>/display.json`. If the chosen screen
+is unplugged, the bar falls back to `primaryScreen`, then to the first screen.
 
-## Couleur d'accent par défaut
+## Default accent color
 
-Dans `services/Theme.qml` :
+In `services/Theme.qml`:
 
 ```qml
 // #5277c3
 ```
 
-Cette couleur est **surchargée à chaud** par le daemon `anna` quand il
-tourne ; sans lui, les defaults intégrés s'appliquent (voir [Thème](#theme)).
+This color is **overridden live** by the `anna` daemon when it runs; without
+it, the built-in defaults apply (see [Theme](#theme)).
+
+## Languages
+
+The interface language and the voice language are picked in the settings
+(“Interface language”, and “Voice language” under “Voice”) and kept in
+`~/.config/karenine/locale.json`:
+
+```json
+{ "lang": "en", "voice": "fr" }
+```
+
+The interface is in English until another language is chosen. See
+[Languages](#languages).
 
 ---
 
-Pour installer et déployer le layout, voir [Installation](#installation).
+To install and deploy the layout, see [Installation](#installation).

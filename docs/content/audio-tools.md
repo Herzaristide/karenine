@@ -1,35 +1,37 @@
 ---
-title: Outils musicaux
-group: Fonctionnalités
-summary: Accordeur, métronome et chromagramme — widgets QML + services audio natifs du daemon anna.
+title: Music tools
+group: Features
+summary: Tuner, metronome and chromagram — QML widgets + native audio services of the anna daemon.
 links: [widgets, backend, shell]
 ---
 
-# Outils musicaux
+# Music tools
 
-karenine embarque une petite suite pour la pratique musicale, chaque outil étant
-un [widget](#widgets) adossé à un service audio natif du daemon [`anna`](#backend).
+karenine ships a small suite for music practice, each tool being a
+[widget](#widgets) backed by a native audio service of the
+[`anna`](#backend) daemon.
 
-## Accordeur (Tuner)
+## Tuner
 
-- Widget : `widgets/Tuner.qml` (panneau **Pitch**, widget N°3 via l'[IPC](#shell)).
-- Backend : service `tuner` d'`anna` (`tuner_watch`) — détection de hauteur par
-  autocorrélation FFT, une ligne `{"pitch":<hz>}` par frame.
+- Widget: `widgets/Tuner.qml` (**Pitch** panel, widget no. 3 through the
+  [IPC](#shell)).
+- Backend: `anna`'s `tuner` service (`tuner_watch`) — pitch detection by FFT
+  autocorrelation, one `{"pitch":<hz>}` line per frame.
 
-## Chromagramme (ChromaGraph)
+## Chromagram (ChromaGraph)
 
-- Widget : `widgets/ChromaGraph.qml`.
-- Backend : service `chroma` d'`anna` (`chroma_watch`) — chromagramme 12 classes,
-  `{"chroma":[…],"top":[…]}` par frame.
+- Widget: `widgets/ChromaGraph.qml`.
+- Backend: `anna`'s `chroma` service (`chroma_watch`) — 12-class chromagram,
+  `{"chroma":[…],"top":[…]}` per frame.
 
-## Métronome
+## Metronome
 
-- Widget : `widgets/Metronome.qml`.
-- Backend : service `metronome` d'`anna` — flux de sortie `cpal` sample-accurate,
-  piloté par des lignes `{"action":…}`, événements `{"beat":<n>}`.
+- Widget: `widgets/Metronome.qml`.
+- Backend: `anna`'s `metronome` service — sample-accurate `cpal` output
+  stream, driven by `{"action":…}` lines, `{"beat":<n>}` events.
 
-## Principe commun
+## Common principle
 
-Les widgets se connectent au **socket** d'`anna` (`Quickshell.Io.Socket`) et
-reçoivent des lignes JSON. La capture micro (accordeur, chromagramme) ne tourne
-que tant que le widget est visible. Détails dans [Backend](#backend).
+The widgets connect to `anna`'s **socket** (`Quickshell.Io.Socket`) and
+receive JSON lines. Microphone capture (tuner, chromagram) only runs while
+the widget is visible. Details in [Backend](#backend).

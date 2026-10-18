@@ -1,12 +1,12 @@
 import type { DocsConfig } from "barjavel"
 
 const config: DocsConfig = {
-  title: "karenine — interface Quickshell",
+  title: "karenine — Quickshell interface",
   description:
-    "Documentation de karenine : barre, panneaux latéraux, chat IA, notes, stats matérielles, accordeur, métronome, chromagramme.",
-  lang: "fr",
+    "karenine documentation: bar, side panels, AI, notes, hardware stats, tuner, metronome, chromagram.",
+  lang: "en",
 
-  // Couleur d'accent par défaut de karenine (services/Theme.qml).
+  // karenine's default accent color (services/Theme.qml).
   accent: "#5277c3",
 }
 

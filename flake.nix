@@ -45,7 +45,7 @@
             installPhase = ''
               runHook preInstall
               mkdir -p "$out"
-              cp -r shell.qml lock.qml greeter.qml services panels widgets ai auth lock greeter assets "$out"/
+              cp -r shell.qml lock.qml greeter.qml services panels widgets auth lock greeter assets i18n "$out"/
               runHook postInstall
             '';
 
@@ -89,6 +89,13 @@
                 echo "qmllint a signalé des problèmes (voir ci-dessus)" >&2
                 exit 1
               fi
+              touch $out
+            '';
+
+          # Les dictionnaires de i18n/ : toute clé appelée existe en anglais.
+          i18n =
+            pkgs.runCommand "karenine-i18n" { nativeBuildInputs = [ pkgs.jq ]; } ''
+              sh ${self}/tests/i18n-check.sh
               touch $out
             '';
 

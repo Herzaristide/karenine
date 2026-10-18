@@ -5,19 +5,16 @@ import Quickshell
 import Quickshell.Io
 import "../services"
 
-// L'onglet « Téléphone » : le téléphone appairé avec KDE Connect
-// (anna/src/phone.rs, relu toutes les 2 s). À gauche, sa carte : batterie,
-// réseau mobile, et ce qu'on peut lui demander ; un fichier déposé dessus
-// lui est envoyé ; « Écran » l'affiche dans une fenêtre (scrcpy, par adb :
-// en USB, sinon par Tailscale). À droite, ses notifications, la plus récente
-// en haut.
+// Le téléphone appairé avec KDE Connect, en bas de l'onglet « Système »
+// (anna/src/phone.rs, relu toutes les 2 s). Sa carte, large et basse :
+// l'état, le réseau mobile, la batterie, et ce qu'on peut lui demander ;
+// « Écran » l'affiche dans une fenêtre (scrcpy, par adb : en USB, sinon par
+// Tailscale). Les fichiers lui partent depuis l'Explorer (la sélection,
+// bouton téléphone). Ses notifications arrivent comme les autres, par le
+// serveur de notifications du shell (services/Notifications.qml).
 //
-//   ╭ ● Pixel 9a        82 % ⚡ ╮ ╭ WhatsApp · Marie             ✕ ╮
-//   │ Connecté  ·  5G  ▂▄▆█    │ │ On se voit à 19 h ?            │
-//   │ (Écran) (Faire sonner)    │ │ Gmail · Facture d'octobre    ✕ │
-//   │ (Fichiers) (Presse-papier)│ │ …                              │
-//   │ Dépose un fichier ici     │ │                                │
-//   ╰───────────────────────────╯ ╰────────────────────────────────╯
+//   ╭ ● Pixel 9a  Connecté  ·  5G ▂▄▆█        (Écran) (Faire sonner) (Presse-papier) ╮
+//   ╰ Envoyé                                            ━━━━━━━━━━━━━━━━━━━━  82 % ⚡ ╯
 //
 // Un téléphone qui demande à s'appairer montre la clé de vérification (la
 // même que sur son écran) et propose d'accepter ou de refuser. Plusieurs
@@ -42,8 +39,6 @@ Item {
         return root.phones.length > 0 ? root.phones[0] : null;
     }
     readonly property bool connected: root.phone !== null && root.phone.paired && root.phone.reachable
-
-    readonly property int cardW: 300
 
     // ── Le relevé, en continu ────────────────────────────────────
     Socket {
@@ -113,9 +108,9 @@ Item {
                 // L'écran : anna dit quoi lancer, le shell ouvre la fenêtre.
                 if (r.ok && r.command)
                     Quickshell.execDetached(r.command);
-                root.say(r.ok ? actionProc.done : (r.error || "Échec."));
+                root.say(r.ok ? actionProc.done : (r.error || I18n.tr("common.failedSentence")));
             } catch (e) {
-                root.say("anna ne répond pas.");
+                root.say(I18n.tr("anna.noAnswer"));
             }
             root.next();
         }
@@ -144,8 +139,8 @@ Item {
     // ── Petits éléments ──────────────────────────────────────────
     function stateText(p) {
         if (!p.paired)
-            return "Demande à s'appairer";
-        return p.reachable ? "Connecté" : "Hors de portée";
+            return I18n.tr("phone.pairRequest");
+        return p.reachable ? I18n.tr("phone.connected") : I18n.tr("phone.outOfReach");
     }
 
     // 0 à 4 barres, comme sur le téléphone.
@@ -171,32 +166,22 @@ Item {
     Rectangle {
         id: card
         visible: root.phone !== null
-        width: root.cardW
+        width: root.width
         height: parent.height
         radius: 18
-        color: drop.containsDrag ? Qt.alpha(Theme.glow(0), 0.14) : Qt.alpha(Theme.textPrimary, 0.05)
+        color: Qt.alpha(Theme.textPrimary, 0.05)
         border.width: 1
-        border.color: drop.containsDrag ? Qt.alpha(Theme.glow(0), 0.5) : Qt.alpha(Theme.textPrimary, 0.08)
-        Behavior on color { ColorAnimation { duration: 160 } }
-
-        // Un fichier déposé (depuis Dolphin…) part vers le téléphone.
-        DropArea {
-            id: drop
-            anchors.fill: parent
-            enabled: root.connected
-            onDropped: (event) => {
-                for (var i = 0; i < event.urls.length; i++)
-                    root.act("share", event.urls[i].toString(), "Envoyé.");
-                event.accept();
-            }
-        }
+        border.color: Qt.alpha(Theme.textPrimary, 0.08)
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: 14
+            anchors.leftMargin: 14
+            anchors.rightMargin: 10
+            anchors.topMargin: 10
+            anchors.bottomMargin: 10
             spacing: 6
 
-            // Le nom, la batterie.
+            // Le nom, l'état, le réseau ; à droite, ce qu'on peut lui demander.
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 8
@@ -211,7 +196,7 @@ Item {
                     Behavior on color { ColorAnimation { duration: 300 } }
                 }
                 Text {
-                    Layout.fillWidth: true
+                    Layout.maximumWidth: 220
                     text: root.phone ? root.phone.name + (root.phones.length > 1 ? "  ›" : "") : ""
                     font.family: "Inter"
                     font.pixelSize: 14
@@ -225,21 +210,6 @@ Item {
                         onClicked: root.cycle()
                     }
                 }
-                Text {
-                    visible: root.connected && root.phone.battery >= 0
-                    text: root.connected ? root.phone.battery + " %" + (root.phone.charging ? "  ⚡" : "") : ""
-                    font.family: "Inter"
-                    font.pixelSize: 12
-                    font.weight: Font.Medium
-                    color: root.connected && root.phone.battery <= 15 && !root.phone.charging
-                           ? Theme.colorDanger : Theme.textPrimary
-                }
-            }
-
-            // L'état, le réseau mobile.
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 8
                 Text {
                     text: root.phone ? root.stateText(root.phone) : ""
                     font.family: "Inter"
@@ -258,180 +228,96 @@ Item {
                     level: root.connected ? root.phone.signal : -1
                 }
                 Item { Layout.fillWidth: true }
-            }
 
-            // La batterie, en barre.
-            Rectangle {
-                Layout.fillWidth: true
-                visible: root.connected && root.phone.battery >= 0
-                Layout.preferredHeight: 5
-                radius: 2.5
-                color: Qt.alpha(Theme.textPrimary, 0.1)
-                Rectangle {
-                    width: parent.width * (root.connected ? Math.max(0, Math.min(100, root.phone.battery)) / 100 : 0)
-                    height: parent.height
-                    radius: parent.radius
-                    color: root.connected && root.phone.battery <= 15 && !root.phone.charging
-                           ? Theme.colorDanger : Theme.colorSuccess
-                    Behavior on width { NumberAnimation { duration: 420; easing.type: Easing.OutQuint } }
-                }
-            }
-
-            // Demande d'appairage : la clé, à comparer avec le téléphone.
-            Text {
-                Layout.fillWidth: true
-                visible: root.phone !== null && !root.phone.paired
-                text: root.phone && root.phone.verification_key
-                      ? "Vérifie que le téléphone affiche la clé " + root.phone.verification_key + "."
-                      : "Accepte pour relier ce téléphone à l'ordinateur."
-                font.family: "Inter"
-                font.pixelSize: 11
-                color: Theme.textSecondary
-                wrapMode: Text.Wrap
-            }
-
-            Item { Layout.fillHeight: true }
-
-            Flow {
-                Layout.fillWidth: true
-                spacing: 6
-                visible: root.phone !== null && !root.phone.paired
-
+                // Demande d'appairage : accepter ou refuser.
                 GlassButton {
+                    visible: root.phone !== null && !root.phone.paired
                     implicitHeight: 28
                     fontSize: 11
                     accent: true
-                    text: "Accepter"
-                    onClicked: root.act("accept", "", "Appairé.")
+                    text: I18n.tr("phone.accept")
+                    onClicked: root.act("accept", "", I18n.tr("phone.paired"))
                 }
                 GlassButton {
+                    visible: root.phone !== null && !root.phone.paired
                     implicitHeight: 28
                     fontSize: 11
-                    text: "Refuser"
+                    text: I18n.tr("phone.reject")
                     onClicked: root.act("reject", "", "")
                 }
-            }
-
-            Flow {
-                Layout.fillWidth: true
-                spacing: 6
-                visible: root.connected
 
                 GlassButton {
+                    visible: root.connected
                     implicitHeight: 28
                     fontSize: 11
                     accent: true
-                    text: "Écran"
-                    onClicked: root.act("screen", "", "Ouverture de l'écran…")
+                    text: I18n.tr("phone.screen")
+                    onClicked: root.act("screen", "", I18n.tr("phone.openingScreen"))
                 }
                 GlassButton {
+                    visible: root.connected
                     implicitHeight: 28
                     fontSize: 11
-                    text: "Faire sonner"
-                    onClicked: root.act("ring", "", "Le téléphone sonne.")
+                    text: I18n.tr("phone.ring")
+                    onClicked: root.act("ring", "", I18n.tr("phone.ringing"))
                 }
                 GlassButton {
+                    visible: root.connected
                     implicitHeight: 28
                     fontSize: 11
-                    text: "Fichiers"
-                    onClicked: root.act("browse", "", "")
-                }
-                GlassButton {
-                    implicitHeight: 28
-                    fontSize: 11
-                    text: "Presse-papier"
-                    onClicked: root.act("clipboard", "", "Presse-papier envoyé.")
+                    text: I18n.tr("phone.clipboard")
+                    onClicked: root.act("clipboard", "", I18n.tr("phone.clipboardSent"))
                 }
             }
 
-            Text {
+            // Le retour d'une action, ou ce qu'il faut faire ; la batterie.
+            RowLayout {
                 Layout.fillWidth: true
-                text: root.feedback !== "" ? root.feedback
-                    : root.connected ? "Dépose un fichier ici pour l'envoyer."
-                    : root.phone && root.phone.paired ? "Même réseau, et KDE Connect ouvert sur le téléphone."
-                    : ""
-                font.family: "Inter"
-                font.pixelSize: 10
-                color: root.feedback !== "" ? Theme.textSecondary : Theme.textDim
-                elide: Text.ElideRight
-            }
-        }
-    }
-
-    // ── Les notifications ────────────────────────────────────────
-    ListView {
-        id: notes
-        visible: root.connected
-        x: root.cardW + 10
-        width: root.width - x
-        height: parent.height
-        spacing: 6
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
-        model: root.connected ? root.phone.notifications : []
-
-        delegate: Rectangle {
-            id: note
-            required property var modelData
-            width: notes.width
-            height: noteCol.implicitHeight + 16
-            radius: 14
-            color: Qt.alpha(Theme.textPrimary, 0.05)
-            border.width: 1
-            border.color: Qt.alpha(Theme.textPrimary, 0.08)
-
-            ColumnLayout {
-                id: noteCol
-                anchors.left: parent.left
-                anchors.right: dismiss.left
-                anchors.verticalCenter: parent.verticalCenter
-                anchors.leftMargin: 12
-                anchors.rightMargin: 6
-                spacing: 2
+                spacing: 10
 
                 Text {
                     Layout.fillWidth: true
-                    text: [note.modelData.app, note.modelData.title].filter(t => t).join("  ·  ")
+                    text: root.feedback !== "" ? root.feedback
+                        : root.phone !== null && !root.phone.paired
+                          ? (root.phone.verification_key
+                             ? I18n.tr("phone.checkKey", { key: root.phone.verification_key })
+                             : I18n.tr("phone.acceptHint"))
+                        : root.connected ? ""
+                        : root.phone && root.phone.paired ? I18n.tr("phone.reachHint")
+                        : ""
+                    font.family: "Inter"
+                    font.pixelSize: 10
+                    color: root.feedback !== "" ? Theme.textSecondary : Theme.textDim
+                    elide: Text.ElideRight
+                }
+
+                Rectangle {
+                    visible: root.connected && root.phone.battery >= 0
+                    Layout.preferredWidth: 160
+                    Layout.preferredHeight: 5
+                    Layout.alignment: Qt.AlignVCenter
+                    radius: 2.5
+                    color: Qt.alpha(Theme.textPrimary, 0.1)
+                    Rectangle {
+                        width: parent.width * (root.connected ? Math.max(0, Math.min(100, root.phone.battery)) / 100 : 0)
+                        height: parent.height
+                        radius: parent.radius
+                        color: root.connected && root.phone.battery <= 15 && !root.phone.charging
+                               ? Theme.colorDanger : Theme.colorSuccess
+                        Behavior on width { NumberAnimation { duration: 420; easing.type: Easing.OutQuint } }
+                    }
+                }
+                Text {
+                    visible: root.connected && root.phone.battery >= 0
+                    text: root.connected ? I18n.tr("common.percent", { n: root.phone.battery }) + (root.phone.charging ? "  ⚡" : "") : ""
                     font.family: "Inter"
                     font.pixelSize: 12
-                    font.weight: Font.DemiBold
-                    color: Theme.textPrimary
-                    elide: Text.ElideRight
-                }
-                Text {
-                    Layout.fillWidth: true
-                    visible: text !== ""
-                    text: note.modelData.text
-                    font.family: "Inter"
-                    font.pixelSize: 11
-                    color: Theme.textSecondary
-                    elide: Text.ElideRight
-                    maximumLineCount: 2
-                    wrapMode: Text.Wrap
+                    font.weight: Font.Medium
+                    font.features: { "tnum": 1 }
+                    color: root.connected && root.phone.battery <= 15 && !root.phone.charging
+                           ? Theme.colorDanger : Theme.textPrimary
                 }
             }
-
-            GlassButton {
-                id: dismiss
-                anchors.right: parent.right
-                anchors.rightMargin: 8
-                anchors.verticalCenter: parent.verticalCenter
-                visible: note.modelData.dismissable
-                implicitHeight: 24
-                implicitWidth: 24
-                fontSize: 11
-                text: "✕"
-                onClicked: root.act("dismiss", note.modelData.id, "")
-            }
-        }
-
-        Text {
-            anchors.centerIn: parent
-            visible: notes.count === 0
-            text: "Aucune notification."
-            font.family: "Inter"
-            font.pixelSize: 12
-            color: Theme.textSecondary
         }
     }
 
@@ -443,9 +329,8 @@ Item {
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.Wrap
         text: !root.snapshot.running
-              ? "KDE Connect n'est pas lancé (kdeconnectd)."
-              : "Aucun téléphone appairé. Installe KDE Connect sur le téléphone (F-Droid ou Play Store), "
-                + "sur le même Wi-Fi, puis appaire-le avec cet ordinateur."
+              ? I18n.tr("phone.noDaemon")
+              : I18n.tr("phone.nonePaired")
         font.family: "Inter"
         font.pixelSize: 12
         color: Theme.textSecondary

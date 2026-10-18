@@ -34,7 +34,7 @@ const MAX_IDLE: Duration = Duration::from_secs(20 * 60);
 /// Entries kept in the log the dock shows.
 const LOG_MAX: usize = 60;
 
-const PROMPT: &str = r#"Tu es le pilote du bureau de l'utilisateur : un assistant intégré à son interface (Hyprland sur NixOS). Il te parle depuis la barre de conversation en bas de l'écran (au clavier, ou à la voix en disant « Karénine »), en français, souvent en quelques mots. Ta réponse s'affiche juste au-dessus de la barre.
+const PROMPT: &str = r#"Tu es le pilote du bureau de l'utilisateur : un assistant intégré à son interface (Hyprland sur NixOS). Il te parle depuis la barre de conversation en bas de l'écran (au clavier, ou à la voix en disant « Karénine »), souvent en quelques mots. Ta réponse s'affiche juste au-dessus de la barre.
 
 Ce que tu fais :
 - Tu agis sur le bureau avec tes outils : fenêtres et workspaces, son, luminosité, lecture média, applications, URL, projets, captures, couleur d'accent, notes du coffre Obsidian, et les widgets flottants de l'interface (`widget` : stats, lecteur, musique (métronome et accordeur), son, caméra, réglages, sessions).
@@ -280,8 +280,9 @@ impl Pilot {
                         .get("result")
                         .and_then(Value::as_str)
                         .or_else(|| v.get("subtype").and_then(Value::as_str))
-                        .unwrap_or("échec");
-                    self.push("error", why);
+                        .map(str::to_string)
+                        .unwrap_or_else(|| crate::i18n::tr("failed"));
+                    self.push("error", &why);
                 }
                 self.busy.store(false, Ordering::SeqCst);
                 self.publish();
@@ -353,10 +354,7 @@ impl Pilot {
         *slot = None;
         drop(slot);
         if self.busy.swap(false, Ordering::SeqCst) {
-            self.push(
-                "error",
-                "le pilote s'est arrêté ; la prochaine demande le relance",
-            );
+            self.push("error", &crate::i18n::tr("pilot.stopped"));
             self.publish();
         }
     }
@@ -364,7 +362,7 @@ impl Pilot {
     /// Send one request. Its answer arrives through the log.
     pub async fn ask(self: &Arc<Self>, text: &str, clipboard: bool) -> Result<(), String> {
         if self.busy.load(Ordering::SeqCst) {
-            return Err("le pilote est encore sur la demande précédente".into());
+            return Err(crate::i18n::tr("pilot.busy"));
         }
         let stale = {
             let last = *lock(&self.last);
@@ -398,7 +396,7 @@ impl Pilot {
         if let Err(e) = p.stdin.write_all(line.as_bytes()).await {
             *slot = None;
             self.busy.store(false, Ordering::SeqCst);
-            self.push("error", "le pilote ne répond plus ; réessaie");
+            self.push("error", &crate::i18n::tr("pilot.no_answer"));
             self.publish();
             return Err(format!("pilote : {e}"));
         }
@@ -421,6 +419,7 @@ fn context_block(sessions: &[super::Session], clipboard: bool) -> String {
             String::from_utf8_lossy(&o.stdout).trim()
         ));
     }
+    out.push(crate::i18n::pilot_language_line());
     out.push(desk::desktop_state());
     if sessions.is_empty() {
         out.push("sessions Claude : aucune".into());

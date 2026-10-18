@@ -43,8 +43,10 @@ mod client;
 mod color;
 mod gesture;
 mod hwstats;
+mod i18n;
 mod metronome;
 mod msi;
+mod notes;
 mod paths;
 mod phone;
 mod protocol;
@@ -92,6 +94,10 @@ async fn main() {
         Some("gesture" | "claude" | "pilot" | "voice" | "servers" | "phone") => {
             client::run(&args);
         }
+        // The « Notes » tab: works on its files directly, no daemon needed.
+        Some("notes") => {
+            notes::run(&args);
+        }
         // Claude Code hook: must stay silent and exit 0 whatever happens.
         // MCP server of the pilot's desk tools (started by Claude Code).
         Some("mcp") => {
@@ -125,7 +131,7 @@ async fn main() {
         Some(other) => {
             eprintln!("anna: unknown command '{other}'");
             eprintln!(
-                "Usage: anna [daemon|init|set|mode|palette-color|reset|get|watch|gesture|claude|hook|mcp|msi-rgb-watch]"
+                "Usage: anna [daemon|init|set|mode|palette-color|reset|get|watch|gesture|claude|hook|mcp|notes|msi-rgb-watch]"
             );
             std::process::exit(2);
         }
@@ -195,6 +201,9 @@ async fn run_daemon(args: &[String]) {
     tokio::task::spawn_blocking(
         || claude::knowledge::link_skills(&claude::knowledge::skills_dir()),
     );
+
+    // Every screenshot also lands in the « Notes » tab.
+    tokio::spawn(notes::watch_screenshots());
 
     let ctx = Arc::new(Ctx {
         theme: Mutex::new(Versioned {
@@ -443,7 +452,11 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             }
         }
 
-        Command::PhoneAction { device, action, arg } => {
+        Command::PhoneAction {
+            device,
+            action,
+            arg,
+        } => {
             let reply = match phone::act(&device, &action, &arg).await {
                 Ok(()) => serde_json::json!({ "ok": true }),
                 Err(e) => serde_json::json!({ "ok": false, "error": e }),
@@ -527,7 +540,7 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
         Command::ClaudeWatch => {
             // Subscribe first so a change racing the snapshot isn't lost.
             let mut rx = ctx.claude.subscribe();
-            if write_line(&mut writer, &ctx.claude.snapshot_line(None))
+            if write_line(&mut writer, &ctx.claude.snapshot_line())
                 .await
                 .is_err()
             {
@@ -559,25 +572,6 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
                 Ok(()) => serde_json::json!({ "ok": true }),
                 Err(e) => serde_json::json!({ "ok": false, "error": e }),
             };
-            let _ = write_line(&mut writer, &reply.to_string()).await;
-        }
-
-        Command::ClaudePermission {
-            pid,
-            tool,
-            summary,
-            always,
-            event,
-        } => {
-            let outcome = claude::permission::run(
-                &ctx.claude,
-                pid,
-                &event,
-                (&tool, &summary, &always),
-                &mut lines,
-            )
-            .await;
-            let reply = serde_json::json!({ "decision": outcome.as_str() });
             let _ = write_line(&mut writer, &reply.to_string()).await;
         }
 
@@ -657,7 +651,7 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             id,
         } => {
             let result = if action != "commit" && ctx.runner.still_running(&id).await {
-                Err("la session tourne encore : arrête-la d'abord".to_string())
+                Err(i18n::tr("session.still_running"))
             } else {
                 tokio::task::spawn_blocking(move || match action.as_str() {
                     "commit" => claude::worktree::commit(&cwd, &message),

@@ -121,7 +121,7 @@ PanelWindow { // qmllint disable uncreatable-type
             spacing: 10
 
             Text {
-                text: "Authentification requise"
+                text: I18n.tr("polkit.title")
                 font.family: "Inter"
                 font.pixelSize: 15
                 font.weight: Font.DemiBold
@@ -192,7 +192,7 @@ PanelWindow { // qmllint disable uncreatable-type
                         // L'invite de PAM (« Password: »), sinon la nôtre.
                         text: {
                             var p = prompt.flow ? prompt.flow.inputPrompt.trim().replace(/:$/, "") : "";
-                            return p === "" || p === "Password" ? "Mot de passe…" : p + "…";
+                            return p === "" || p === "Password" ? I18n.tr("auth.password") : p + "…";
                         }
                         color: Theme.placeholderColor
                         font: field.font
@@ -229,11 +229,11 @@ PanelWindow { // qmllint disable uncreatable-type
                 spacing: 8
 
                 Button {
-                    label: "Annuler"
+                    label: I18n.tr("common.cancel")
                     onClicked: prompt.cancel()
                 }
                 Button {
-                    label: "Autoriser"
+                    label: I18n.tr("permission.allow")
                     primary: true
                     onClicked: prompt.submit()
                 }

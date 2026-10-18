@@ -3,7 +3,8 @@
 //! Everything goes through kdeconnectd's D-Bus API on the session bus, with
 //! `busctl --json=short` (no D-Bus crate for a handful of calls): the
 //! devices, then for each one paired and in reach its battery, its mobile
-//! network and its notifications, re-read on every sample.
+//! network, re-read on every sample. Its notifications reach the desktop on
+//! their own: kdeconnectd sends them to the notification server (the shell).
 //!
 //! kdeconnectd itself is started with the Hyprland session (NixOS config,
 //! `programs.kdeconnect`); when it is not running, the snapshot says so and
@@ -17,7 +18,6 @@
 //!   /modules/kdeconnect/devices/<id>       org.kde.kdeconnect.device
 //!     …/battery                            org.kde.kdeconnect.device.battery
 //!     …/connectivity_report                org.kde.kdeconnect.device.connectivity_report
-//!     …/notifications[/<nid>]              org.kde.kdeconnect.device.notifications[.notification]
 //!     …/findmyphone, ping, sftp, clipboard, share
 
 use serde::Serialize;
@@ -26,16 +26,6 @@ use std::time::Duration;
 
 const DEST: &str = "org.kde.kdeconnect";
 const ROOT: &str = "/modules/kdeconnect";
-
-#[derive(Serialize, Default, Clone, Debug, PartialEq)]
-pub struct Notification {
-    /// Its D-Bus name, for `dismiss`.
-    pub id: String,
-    pub app: String,
-    pub title: String,
-    pub text: String,
-    pub dismissable: bool,
-}
 
 #[derive(Serialize, Default, Clone, Debug)]
 pub struct Phone {
@@ -56,7 +46,6 @@ pub struct Phone {
     pub network: String,
     /// 0 to 4, -1 when unknown.
     pub signal: i32,
-    pub notifications: Vec<Notification>,
 }
 
 #[derive(Serialize, Default)]
@@ -104,10 +93,14 @@ async fn properties(path: &str, iface: &str, names: &[&str]) -> Vec<Value> {
 async fn call(path: &str, iface: &str, method: &str, sig_args: &[&str]) -> Option<Value> {
     let mut args = vec!["call", DEST, path, iface, method];
     args.extend_from_slice(sig_args);
-    busctl(&args).await.into_iter().next().and_then(|v| match v {
-        Value::Array(mut a) if !a.is_empty() => Some(a.swap_remove(0)),
-        _ => None,
-    })
+    busctl(&args)
+        .await
+        .into_iter()
+        .next()
+        .and_then(|v| match v {
+            Value::Array(mut a) if !a.is_empty() => Some(a.swap_remove(0)),
+            _ => None,
+        })
 }
 
 fn string(v: Option<&Value>) -> String {
@@ -132,7 +125,13 @@ fn valid_element(s: &str) -> bool {
 
 pub async fn sample() -> Snapshot {
     // Every known device; an empty answer means the daemon is not there.
-    let reply = call(ROOT, "org.kde.kdeconnect.daemon", "devices", &["bb", "false", "false"]).await;
+    let reply = call(
+        ROOT,
+        "org.kde.kdeconnect.daemon",
+        "devices",
+        &["bb", "false", "false"],
+    )
+    .await;
     let Some(ids) = reply.as_ref().and_then(Value::as_array) else {
         return Snapshot::default();
     };
@@ -151,7 +150,10 @@ pub async fn sample() -> Snapshot {
     }
     // In reach first, then by name.
     phones.sort_by_key(|p| (!p.reachable, p.name.to_lowercase()));
-    Snapshot { running: true, phones }
+    Snapshot {
+        running: true,
+        phones,
+    }
 }
 
 /// One device, if it is paired or asks to be.
@@ -160,7 +162,14 @@ async fn device(id: String) -> Option<Phone> {
     let p = properties(
         &path,
         "org.kde.kdeconnect.device",
-        &["name", "type", "isReachable", "isPaired", "isPairRequestedByPeer", "verificationKey"],
+        &[
+            "name",
+            "type",
+            "isReachable",
+            "isPaired",
+            "isPairRequestedByPeer",
+            "verificationKey",
+        ],
     )
     .await;
     let mut phone = Phone {
@@ -183,63 +192,34 @@ async fn device(id: String) -> Option<Phone> {
         return Some(phone);
     }
 
-    let (battery_path, network_path) = (format!("{path}/battery"), format!("{path}/connectivity_report"));
-    let (battery, network, notifications) = tokio::join!(
-        properties(&battery_path, "org.kde.kdeconnect.device.battery", &["charge", "isCharging"]),
+    let (battery_path, network_path) = (
+        format!("{path}/battery"),
+        format!("{path}/connectivity_report"),
+    );
+    let (battery, network) = tokio::join!(
+        properties(
+            &battery_path,
+            "org.kde.kdeconnect.device.battery",
+            &["charge", "isCharging"]
+        ),
         properties(
             &network_path,
             "org.kde.kdeconnect.device.connectivity_report",
             &["cellularNetworkType", "cellularNetworkStrength"],
         ),
-        notifications(&path),
     );
     phone.battery = int(battery.first());
     phone.charging = boolean(battery.get(1));
     phone.network = string(network.first());
     phone.signal = int(network.get(1));
-    phone.notifications = notifications;
     Some(phone)
-}
-
-async fn notifications(device_path: &str) -> Vec<Notification> {
-    let base = format!("{device_path}/notifications");
-    let ids = call(&base, "org.kde.kdeconnect.device.notifications", "activeNotifications", &[]).await;
-    let ids: Vec<String> = ids
-        .as_ref()
-        .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(Value::as_str).filter(|i| valid_element(i)).map(str::to_string).collect())
-        .unwrap_or_default();
-
-    let mut out = Vec::new();
-    for id in ids {
-        let p = properties(
-            &format!("{base}/{id}"),
-            "org.kde.kdeconnect.device.notifications.notification",
-            &["appName", "title", "text", "dismissable"],
-        )
-        .await;
-        if p.is_empty() {
-            continue;
-        }
-        out.push(Notification {
-            id,
-            app: string(p.first()),
-            title: string(p.get(1)),
-            text: string(p.get(2)),
-            dismissable: boolean(p.get(3)),
-        });
-    }
-    // Newest last on the phone; newest first here.
-    out.reverse();
-    out
 }
 
 // ── Actions ─────────────────────────────────────────────────────────────────
 
 /// Act on a device: "ring", "ping", "browse" (its files, in the file
 /// manager), "clipboard" (send ours), "share" (`arg`: a path or a file://
-/// URL), "accept" / "reject" (a pairing request), "dismiss" (`arg`: a
-/// notification id).
+/// URL), "accept" / "reject" (a pairing request).
 pub async fn act(device: &str, action: &str, arg: &str) -> Result<(), String> {
     if !valid_element(device) {
         return Err("appareil inconnu".into());
@@ -248,22 +228,46 @@ pub async fn act(device: &str, action: &str, arg: &str) -> Result<(), String> {
     let iface = |plugin: &str| format!("org.kde.kdeconnect.device.{plugin}");
 
     let (obj, interface, method, args): (String, String, &str, Vec<String>) = match action {
-        "ring" => (format!("{path}/findmyphone"), iface("findmyphone"), "ring", vec![]),
+        "ring" => (
+            format!("{path}/findmyphone"),
+            iface("findmyphone"),
+            "ring",
+            vec![],
+        ),
         "ping" => (format!("{path}/ping"), iface("ping"), "sendPing", vec![]),
-        "browse" => (format!("{path}/sftp"), iface("sftp"), "startBrowsing", vec![]),
-        "clipboard" => (format!("{path}/clipboard"), iface("clipboard"), "sendClipboard", vec![]),
+        "browse" => (
+            format!("{path}/sftp"),
+            iface("sftp"),
+            "startBrowsing",
+            vec![],
+        ),
+        "clipboard" => (
+            format!("{path}/clipboard"),
+            iface("clipboard"),
+            "sendClipboard",
+            vec![],
+        ),
         "share" => {
             let url = file_url(arg).ok_or("fichier invalide")?;
-            (format!("{path}/share"), iface("share"), "shareUrl", vec!["s".into(), url])
+            (
+                format!("{path}/share"),
+                iface("share"),
+                "shareUrl",
+                vec!["s".into(), url],
+            )
         }
-        "accept" => (path.clone(), "org.kde.kdeconnect.device".into(), "acceptPairing", vec![]),
-        "reject" => (path.clone(), "org.kde.kdeconnect.device".into(), "cancelPairing", vec![]),
-        "dismiss" => {
-            if !valid_element(arg) {
-                return Err("notification inconnue".into());
-            }
-            (format!("{path}/notifications/{arg}"), iface("notifications.notification"), "dismiss", vec![])
-        }
+        "accept" => (
+            path.clone(),
+            "org.kde.kdeconnect.device".into(),
+            "acceptPairing",
+            vec![],
+        ),
+        "reject" => (
+            path.clone(),
+            "org.kde.kdeconnect.device".into(),
+            "cancelPairing",
+            vec![],
+        ),
         _ => return Err(format!("action inconnue : {action}")),
     };
 
@@ -276,12 +280,17 @@ pub async fn act(device: &str, action: &str, arg: &str) -> Result<(), String> {
         .kill_on_drop(true)
         .output();
     match tokio::time::timeout(Duration::from_secs(5), child).await {
-        Err(_) => Err("délai dépassé".into()),
+        Err(_) => Err(crate::i18n::tr("timeout")),
         Ok(Err(e)) => Err(format!("busctl : {e}")),
         Ok(Ok(o)) if o.status.success() => Ok(()),
         Ok(Ok(o)) => {
             let err = String::from_utf8_lossy(&o.stderr);
-            Err(err.lines().last().unwrap_or("échec").trim().to_string())
+            Err(err
+                .lines()
+                .last()
+                .unwrap_or(&crate::i18n::tr("failed"))
+                .trim()
+                .to_string())
         }
     }
 }
@@ -304,17 +313,23 @@ pub async fn screen(name: &str) -> Result<Vec<String>, String> {
     let serial = match pick_device(&devices) {
         Some(serial) => serial,
         None if devices.iter().any(|(_, state)| state == "unauthorized") => {
-            return Err("Autorise cet ordinateur sur l'écran du téléphone, puis réessaie.".into());
+            return Err(crate::i18n::tr("phone.authorize"));
         }
         None => match tailnet_address(name).await {
-            Some(ip) => adb_connect(&ip).await.ok_or(
-                "Injoignable par Tailscale : branche-le une fois en USB et lance « adb tcpip 5555 ».",
-            )?,
-            None => return Err("Branche le téléphone en USB, avec le débogage USB activé.".into()),
+            Some(ip) => adb_connect(&ip)
+                .await
+                .ok_or_else(|| crate::i18n::tr("phone.tailscale_unreachable"))?,
+            None => return Err(crate::i18n::tr("phone.plug_usb")),
         },
     };
-    let mut command: Vec<String> = ["scrcpy", "--serial", &serial, "--window-title"].map(String::from).to_vec();
-    command.push(if name.is_empty() { "Téléphone".into() } else { name.to_string() });
+    let mut command: Vec<String> = ["scrcpy", "--serial", &serial, "--window-title"]
+        .map(String::from)
+        .to_vec();
+    command.push(if name.is_empty() {
+        crate::i18n::tr("phone.window_title")
+    } else {
+        name.to_string()
+    });
     Ok(command)
 }
 
@@ -327,8 +342,8 @@ async fn adb(args: &[&str], secs: u64) -> Result<String, String> {
         .kill_on_drop(true)
         .output();
     match tokio::time::timeout(Duration::from_secs(secs), child).await {
-        Err(_) => Err("adb ne répond pas.".into()),
-        Ok(Err(_)) => Err("adb est introuvable (paquet android-tools).".into()),
+        Err(_) => Err(crate::i18n::tr("phone.adb_no_answer")),
+        Ok(Err(_)) => Err(crate::i18n::tr("phone.adb_missing")),
         Ok(Ok(o)) => Ok(String::from_utf8_lossy(&o.stdout).into_owned()),
     }
 }
@@ -352,14 +367,27 @@ fn parse_adb_devices(text: &str) -> Vec<(String, String)> {
 
 /// A device ready for scrcpy, USB first (a network serial has a port).
 fn pick_device(devices: &[(String, String)]) -> Option<String> {
-    let ready: Vec<&String> = devices.iter().filter(|(_, s)| s == "device").map(|(d, _)| d).collect();
-    ready.iter().find(|d| !d.contains(':') && !d.contains("._adb")).or(ready.first()).map(|d| d.to_string())
+    let ready: Vec<&String> = devices
+        .iter()
+        .filter(|(_, s)| s == "device")
+        .map(|(d, _)| d)
+        .collect();
+    ready
+        .iter()
+        .find(|d| !d.contains(':') && !d.contains("._adb"))
+        .or(ready.first())
+        .map(|d| d.to_string())
 }
 
 /// The Tailscale address of the phone: the online Android device of that
 /// name, or the only online one.
 async fn tailnet_address(name: &str) -> Option<String> {
-    let simple = |s: &str| s.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect::<String>();
+    let simple = |s: &str| {
+        s.to_lowercase()
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .collect::<String>()
+    };
     let phones: Vec<_> = crate::servers::load()
         .await
         .into_iter()
@@ -368,7 +396,11 @@ async fn tailnet_address(name: &str) -> Option<String> {
     phones
         .iter()
         .find(|s| simple(&s.name) == simple(name))
-        .or(if phones.len() == 1 { phones.first() } else { None })
+        .or(if phones.len() == 1 {
+            phones.first()
+        } else {
+            None
+        })
         .map(|s| s.ip.clone())
 }
 
@@ -432,12 +464,18 @@ mod tests {
         assert_eq!(devices.len(), 2);
         assert_eq!(pick_device(&devices).unwrap(), "0A1B2C3D");
         // Only a phone still waiting for the user's yes: none ready.
-        assert!(pick_device(&parse_adb_devices("List of devices attached\nXYZ\tunauthorized\n")).is_none());
+        assert!(pick_device(&parse_adb_devices(
+            "List of devices attached\nXYZ\tunauthorized\n"
+        ))
+        .is_none());
     }
 
     #[test]
     fn makes_file_urls() {
-        assert_eq!(file_url("/home/a/Photo été.jpg").unwrap(), "file:///home/a/Photo%20%C3%A9t%C3%A9.jpg");
+        assert_eq!(
+            file_url("/home/a/Photo été.jpg").unwrap(),
+            "file:///home/a/Photo%20%C3%A9t%C3%A9.jpg"
+        );
         assert_eq!(file_url("file:///tmp/x").unwrap(), "file:///tmp/x");
         assert!(file_url("relatif.txt").is_none());
     }

@@ -17,7 +17,7 @@ import "../widgets"
 //   │                                                │
 //   │      le widget de l'onglet, à l'horizontale     │  fondu croisé et léger
 //   │                                                │  glissement d'un onglet
-//   │  ▭ Explorer  ▦ Système  ☏ Téléphone  ▶ Lecteur… │  à l'autre
+//   │  ▭ Explorer  ▦ Système  ▣ Notes  ▶ Lecteur…     │  à l'autre
 //   │ ────────────────────────────────────────────── │
 //   │ ❄  Demander à Karénine…                     🎤 │  le champ, inchangé
 //   ╰────────────────────────────────────────────────╯
@@ -83,9 +83,11 @@ FocusScope {
     readonly property var heights: ({
         // Les lieux, trois rangées de tuiles, les disques.
         explorer: 300 + 56,
-        // Le choix de la machine, puis trois cartes.
-        stats: 30 + 10 + 150,
-        telephone: 196,
+        // Le choix de la machine, trois cartes, puis le téléphone.
+        stats: 30 + 10 + 150 + 10 + 76,
+        notifications: 300,
+        // Le champ, puis le mur de cartes, qui défile.
+        notes: 340,
         lecteur: 210,
         // Le métronome, le fil, l'accordeur.
         musique: 150 + 1 + 150,
@@ -164,7 +166,8 @@ FocusScope {
 
                 sourceComponent: page.modelData === "explorer" ? explorerPage
                                : page.modelData === "stats" ? statsPage
-                               : page.modelData === "telephone" ? phonePage
+                               : page.modelData === "notifications" ? notificationsPage
+                               : page.modelData === "notes" ? notesPage
                                : page.modelData === "lecteur" ? playerPage
                                : page.modelData === "musique" ? musicPage
                                : settingsPage
@@ -175,7 +178,8 @@ FocusScope {
     // Un fichier ouvert : la barre s'efface pour laisser voir l'application.
     Component { id: explorerPage; FileExplorer { onOpened: hub.bar.dismiss() } }
     Component { id: statsPage; HardwareStats {} }
-    Component { id: phonePage; PhoneWidget {} }
+    Component { id: notificationsPage; NotificationCenter {} }
+    Component { id: notesPage; NotesWidget {} }
     Component { id: playerPage; MusicPlayerWidget {} }
     // Le métronome au-dessus de l'accordeur, un fil entre les deux.
     Component {

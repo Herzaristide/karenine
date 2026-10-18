@@ -1,34 +1,35 @@
 ---
-title: Thème
-group: Fonctionnalités
-summary: services/Theme.qml — état de thème, defaults intégrés et intégration avec le daemon anna.
+title: Theme
+group: Features
+summary: services/Theme.qml — theme state, built-in defaults and integration with the anna daemon.
 links: [configuration, widgets, panels, architecture]
 ---
 
-# Thème (`services/Theme.qml`)
+# Theme (`services/Theme.qml`)
 
-`Theme.qml` est un **singleton** (dans `services/`) qui porte l'état de thème
-partagé par tous les [widgets](#widgets) et [panneaux](#panels).
+`Theme.qml` is a **singleton** (in `services/`) holding the theme state
+shared by all [widgets](#widgets) and [panels](#panels).
 
-## Fonctionnement
+## How it works
 
-- Lit `~/.config/accent/state.json`, que le daemon **`anna`** réécrit à chaque
-  changement : l'accent change **à chaud**.
-- Envoie les changements (accent, mode, couleur de palette, reset) via le client
-  `anna`, une commande à la fois : une nouvelle valeur remplace celle qui
-  attendait encore, le daemon n'applique que la plus récente.
-- En son absence, des **valeurs par défaut intégrées** s'appliquent — dont la
-  couleur d'accent `#5277c3` (voir [Configuration](#configuration)).
+- Reads `~/.config/accent/state.json`, which the **`anna`** daemon rewrites on
+  every change: the accent changes **live**.
+- Sends changes (accent, mode, palette color, reset) through the `anna`
+  client, one command at a time: a new value replaces the one still waiting,
+  so the daemon only applies the latest.
+- Without it, **built-in defaults** apply — including the accent color
+  `#5277c3` (see [Configuration](#configuration)).
 
 ## Import
 
-Comme les autres singletons, il est importé par chemin relatif :
+Like the other singletons, it is imported by relative path:
 
 ```qml
 import "../services"
 ```
 
-(voir les conventions dans [Architecture](#architecture)).
+(see the conventions in [Architecture](#architecture)).
 
-> Le daemon `anna` est construit par ce dépôt (`anna/`, voir [Backend](#backend)) ;
-> karenine reste fonctionnel sans lui, avec les couleurs par défaut.
+> The `anna` daemon is built by this repository (`anna/`, see
+> [Backend](#backend)); karenine keeps working without it, with the default
+> colors.

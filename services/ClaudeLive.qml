@@ -37,9 +37,13 @@ Singleton {
     readonly property int waitingCount: live.sessions.filter(s => s.state === "waiting").length
     readonly property int workingCount: live.sessions.filter(s => s.state === "working").length
 
-    // Une session vient de se mettre à attendre l'utilisateur, ou un long tour
-    // vient de finir : { id, project, kind: "waiting" | "permission" | "done", text }.
-    signal alert(var a)
+    // La demande de permission ouverte du pilote, avant une action sensible :
+    // { req, tool, summary, always }, ou null. Les sessions Claude Code, elles,
+    // demandent dans leur terminal.
+    readonly property var pilotRequest: {
+        var p = live.sessions.find(x => x.id === "pilote");
+        return p && p.request ? p.request : null;
+    }
 
     function find(id) {
         return live.sessions.find(x => x.id === id) || null;
@@ -50,19 +54,10 @@ Singleton {
         live._send({ cmd: "claude_focus", id: id });
     }
 
-    // Répond à une demande de permission ouverte (session.request.req) :
-    // "allow", "always", "deny", ou "terminal" pour laisser le terminal
-    // afficher sa propre question.
+    // Répond à la demande ouverte du pilote (pilotRequest.req) : "allow",
+    // "always" ou "deny".
     function decide(req, decision) {
         live._send({ cmd: "claude_decide", request: req, decision: decision });
-    }
-
-    // Réaffiche la bulle d'une session qui attend une permission — quand on
-    // l'a congédiée et qu'on clique son point.
-    function reopen(id) {
-        var s = live.find(id);
-        if (s && s.request)
-            live.alert({ id: s.id, project: s.project, kind: "permission", text: s.message });
     }
 
     // ── Dock IA ──────────────────────────────────────────────────────
@@ -311,8 +306,6 @@ Singleton {
     function _apply(msg) {
         live.available = true;
         live.sessions = msg.sessions;
-        if (msg.alert)
-            live.alert(msg.alert);
     }
 
     // ── Flux d'état ──────────────────────────────────────────────────

@@ -1,33 +1,36 @@
 ---
-title: Accueil
-group: Général
-summary: karenine — interface Quickshell (barre, panneaux, chat IA, outils musicaux) en QML et scripts.
+title: Home
+group: General
+summary: karenine — a Quickshell interface (bar, panels, AI, music tools) in QML and scripts.
 links: [architecture, shell, installation, widgets]
 ---
 
 # karenine
 
-**karenine** est une interface [Quickshell](https://quickshell.org/) : une barre,
-des panneaux latéraux, un chat IA, des notes, des statistiques matérielles et une
-suite d'outils musicaux (accordeur, métronome, chromagramme, lecteur de musique).
+**karenine** is a [Quickshell](https://quickshell.org/) interface: a bar,
+side panels, an AI chat, notes, hardware statistics and a suite of music
+tools (tuner, metronome, chromagram, music player).
 
-Le projet est fait de **QML** + **scripts** (bash/python) + assets. Le paquet
-`quickshell` amont vit dans la configuration NixOS qui consomme ce dépôt comme
-*input de flake*.
+The project is made of **QML** + **scripts** (bash/python) + assets. The
+upstream `quickshell` package lives in the NixOS configuration that consumes
+this repository as a *flake input*.
 
-## Par où commencer
+## Where to start
 
-- 🧭 [Architecture & conventions](#architecture) — organisation et règles d'import.
-- 🪟 [Le shell & l'IPC](#shell) — `shell.qml` et le pilotage par FIFO.
-- 🧱 [Les panneaux](#panels) et [les widgets](#widgets).
-- 📦 [Installation](#installation) — via le flake ou manuellement.
+- 🧭 [Architecture & conventions](#architecture) — layout and import rules.
+- 🪟 [The shell & IPC](#shell) — `shell.qml` and FIFO control.
+- 🧱 [The panels](#panels) and [the widgets](#widgets).
+- 📦 [Installation](#installation) — through the flake or by hand.
+- 🌐 [Languages](#languages) — interface and voice languages, adding one.
 
-## Grandes fonctionnalités
+## Main features
 
-- **Barre + panneaux** Wayland (voir [Panneaux](#panels)).
-- **Chat IA** : Claude et Ollama (voir [Cluster IA](#ai)).
-- **Outils musicaux** : accordeur, métronome, chromagramme (voir [Outils
-  musicaux](#audio-tools)).
-- **Thème dynamique** piloté par le daemon `anna` (voir [Thème](#theme)).
-- **Relocalisable** : aucun chemin codé en dur, les backends sont résolus
-  relativement (voir [Architecture](#architecture)).
+- **Bar + panels** on Wayland (see [Panels](#panels)).
+- **AI**: Claude Code sessions and the desktop pilot (see [AI cluster](#ai)).
+- **Music tools**: tuner, metronome, chromagram (see [Music
+  tools](#audio-tools)).
+- **Dynamic theme** driven by the `anna` daemon (see [Theme](#theme)).
+- **Several languages**: English by default, French, and one JSON file per
+  extra language (see [Languages](#languages)).
+- **Relocatable**: no hard-coded path, backends are resolved relatively (see
+  [Architecture](#architecture)).

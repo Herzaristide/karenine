@@ -13,10 +13,10 @@ QtObject {
     id: src
 
     readonly property string type:  "wallpaper"
-    readonly property string label: "Fonds d'écran"
+    readonly property string label: I18n.tr("search.wallpapers")
     readonly property int    limit: 8
 
-    readonly property string keywords: "fond fonds écran ecran wallpaper vidéo video animé anime"
+    readonly property string keywords: "fond fonds écran ecran wallpaper background vidéo video animé anime animated"
 
     signal produced(int seq, var items)
 
@@ -67,7 +67,7 @@ QtObject {
                 type:     src.type,
                 id:       "wallpaper:" + path,
                 title:    stem,
-                subtitle: current ? "fond actuel" : "fond d'écran",
+                subtitle: current ? I18n.tr("search.wallpaperCurrent") : I18n.tr("search.wallpaper"),
                 meta:     dot > 0 ? name.substring(dot + 1).toUpperCase() : "",
                 tone:     current ? Theme.accentColor : Theme.colorCyan,
                 score:    score,

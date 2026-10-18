@@ -9,7 +9,7 @@ QtObject {
     id: src
 
     readonly property string type:  "file"
-    readonly property string label: "Fichiers"
+    readonly property string label: I18n.tr("search.files")
     readonly property int    limit: 8
 
     // En dessous, le bruit dépasse l'intérêt et `fd` traverse tout pour rien.
@@ -136,7 +136,7 @@ QtObject {
                 id:       "file:" + path,
                 title:    name,
                 subtitle: dir.indexOf(src.home) === 0 ? "~" + dir.substring(src.home.length) : dir,
-                meta:     isDir ? "dossier" : suffix.toUpperCase(),
+                meta:     isDir ? I18n.tr("search.folder") : suffix.toUpperCase(),
                 tone:     isDir ? Theme.accentColor : src.toneFor(suffix),
                 // Les correspondances sur le nom priment sur celles du chemin :
                 // le repli doit donc rester sous le plus faible score de nom,

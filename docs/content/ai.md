@@ -1,335 +1,305 @@
 ---
-title: Cluster IA
-group: Fonctionnalités
-summary: Le dock IA (sessions Claude Code lancées, suivies et revues depuis l'interface), les sessions en direct dans la barre, les permissions, et l'ancien chat (ai/), mis de côté.
-links: [panels, backend, widgets]
+title: AI cluster
+group: Features
+summary: The AI dock (Claude Code sessions started, followed and reviewed from the interface), live sessions in the bar, the pilot's confirmations.
+links: [panels, backend, widgets, languages]
 ---
 
-# Cluster IA
+# AI cluster
 
-## Le dock IA
+## The AI dock
 
-`panels/AiDock.qml` est la porte d'entrée de l'interface vers Claude. Il
-remplace le dock du bas (`BottomDock`, mis de côté). Il se pose contre le bord gauche de l'écran et s'ouvre par Super+P ; les
-permissions des sessions s'y valident en lisant la conversation, et
-`SessionToast` signale celles qui attendent. C'est le widget « sessions », qu'ouvrent aussi le pilote (outil
-`widget`) ou la FIFO (`widget:sessions`, `savoir`). Le quotidien passe par la
-barre de conversation (`panels/ConversationBar.qml`, voir [Panneaux](#panels)),
-dont le dock reprend le verre, la teinte (`Theme.glow`), la police Inter et la
-capsule de saisie.
+`panels/AiDock.qml` is the interface's gateway to Claude. It sits against
+the left edge of the screen and opens with Super+P; the pilot's
+confirmations are answered there. It is the “sessions” widget, which the pilot (`widget` tool) or the FIFO
+(`widget:sessions`, `savoir`) also open. Everyday use goes through the
+conversation bar (`panels/ConversationBar.qml`, see [Panels](#panels)), whose
+glass, tint (`Theme.glow`), Inter font and input capsule the dock reuses.
 
-Le texte, lui, n'est pas fixe : posé sur un verre flouté (règle de couche
-`blur` sur « quickshell-aidock » dans la config Hyprland), il est **déplié**
-(toute la conversation, son travail, les autres vues) ou **réduit** (l'en-tête,
-le bas de la conversation, la demande de permission et le champ, pour répondre
-ou valider sans plus), et peut **disparaître** tout à fait (×). Il ne prend le
-clavier en exclusif que le temps d'une demande, le rend dès que la souris le
-quitte ou s'en éloigne, et se replie de lui-même quand il perd le focus.
-Échap le replie, puis le fait disparaître ; ⌃/⌄ bascule entre les deux tailles.
+The text is not fixed: laid on blurred glass (`blur` layer rule on
+“quickshell-aidock” in the Hyprland config), it is **expanded** (the whole
+conversation, its work, the other views) or **collapsed** (the header, the
+bottom of the conversation, the pilot's request and the field, to answer
+or approve and nothing more), and can **disappear** entirely (×). It only
+takes the keyboard exclusively for the time of a request, gives it back as
+soon as the mouse leaves or moves away, and folds by itself when it loses
+focus. Esc folds it, then makes it disappear; ⌃/⌄ switches between the two
+sizes.
 
 ```
 ╭──────────────────────────────────────────────────────────╮
-│ ● karenine·fix-dock                          travaille    │  la session regardée
-│ + nouvelle  ⟲ historique  ◈ savoir                        │
+│ ● karenine·fix-dock                            working    │  the session watched
+│ + new  ⟲ history  ◈ knowledge                             │
 ├──────────────────────────────────────────────────────────┤
-│  la conversation de la session choisie                   │
-│  worktree-… · 2 fichiers +14 −3   Zed Terminal Commit …   │  son travail
-│ ( › écrire à Claude                                 (↑) ) │
+│  the chosen session's conversation                       │
+│  worktree-… · 2 files +14 −3   Zed Terminal Commit …      │  its work
+│ ( › write to Claude                                 (↑) ) │
 ╰──────────────────────────────────────────────────────────╯
 ```
 
-- **+ nouvelle** : choisir où Claude travaille — la recherche (le coffre
-  Obsidian, style « chercheur ») ou un dépôt — puis écrire la demande. Dans un
-  dépôt, la session tourne par défaut dans une **copie isolée**
-  (`claude --worktree` : `<dépôt>/.claude/worktrees/<nom>`, branche
-  `worktree-<nom>`) : le code de travail ne bouge pas tant qu'on n'a pas
-  fusionné.
-- **Une session** : sa conversation se met à jour pendant qu'elle avance ; on
-  lui répond dans le champ du bas. Une session ouverte dans un terminal se lit
-  ici mais se poursuit là-bas (bouton Terminal), pour ne jamais faire écrire
-  deux processus dans la même conversation.
-- **Son travail** (copie isolée) : fichiers modifiés et lignes, commits à
-  fusionner, puis **Commit**, **Fusionner** (dans la branche courante du dépôt,
-  refusé s'il y a des changements non commités d'un côté ou de l'autre, annulé
-  en cas de conflit), **Jeter** (deux clics), **Zed**, **Terminal** (la session
-  y est reprise par `claude --resume`), **Arrêter**.
-- **⟲ historique** : les anciennes conversations (index de `ClaudeSessions`) ;
-  en choisir une la relit, lui écrire la reprend.
+- **+ new**: choose where Claude works — research (the Obsidian vault,
+  “researcher” style) or a repository — then write the request. In a
+  repository, the session runs by default in an **isolated copy**
+  (`claude --worktree`: `<repo>/.claude/worktrees/<name>`, branch
+  `worktree-<name>`): the working code does not move until you merge.
+- **A session**: its conversation updates as it goes; you answer it in the
+  bottom field. A session opened in a terminal is read here but continued
+  there (Terminal button), so that two processes never write into the same
+  conversation.
+- **Its work** (isolated copy): changed files and lines, commits to merge,
+  then **Commit**, **Merge** (into the repository's current branch, refused
+  if there are uncommitted changes on either side, aborted on conflict),
+  **Discard** (two clicks), **Zed**, **Terminal** (the session is resumed
+  there with `claude --resume`), **Stop**.
+- **⟲ history**: the old conversations (`ClaudeSessions` index); picking one
+  re-reads it, writing to it resumes it.
 
-Clavier : ⏎ envoie, ⇧⏎ va à la ligne, Alt+←/→ change de session, Alt+N
-ouvre une nouvelle session, Échap replie puis fait disparaître le texte.
+Keyboard: ⏎ sends, ⇧⏎ goes to a new line, Alt+←/→ changes session, Alt+N
+opens a new session, Esc folds then hides the text.
 
-Les sessions lancées d'ici tournent chez anna (`anna/src/claude/runner.rs`), pas
-dans le QML : fermer le dock ou recharger le shell ne les interrompt pas. Elles
-meurent en revanche avec anna (redémarrage, rebuild) — leur transcript reste, et
-leur écrire les reprend. Leurs demandes de permission arrivent dans la bulle
-de la barre, comme celles d'un terminal.
+Sessions started from here run in anna (`anna/src/claude/runner.rs`), not in
+the QML: closing the dock or reloading the shell does not interrupt them.
+They do die with anna (restart, rebuild) — their transcript stays, and
+writing to them resumes them. Without a terminal, they have no permission
+dialog: for now they only do what the Claude Code rules already allow,
+anything else is refused.
 
-| Fichier | Rôle |
+| File | Role |
 | --- | --- |
-| `panels/AiDock.qml` | Le dock IA. |
-| `services/ClaudeLive.qml` | Sessions vivantes, conversation suivie, commandes vers anna. |
-| `anna/src/claude/runner.rs` | Lance, reprend, relance et arrête les sessions du dock ; ouvre Zed ou un terminal. |
-| `anna/src/claude/transcript.rs` | Lit le JSONL d'une session et en suit la croissance. |
-| `anna/src/claude/worktree.rs` | Revue, commit, fusion et suppression des copies isolées. |
+| `panels/AiDock.qml` | The AI dock. |
+| `services/ClaudeLive.qml` | Live sessions, followed conversation, commands to anna. |
+| `anna/src/claude/runner.rs` | Starts, resumes, restarts and stops the dock's sessions; opens Zed or a terminal. |
+| `anna/src/claude/transcript.rs` | Reads a session's JSONL and follows its growth. |
+| `anna/src/claude/worktree.rs` | Review, commit, merge and removal of isolated copies. |
 
-## Le savoir
+## Knowledge
 
-« ◈ savoir », dans le dock (ou `echo savoir > /tmp/qs-panel.fifo`), montre le
-coffre Obsidian `~/v4ult` : notes de recherche, notes de projet, skills, lab, et
-le journal des sessions qu'écrit le hook `claude-journal`.
+“◈ knowledge”, in the dock (or `echo savoir > /tmp/qs-panel.fifo`), shows the
+Obsidian vault `~/v4ult`: research notes, project notes, skills, lab, and the
+session journal written by the `claude-journal` hook.
 
-- **Filtres** : tout, à relire, recherche, projets, skills, lab, journal, avec
-  leur nombre. Ce qu'on tape dans le champ du bas affine la liste ; Entrée ouvre
-  la première note.
-- **Aperçu** à droite (Markdown, sans l'en-tête), avec **Relu** pour une note que
-  Claude a rangée (`statut: relu`, `revu: <date du jour>`, écrit en place),
-  **Session** pour rouvrir la conversation dont elle vient (champ `session`), et
-  **Obsidian** pour l'ouvrir là-bas.
-- **◈ Capitaliser**, dans la barre de travail d'une session lancée du dock, une
-  fois son tour fini : lui envoie `/capitaliser`, qui range dans le coffre ce
-  qu'elle a appris.
+- **Filters**: all, to review, research, projects, skills, lab, journal, with
+  their count. What you type in the bottom field narrows the list; Enter
+  opens the first note.
+- **Preview** on the right (Markdown, without the front matter), with
+  **Reviewed** for a note Claude filed (`statut: relu`, `revu: <today's
+  date>`, written in place), **Session** to reopen the conversation it comes
+  from (`session` field), and **Obsidian** to open it there.
+- **◈ Capitalize**, in the work bar of a session started from the dock, once
+  its turn is over: sends it `/capitaliser`, which files away in the vault
+  what it learned.
 
-anna relit le coffre à chaque ouverture de la vue (`anna/src/claude/knowledge.rs`)
-et en profite pour tenir les skills actives : chaque `Skills/<nom>/SKILL.md` est
-lié dans `~/.claude/skills/`, et un lien dont la note a disparu est retiré. Rien
-d'autre dans ce dossier n'est touché. Le pilote, lui, cherche dans les mêmes
-notes avec `chercher_notes`.
+anna re-reads the vault every time the view opens
+(`anna/src/claude/knowledge.rs`) and uses it to keep the skills active: each
+`Skills/<name>/SKILL.md` is linked into `~/.claude/skills/`, and a link whose
+note disappeared is removed. Nothing else in that folder is touched. The
+pilot searches the same notes with `chercher_notes`.
 
-## Le pilote
+The quick notes of the “Notes” tab (Keep-like, `notes.rs`) are a separate
+store: the pilot writes one with `creer_note` (text, optionally pinned)
+and reads them with `lire_notes` (optionally filtered by words).
 
-Le dock s'ouvre sur le **pilote** : une session Claude (Haiku par défaut) qu'anna
-garde prête, à qui l'on dit ce qu'on veut en quelques mots.
+## The pilot
 
-- **Il agit sur le bureau** avec ses outils (`anna/src/claude/desk.rs`) :
-  fenêtres et workspaces, son, luminosité, lecture média, applications, URL,
-  projets (Zed, terminal), captures, couleur d'accent, notes du coffre, état du
-  bureau, presse-papiers.
-- **Il confie le travail de fond** — code, recherche — à une session complète
-  (`lancer_session`), dans une copie isolée pour un dépôt. Elle apparaît en haut
-  du dock et dans la barre.
-- **Il demande avant l'irréversible** : fermer une fenêtre, lancer une commande
-  shell, reconstruire NixOS passent par la bulle de la barre (Autoriser /
-  Refuser), au nom d'une session « pilote » le temps de la question.
+The dock opens on the **pilot**: a Claude session (Haiku by default) that
+anna keeps ready, to which you say what you want in a few words.
 
-Une action confirmée en une phrase referme le dock ; la confirmation passe dans
-la bulle (« ✦ pilote »). Une réponse plus longue, une question en retour ou une
-erreur restent affichées. « joindre le presse-papiers » ajoute son texte à la
-demande ; « oublier » repart d'une conversation vierge.
+- **It acts on the desktop** with its tools (`anna/src/claude/desk.rs`):
+  windows and workspaces, sound, brightness, media playback, applications,
+  URLs, projects (Zed, terminal), screenshots, accent color, vault notes,
+  desktop state, clipboard.
+- **It hands deep work** — code, research — to a full session
+  (`lancer_session`), in an isolated copy for a repository. It shows up at
+  the top of the dock and in the bar.
+- **It asks before the irreversible**: closing a window, running a shell
+  command, rebuilding NixOS wait for an answer in the dock (Allow / Deny),
+  which opens by itself, on behalf of a “pilot” session for the time of the
+  question. Without an answer within 2 minutes, the action is not run.
+- **It answers in the voice language** (see [Languages](#languages)): the
+  language is part of the context of every request, so changing it applies
+  from the next request on, without restarting the pilot. With “Automatic
+  detection”, it answers in the language of the request.
 
-Mécanique : `claude -p` en stream-json, avec son propre prompt système
-(`--system-prompt`), sans les outils intégrés de Claude Code (`--tools ""`),
-avec pour seul serveur MCP `anna mcp` (`--strict-mcp-config`), sans les
-réglages de l'utilisateur (`--setting-sources project` : ni hooks ni journal)
-et sans transcript sur disque. Chaque demande porte un bloc de contexte : date,
-fenêtre active, fenêtres ouvertes, son, sessions, projets. Le processus est
-gardé entre deux demandes et relancé après 20 min d'inactivité ou 30 demandes.
-Comptez environ 2 s pour une réponse directe, 4 s au premier appel avec un outil.
+An action confirmed in one sentence closes the dock; the confirmation stays
+in the conversation bar. A longer answer, a question back or an error
+stay displayed. “attach the clipboard” adds its text to the request;
+“forget” starts again from a blank conversation.
 
-Réglages : `ANNA_PILOT_MODEL` (variable d'environnement d'anna) change le
-modèle ; `~/.config/anna/pilote.md`, s'il existe, est ajouté au prompt (applis
-préférées, habitudes, projets…).
+Mechanics: `claude -p` in stream-json, with its own system prompt
+(`--system-prompt`), without Claude Code's built-in tools (`--tools ""`),
+with `anna mcp` as its only MCP server (`--strict-mcp-config`), without the
+user's settings (`--setting-sources project`: no hooks, no journal) and
+without a transcript on disk. Each request carries a context block: date,
+language to answer in, active window, open windows, sound, sessions,
+projects. The process is kept between two requests and restarted after
+20 min of inactivity or 30 requests. Count about 2 s for a direct answer,
+4 s on the first call with a tool.
 
-| Fichier | Rôle |
+Settings: `ANNA_PILOT_MODEL` (anna's environment variable) changes the
+model; `~/.config/anna/pilote.md`, if it exists, is appended to the prompt
+(preferred apps, habits, projects…).
+
+| File | Role |
 | --- | --- |
-| `anna/src/claude/pilot.rs` | Le processus du pilote, son prompt, le contexte, le fil des échanges. |
-| `anna/src/claude/desk.rs` | Ses outils et leur exécution (Hyprland en dispatchers Lua). |
-| `anna/src/claude/mcp.rs` | `anna mcp` : le serveur MCP (stdio) qui les lui présente. |
+| `anna/src/claude/pilot.rs` | The pilot process, its prompt, the context, the thread of exchanges. |
+| `anna/src/claude/desk.rs` | Its tools and their execution (Hyprland through Lua dispatchers). |
+| `anna/src/claude/mcp.rs` | `anna mcp`: the MCP server (stdio) that presents them to it. |
 
-## La voix
+## Voice
 
-Deux façons de parler, et dans les deux le texte s'écrit **pendant** qu'on
-parle :
+Two ways of speaking, and in both the text is written **while** you speak:
 
-- **Super+V** (ou `anna voice`, `echo voix > /tmp/qs-panel.fifo`) : la phrase
-  s'écrit en direct dans le champ de la barre de conversation (le flocon
-  s'allume), puis part au pilote comme si on l'avait tapée. La réponse
-  s'affiche au-dessus de la barre, sous la phrase comprise pour vérifier. Le
-  mot « Karénine » et un clic sur le flocon font la même chose.
-- **Espace maintenu dans le dock** : une dictée, comme dans Claude Code. On
-  garde Espace enfoncé et on parle : le texte s'écrit en direct dans le champ
-  (après ce qui y était déjà). Tant que la touche est tenue, les pauses ne
-  coupent pas. Au relâchement, la transcription finale arrive (0,2 s environ)
-  et **reste dans le champ** : on relit, on corrige, puis Entrée envoie. Un
-  espace tapé normalement reste un espace : la dictée démarre quand Espace est
-  tenu 0,35 s sans autre touche, et l'espace écrit à l'appui est alors retiré.
-  Le 🎙 lance la même dictée à la souris ; elle s'arrête à la fin de la phrase.
+- **Super+V** (or `anna voice`, `echo voix > /tmp/qs-panel.fifo`): the
+  sentence is written live in the conversation bar's field (the snowflake
+  lights up), then goes to the pilot as if it had been typed. The answer
+  shows above the bar, under the understood sentence to check it. The word
+  “Karénine” and a click on the snowflake do the same.
+- **Holding Space in the dock**: a dictation, as in Claude Code. Keep Space
+  pressed and speak: the text is written live in the field (after what was
+  already there). As long as the key is held, pauses do not cut. On release,
+  the final transcript arrives (about 0.2 s) and **stays in the field**: you
+  re-read, correct, then Enter sends. A normally typed space stays a space:
+  dictation starts when Space is held 0.35 s without another key, and the
+  space written on the press is then removed. The 🎙 starts the same
+  dictation with the mouse; it stops at the end of the sentence.
 
-Avec Super+V, la fin de la phrase arrête l'écoute (un second appui ou un clic sur la pastille
-aussi). La pastille affiche « j'écoute… » tant que rien n'est compris, puis le
-texte au fur et à mesure.
+With Super+V, the end of the sentence stops listening (a second press or a
+click on the chip too). The chip shows “listening…” as long as nothing is
+understood, then the text as it comes.
 
-Tout est local : capture par anna (`cpal`), transcription par whisper.cpp
-(modèle « small », français). Rien ne quitte la machine que le texte, qui va où
-irait une demande tapée.
+Everything is local: capture by anna (`cpal`), transcription by whisper.cpp
+(“small” model, in the **voice language**, see below). Nothing leaves the
+machine but the text, which goes where a typed request would.
 
-### Le texte en direct
+### The voice language
 
-Un serveur whisper.cpp reste chargé pendant qu'on parle, et ce qui a été dit
-jusque-là est retranscrit toutes les demi-secondes ; la transcription finale,
-sur l'enregistrement entier, remplace le texte provisoire.
+The voice language is a setting of its own, separate from the interface's
+(“Voice language”, under “Voice” in the settings): you can speak French to
+an interface in English. It is whisper's language (`-l`) and the one the
+pilot answers in. Three kinds of choice:
 
-- Il tourne sur la carte graphique dédiée (Vulkan), choisie d'après
-  `vulkaninfo` : environ 0,1 s par phrase sur la RTX 3070, contre près de 2 s
-  sur le processeur. Sans carte dédiée, le processeur prend le relais et le
-  texte suit la voix de moins près.
-- Il démarre avec le premier mot et s'arrête après 10 minutes sans usage, pour
-  que la carte dédiée puisse se mettre en veille. Le tout premier démarrage
-  d'une version de whisper.cpp compile ses shaders (une douzaine de secondes :
-  pas de texte en direct cette fois-là, la transcription finale attend le
-  serveur) ; ensuite le cache du pilote graphique ramène le démarrage sous la
-  seconde.
-- Si le serveur ne démarre pas, `whisper-cli` transcrit l'enregistrement à la
-  fin, sans texte en direct.
+| Choice | Whisper | Pilot |
+| --- | --- | --- |
+| Same as interface (default) | the interface language | the interface language |
+| Automatic detection | `-l auto`: whisper detects it | answers in the language of the request |
+| A language (English, Français…) | that language | that language |
 
-Pour essayer sans parler : `anna voice simulate fichier.wav [--send|--hold]` fait
-passer un enregistrement par exactement la même chaîne que le micro, en temps
-réel (sans `--send`, rien ne part au pilote ; avec `--hold`, comme Espace
-maintenu : l'écoute dure jusqu'à `anna voice release`).
+The warm whisper server keeps the language it was started with; if the
+setting changes, it is restarted at the next word. Forcing the language
+rather than detecting it is more reliable on short sentences.
 
-### Le mot d'activation « Karénine »
+### Live text
 
-Dire « Karénine » lance l'écoute, comme Super+V : « Karénine, baisse le son ».
-On l'allume ou l'éteint par « ○ Karénine » dans le dock, ou `anna voice wake
-[on|off]` ; le choix survit aux redémarrages. Allumé, le micro reste ouvert :
-c'est pourquoi l'interrupteur est en vue.
+A whisper.cpp server stays loaded while you speak, and what has been said so
+far is transcribed again every half second; the final transcript, over the
+whole recording, replaces the provisional text.
 
-- Toutes les 80 ms, trois petits modèles ONNX (openWakeWord, sur le
-  processeur, environ 4 % d'un cœur) : un spectrogramme, un « embedding »
-  commun à tous les mots d'activation, puis le modèle propre à « Karénine »
-  (200 Ko), qui note la dernière seconde et demie entre 0 et 1.
-- Au-dessus du seuil (0,6 ; `ANNA_WAKE_THRESHOLD`), les 2,5 dernières secondes
-  passent devant la demande. **Whisper doit entendre « Karénine » au début**
-  de la première transcription ; sinon le tour s'arrête sans bruit (une
-  demi-seconde de pastille dans la barre). Confirmé, le mot est retiré de la
-  demande.
-- `anna wake-score fichier.wav` donne les scores pas à pas, pour régler le seuil.
-- **Le son de l'ordinateur est retiré du micro.** Le mot et la dictée écoutent
-  `echo-cancel-source` (`ANNA_VOICE_NODE`) par `pw-record` : PipeWire y
-  soustrait ce que jouent les haut-parleurs (annulation d'écho WebRTC,
-  `modules/audio.nix` de la config NixOS). « Karénine » est donc entendu
-  par-dessus une musique ou une vidéo, et une vidéo qui le dit ne réveille
-  pas anna. Sans ce nœud, PipeWire donne le micro par défaut ; sans
-  `pw-record`, anna ouvre le micro par défaut elle-même. L'accordeur et le
-  métronome gardent le micro brut.
+- It runs on the dedicated graphics card (Vulkan), chosen from
+  `vulkaninfo`: about 0.1 s per sentence on the RTX 3070, against nearly 2 s
+  on the processor. Without a dedicated card, the processor takes over and
+  the text follows the voice less closely.
+- It starts with the first word and stops after 10 minutes without use, so
+  that the dedicated card can go to sleep. The very first start of a
+  whisper.cpp version compiles its shaders (a dozen seconds: no live text
+  that time, the final transcript waits for the server); afterwards the
+  graphics driver's cache brings the start under a second.
+- If the server does not start, `whisper-cli` transcribes the recording at
+  the end, without live text.
 
-Le modèle a été entraîné dans `~/ciph3r/lab/wakeword-karenine/` : la chaîne
-officielle d'openWakeWord, mais nourrie d'exemples **français** générés par
-Piper (voix tom, siwis, upmc, gilles, plus les 904 voix anglaises de libritts
-lisant des phonèmes français), chacun vérifié par Whisper, et de mots voisins
-à ne pas confondre (Karine, Catherine, carabine…). Sur des voix françaises de
-synthèse jamais vues, il en reconnaît environ la moitié, pour un faux
-déclenchement par heure de son ordinaire : il manque surtout des voix
-réelles. Des enregistrements de la voix de l'utilisateur sont le prochain
-progrès.
+To try without speaking: `anna voice simulate file.wav [--send|--hold]`
+runs a recording through exactly the same chain as the microphone, in real
+time (without `--send`, nothing goes to the pilot; with `--hold`, like
+holding Space: listening lasts until `anna voice release`).
 
-| Fichier | Rôle |
+### The wake word “Karénine”
+
+Saying “Karénine” starts listening, like Super+V: “Karénine, turn the sound
+down”. Turn it on or off with “○ Karénine” in the dock, or `anna voice wake
+[on|off]`; the choice survives restarts. When on, the microphone stays
+open: that is why the switch is in view.
+
+- Every 80 ms, three small ONNX models (openWakeWord, on the processor,
+  about 4 % of a core): a spectrogram, an “embedding” shared by all wake
+  words, then the model specific to “Karénine” (200 KB), which scores the
+  last second and a half between 0 and 1.
+- Above the threshold (0.6; `ANNA_WAKE_THRESHOLD`), the last 2.5 seconds go
+  before the request. **Whisper must hear “Karénine” at the start** of the
+  first transcript; otherwise the turn stops silently (half a second of chip
+  in the bar). Once confirmed, the word is removed from the request.
+- `anna wake-score file.wav` gives the scores step by step, to tune the
+  threshold.
+- **The computer's sound is removed from the microphone.** The word and
+  dictation listen to `echo-cancel-source` (`ANNA_VOICE_NODE`) through
+  `pw-record`: PipeWire subtracts what the speakers play (WebRTC echo
+  cancellation, `modules/audio.nix` in the NixOS config). “Karénine” is thus
+  heard over music or a video, and a video that says it does not wake anna.
+  Without that node, PipeWire gives the default microphone; without
+  `pw-record`, anna opens the default microphone itself. The tuner and the
+  metronome keep the raw microphone.
+
+The model was trained in `~/ciph3r/lab/wakeword-karenine/`: openWakeWord's
+official pipeline, but fed with **French** examples generated by Piper
+(voices tom, siwis, upmc, gilles, plus libritts's 904 English voices reading
+French phonemes), each checked by Whisper, and with neighboring words not to
+confuse (Karine, Catherine, carabine…). On unseen synthetic French voices,
+it recognizes about half of them, for one false trigger per hour of ordinary
+sound: it mostly lacks real voices. Recordings of the user's voice are the
+next improvement. The wake word does not depend on the voice language.
+
+| File | Role |
 | --- | --- |
-| `anna/src/claude/wake.rs` | Le détecteur et l'écoute continue. |
-| `anna/models/wake/karenine.onnx` | Le modèle du mot (les deux autres viennent d'openWakeWord). |
+| `anna/src/claude/wake.rs` | The detector and continuous listening. |
+| `anna/models/wake/karenine.onnx` | The word's model (the other two come from openWakeWord). |
 
-### Fin de phrase et nettoyage
+### End of sentence and cleanup
 
-Le niveau sonore des premiers instants donne le bruit de la pièce ; la parole
-est ce qui le dépasse nettement ; 1,2 s de silence après la parole termine la
-demande. Sans parole en 6 s, l'écoute s'arrête sur « rien entendu ». Arrêtée à
-la main avant toute parole, elle ne transcrit rien.
+The sound level of the first moments gives the room's noise; speech is what
+clearly exceeds it; 1.2 s of silence after speech ends the request. Without
+speech within 6 s, listening stops on “nothing heard”. Stopped by hand
+before any speech, it transcribes nothing.
 
-Whisper « entend » des choses dans le silence et le bruit : génériques de
-sous-titres (« Sous-titres réalisés par… »), marqueurs comme `[BLANK_AUDIO]`,
-`(musique)` ou `*Bip*`. Tout cela est écarté.
+Whisper “hears” things in silence and noise: subtitle credits (“Sous-titres
+réalisés par…”, “Thanks for watching”), markers like `[BLANK_AUDIO]`,
+`(musique)` or `*Bip*`. All of that is discarded.
 
-Le prompt initial de Whisper liste les noms des projets et quelques termes
-(Zed, dock, Obsidian…) : sans lui, « karenine » devient « Carnine ».
+Whisper's initial prompt lists the project names and a few terms (Zed,
+dock, Obsidian…), in the voice language: without it, “karenine” becomes
+“Carnine”.
 
-Le modèle : `ANNA_WHISPER_MODEL`, sinon `~/.local/share/anna/whisper/ggml-small.bin`,
-lié par la configuration NixOS. La dictée intégrée à Claude Code reste
-disponible dans les sessions de terminal ; elle n'est pas utilisée ici : elle
-n'existe que dans son interface, et passe par un service privé d'Anthropic.
+The model: `ANNA_WHISPER_MODEL`, otherwise
+`~/.local/share/anna/whisper/ggml-small.bin`, linked by the NixOS
+configuration (a multilingual model: the `.en` models only know English).
+The dictation built into Claude Code stays available in terminal sessions;
+it is not used here: it only exists in its interface, and goes through a
+private Anthropic service.
 
-| Fichier | Rôle |
+| File | Role |
 | --- | --- |
-| `anna/src/claude/voice.rs` | Écoute, fin de phrase, texte en direct, envoi au pilote. |
-| `anna/src/claude/whisper.rs` | Le serveur whisper.cpp : choix de la carte, démarrage, arrêt. |
+| `anna/src/claude/voice.rs` | Listening, end of sentence, live text, sending to the pilot. |
+| `anna/src/claude/whisper.rs` | The whisper.cpp server: card choice, language, start, stop. |
 
-## L'ancien chat (`ai/`), mis de côté
+## Live sessions
 
-Le **chat IA** d'origine — sélecteur Ollama / Claude dans le panneau latéral —
-n'est plus chargé (`SidePanel.qml`, index 1), et le **volet de session** ne
-servait qu'au mode IA du [dock du bas](#panels), lui aussi mis de côté. Les
-fichiers restent en place.
+All the machine's Claude Code sessions — started in a terminal or headless
+— report to anna through their hooks (`anna hook`, declared in Claude Code's
+configuration for SessionStart, UserPromptSubmit, PostToolUse, Notification,
+Stop and SessionEnd). The `anna/src/claude/` module keeps their state;
+`services/ClaudeLive.qml` follows it through `claude_watch`. Nothing pops up:
+a waiting session shows in the dock and the bar, nowhere else.
 
-| Fichier | Rôle |
+Permission requests stay with Claude Code: its own dialog asks, in the
+terminal. `anna hook` ignores a PermissionRequest that would still be
+declared, so an old configuration does not hold Claude back.
+
+| File | Role |
 | --- | --- |
-| `AIPanel.qml` | Sélecteur : bascule entre les fournisseurs de chat. |
-| `ClaudeChat.qml` | Conversation avec Claude — une session neuve, ouverte par le panneau. |
-| `OllamaChat.qml` | Conversation avec un modèle Ollama local. |
-| `OllamaTools.qml` | Outillage associé à Ollama (tools / fonctions). |
-| `SessionTranscript.qml` | Le volet du mode IA : les échanges de la session regardée, et de quoi la poursuivre. |
-
-## Deux façons de parler à Claude
-
-`ClaudeChat` **ouvre** une session neuve ; le mode IA du dock **reprend** une
-session existante. Les deux parlent au même CLI dans le même mode headless —
-une ligne JSON par événement dans les deux sens — mais le second passe
-`--resume <id>`, donc ce qu'on y écrit s'ajoute à la conversation d'origine,
-dans son propre fichier. Reprendre une session depuis le dock la modifie pour
-de bon.
-
-L'état de ce volet ne lui appartient pas : il vit dans le singleton
-`ClaudeSessions` (voir [Architecture](#architecture)), qui tient l'index des
-sessions, le transcript de celle qu'on regarde et le processus de reprise.
-`SessionTranscript` ne fait que le rendre.
-
-## Permissions
-
-Le dock n'a pas de terminal pour répondre à une demande d'autorisation. La
-reprise tourne donc en `acceptEdits` avec `--permission-prompts none` : les
-modifications de fichiers passent, tout ce qui demanderait un accord est refusé
-d'office plutôt que de laisser l'agent pendu. `ClaudeChat`, lui, est en
-`bypassPermissions`. Le curseur se règle par la propriété `permissionMode`.
-
-## Sessions en direct
-
-Toutes les sessions Claude Code de la machine — lancées dans un terminal ou
-sans tête — se signalent à anna par leurs hooks (`anna hook`, déclaré dans la
-configuration de Claude Code pour SessionStart, UserPromptSubmit, PostToolUse,
-Notification, Stop, SessionEnd et PermissionRequest). Le module
-`anna/src/claude/` en tient l'état ; `services/ClaudeLive.qml` le suit par
-`claude_watch`.
-
-- **La bulle** (`panels/SessionToast.qml`) apparaît en haut à droite quand une
-  session attend, demande une permission, ou finit un tour de plus de 20 s.
-
-| Fichier | Rôle |
-| --- | --- |
-| `anna/src/claude/mod.rs` | L'état des sessions : working / waiting / idle, alertes. |
-| `anna/src/claude/hook.rs` | `anna hook` : transmet un événement réduit au strict nécessaire. |
-| `anna/src/claude/permission.rs` | Les demandes de permission tenues jusqu'à la réponse de la bulle. |
-| `anna/src/claude/focus.rs` | Retrouve la fenêtre d'une session dans l'arbre des processus. |
-
-## Répondre aux permissions depuis la bulle
-
-Quand Claude s'apprête à demander « je peux… ? », le hook PermissionRequest
-passe la demande à anna et attend. La bulle montre l'outil et ce qu'il ferait
-(la commande, le fichier, l'URL), avec quatre réponses :
-
-| Bouton | Effet |
-| --- | --- |
-| Autoriser | L'outil tourne, cette fois. |
-| Toujours | L'outil tourne, et la règle que Claude Code suggère (« ne plus redemander pour… ») est enregistrée, exactement comme depuis son propre dialogue. La bulle dit laquelle. |
-| Refuser | Claude est prévenu du refus et poursuit. |
-| Terminal | Pas de réponse ici : le dialogue du terminal s'affiche, et sa fenêtre passe devant. |
-
-Le terminal garde la main dès que la barre ne peut pas aider : aucune barre ne
-suit les sessions, la fenêtre de la session est déjà au premier plan (on est
-devant), elle y passe pendant que la demande est ouverte, ou personne ne répond
-en 5 minutes. Le hook ne dit alors rien, et Claude Code se comporte comme sans
-lui.
-
-Seul un résumé quitte Claude : l'outil, la commande ou le chemin, coupés à 300
-caractères. Le contenu d'un fichier à écrire, par exemple, ne transite pas.
+| `anna/src/claude/mod.rs` | The sessions' state: working / waiting / idle. |
+| `anna/src/claude/hook.rs` | `anna hook`: forwards an event reduced to the bare minimum. |
+| `anna/src/claude/permission.rs` | The pilot's confirmations, held until the dock answers. |
+| `anna/src/claude/focus.rs` | Finds a session's window in the process tree. |
 
 ## Relations
 
-- Hébergé par les [panneaux](#panels).
+- Hosted by the [panels](#panels).
+- Its text follows the interface language, the pilot and whisper the voice
+  language (see [Languages](#languages)).

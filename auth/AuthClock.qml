@@ -29,10 +29,10 @@ Column {
 
     Text {
         anchors.horizontalCenter: parent.horizontalCenter
-        // Locale FR forcée : "Vendredi 17 octobre", même si LANG est en anglais
-        // (c'est le cas du greeter, et souvent de la session).
+        // La langue de l'interface, pas LANG : "Friday, October 17" ou
+        // "Vendredi 17 octobre", le format venant du dictionnaire.
         text: {
-            const d = Qt.locale("fr_FR").toString(clockRoot.now, "dddd d MMMM");
+            const d = I18n.locale.toString(clockRoot.now, I18n.tr("date.long"));
             return d.charAt(0).toUpperCase() + d.slice(1);
         }
         color: Theme.textSecondary

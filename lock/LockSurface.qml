@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
 import "../auth"
+import "../services"
 
 // Visuel du lockscreen : le fond commun et la carte centrale (auth/AuthCard),
 // complétée sur l'écran primaire par la musique et les stats matérielles.
@@ -74,7 +75,7 @@ Item {
         anchors.centerIn: parent
 
         userName: surface.userName
-        subtitle: "Session verrouillée"
+        subtitle: I18n.tr("lock.subtitle")
         message: surface.message
         messageIsError: surface.messageIsError
         busy: surface.busy

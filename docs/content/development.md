@@ -1,43 +1,48 @@
 ---
-title: Développement
-group: Utilisation
-summary: Valider le layout, lancer les tests, formater, et ce que vérifie la CI.
-links: [installation, backend, architecture]
+title: Development
+group: Usage
+summary: Validate the layout, run the tests, format, and what the CI checks.
+links: [installation, backend, architecture, languages]
 ---
 
-# Développement
+# Development
 
-## Valider le layout
+## Validate the layout
 
 ```bash
-nix build .#default     # assemble le paquet (~/.config/quickshell)
-nix flake check         # layout + qmllint (zéro warning) + tests QML
+nix build .#default     # assembles the package (~/.config/quickshell)
+nix flake check         # layout + qmllint (zero warnings) + QML tests + dictionaries
 ```
 
 ## Tests
 
 ```bash
-cd anna && cargo test   # daemon : thème, protocole, client, DSP, gestes
-tests/run.sh            # QML (qmltestrunner, offscreen) — dans `nix develop`
+cd anna && cargo test   # daemon: theme, protocol, client, DSP, gestures, i18n
+tests/run.sh            # QML (qmltestrunner, offscreen) — inside `nix develop`
+tests/i18n-check.sh     # dictionaries: every key used exists in English
 ```
 
-Les tests QML ne couvrent que les singletons **purs** (QtQuick seul, comme
-`Fuzzy`) : le plugin Quickshell ne se charge pas hors du binaire `quickshell`.
-`tests/run.sh` les copie dans un dossier à part pour ne pas importer le reste de
-`services/`.
+The QML tests only cover **pure** singletons (QtQuick only, like `Fuzzy`):
+the Quickshell plugin does not load outside the `quickshell` binary.
+`tests/run.sh` copies them into a separate folder so as not to import the
+rest of `services/`.
 
-## Formater
+`tests/i18n-check.sh` fails when a key called by the QML (`I18n.tr`) or by
+anna (`i18n::tr`) is missing from `i18n/en.json`, and lists, without failing,
+the keys each other language still has to translate.
+
+## Format
 
 ```bash
-nix fmt                 # formate le flake.nix (nixfmt-rfc-style)
-cd anna && cargo fmt    # formate le daemon
+nix fmt                 # formats flake.nix (nixfmt-rfc-style)
+cd anna && cargo fmt    # formats the daemon
 ```
 
-## Ce que vérifie la CI
+## What the CI checks
 
-- **`cargo fmt --check`**, **`cargo clippy -D warnings`** et **`cargo test`** sur
-  le daemon `anna`
-- **`nix flake check`** : layout, qmllint, tests QML
+- **`cargo fmt --check`**, **`cargo clippy -D warnings`** and **`cargo test`**
+  on the `anna` daemon
+- **`nix flake check`**: layout, qmllint, QML tests, dictionaries
 
-Voir le daemon dans [Backend](#backend), et les conventions QML dans
+See the daemon in [Backend](#backend), and the QML conventions in
 [Architecture](#architecture).

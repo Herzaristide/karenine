@@ -16,15 +16,15 @@ Item {
     Component.onCompleted: Gesture.refreshCameras()
 
     readonly property string stateText: {
-        if (!Gesture.available) return "anna sans module gestuel";
+        if (!Gesture.available) return I18n.tr("gesture.unavailable");
         if (Gesture.error !== "") return Gesture.error;
-        if (!Gesture.enabled) return "désactivé";
-        if (!Gesture.active) return "démarrage…";
+        if (!Gesture.enabled) return I18n.tr("common.off");
+        if (!Gesture.active) return I18n.tr("gesture.starting");
         switch (Gesture.mode) {
-        case "pointer": return "curseur";
-        case "palm":    return "main ouverte";
-        case "hand":    return "main détectée";
-        default:        return "en attente d'une main";
+        case "pointer": return I18n.tr("gesture.pointer");
+        case "palm":    return I18n.tr("gesture.palm");
+        case "hand":    return I18n.tr("gesture.hand");
+        default:        return I18n.tr("gesture.waiting");
         }
     }
 
@@ -47,7 +47,7 @@ Item {
             spacing: 10
 
             Text {
-                text: "GESTES"
+                text: I18n.tr("gesture.title").toUpperCase()
                 font.family: "JetBrains Mono"
                 font.pixelSize: 10
                 font.letterSpacing: 1.5
@@ -106,7 +106,7 @@ Item {
 
         // ── Device ───────────────────────────────────────────
         Text {
-            text: "CAMÉRA"
+            text: I18n.tr("gesture.camera").toUpperCase()
             font.family: "JetBrains Mono"
             font.pixelSize: 10
             font.letterSpacing: 1.5
@@ -115,7 +115,7 @@ Item {
 
         Text {
             visible: Gesture.cameras.length === 0
-            text: "aucune caméra détectée"
+            text: I18n.tr("gesture.noCamera")
             font.family: "JetBrains Mono"
             font.pixelSize: 10
             color: Theme.textDim

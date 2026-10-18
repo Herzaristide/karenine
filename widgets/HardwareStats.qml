@@ -11,11 +11,11 @@ Item {
     id: hwPanel
 
     // ── Hardware data ────────────────────────────────────────────────────
-    property string cpuName: "Chargement..."
+    property string cpuName: I18n.tr("common.loading")
     property int cpuUsage: 0
     property real ramTotalBytes: 0
     property real ramUsedBytes: 0
-    property string gpuName: "Chargement..."
+    property string gpuName: I18n.tr("common.loading")
     property string gpuUsage: ""
     property bool gpuAsleep: false
 
@@ -66,9 +66,9 @@ Item {
 
     // « actif 3 j », « actif 5 h », « actif 12 min ».
     function formatUptime(s) {
-        if (s >= 86400) return "actif " + Math.floor(s / 86400) + " j";
-        if (s >= 3600) return "actif " + Math.floor(s / 3600) + " h";
-        return "actif " + Math.max(1, Math.floor(s / 60)) + " min";
+        if (s >= 86400) return I18n.tr("stats.up", { time: I18n.tr("time.days", { n: Math.floor(s / 86400) }) });
+        if (s >= 3600) return I18n.tr("stats.up", { time: I18n.tr("time.hours", { n: Math.floor(s / 3600) }) });
+        return I18n.tr("stats.up", { time: I18n.tr("time.minutes", { n: Math.max(1, Math.floor(s / 60)) }) });
     }
 
     // Ce qui s'affiche à droite du choix de la machine.
@@ -79,13 +79,13 @@ Item {
             return hwPanel.notice;
         const s = hwPanel.server;
         if (s === null)
-            return "Relevé en cours…";
+            return I18n.tr("stats.measuring");
         if (!s.online)
-            return "Hors ligne";
+            return I18n.tr("stats.offline");
         if (s.error)
             return s.error;
         return [s.hostname, hwPanel.formatUptime(s.uptime_s),
-                "charge " + s.load1.toFixed(2).replace(".", ",")].filter(x => x).join("  ·  ");
+I18n.tr("stats.load", { n: s.load1.toLocaleString(I18n.locale, "f", 2) })].filter(x => x).join("  ·  ");
     }
 
     function applyServer(s) {
@@ -115,7 +115,7 @@ Item {
         if (!g)
             return "";
         if (g.asleep)
-            return "En veille · " + g.name;
+            return I18n.tr("stats.asleep") + " · " + g.name;
         if (g.mem_total > 0 && g.mem_used > 0)
             return hwPanel.formatGiB(g.mem_used) + " / " + hwPanel.formatGiB(g.mem_total) + " · " + g.name;
         return g.name;
@@ -148,7 +148,7 @@ Item {
     // éteindre ou redémarrer (ssh), par le client d'anna
     // (anna/src/servers.rs::power). Refusé faute de sudo sans mot de passe :
     // la même commande s'ouvre dans le terminal, pour le taper.
-    readonly property var powerSays: ({ on: "Réveil envoyé…", off: "Extinction…", reboot: "Redémarrage…" })
+    readonly property var powerSays: ({ on: I18n.tr("power.wakeSent"), off: I18n.tr("power.shuttingDown"), reboot: I18n.tr("power.rebooting") })
     readonly property var powerCommand: ({ off: "sudo systemctl poweroff", reboot: "sudo systemctl reboot" })
 
     // Ce que la dernière action a donné : il remplace l'état un moment.
@@ -192,14 +192,14 @@ Item {
             let say = "";
             if (!r && powerOut.text.indexOf("Usage") >= 0) {
                 // Le client répond par son aide : un anna d'avant ces actions.
-                say = "anna trop ancien : reconstruis-le.";
+                say = I18n.tr("anna.tooOld");
             } else if (!r) {
-                say = "anna ne répond pas.";
+                say = I18n.tr("anna.noAnswer");
             } else if (!r.ok && hwPanel.powerCommand[powerProc.action] && (r.error || "").indexOf("sudo") >= 0) {
-                say = "sudo demande un mot de passe : terminal ouvert.";
+                say = I18n.tr("power.sudoPassword");
                 DefaultApps.runInTerminal("", ["ssh", "-t", powerProc.server.host, hwPanel.powerCommand[powerProc.action]]);
             } else if (!r.ok) {
-                say = r.error || "Échec.";
+                say = r.error || I18n.tr("common.failedSentence");
             }
             if (here && say !== "")
                 hwPanel.notify(say);
@@ -250,10 +250,10 @@ Item {
 
     // ── Helpers ──────────────────────────────────────────────────────────
     function formatGiB(bytes) {
-        if (bytes <= 0) return "0 Mo";
+        if (bytes <= 0) return I18n.tr("unit.mb", { n: 0 });
         const gib = bytes / (1024 * 1024 * 1024);
-        if (gib >= 0.95) return gib.toFixed(1) + " Go";
-        return (bytes / (1024 * 1024)).toFixed(0) + " Mo";
+        if (gib >= 0.95) return I18n.tr("unit.gb", { n: gib.toLocaleString(I18n.locale, "f", 1) });
+        return I18n.tr("unit.mb", { n: (bytes / (1024 * 1024)).toFixed(0) });
     }
 
     function pushHistory(arr, value) {
@@ -288,11 +288,11 @@ Item {
                 (s.ram_used / s.ram_total) * 100);
 
         // GPU
-        hwPanel.gpuName = (s.gpu_name && s.gpu_name.length > 0) ? s.gpu_name : "Non détecté";
+        hwPanel.gpuName = (s.gpu_name && s.gpu_name.length > 0) ? s.gpu_name : I18n.tr("stats.notDetected");
         if (s.gpu_present) {
             hwPanel.gpuUsagePercent = s.gpu_usage;
-            hwPanel.gpuUsage = s.gpu_usage + "% — " + s.gpu_mem_used_mib
-                             + " Mio / " + s.gpu_mem_total_mib + " Mio";
+            hwPanel.gpuUsage = s.gpu_usage + "% — " + I18n.tr("unit.mib", { n: s.gpu_mem_used_mib })
+                             + " / " + I18n.tr("unit.mib", { n: s.gpu_mem_total_mib });
             hwPanel.gpuHistory = hwPanel.pushHistory(hwPanel.gpuHistory, s.gpu_usage);
         } else {
             hwPanel.gpuUsage = "";
@@ -349,8 +349,12 @@ Item {
     //   │ i7-11800H      ~~~~~│ │ 4,2 / 15 Go│ │ 907 / 8192 Mio  │
     //   │~~~~~~~~~~~~~~~~~~~~~│ │~~~~~~~~~~~~│ │~~~~~~~~~~~~~~~~~│
     //   ╰─────────────────────╯ ╰────────────╯ ╰─────────────────╯
+    //   ╭ ● Pixel 9a  Connecté · 5G ▂▄▆█    (Écran) (Sonner) (Presse-papier) ╮
+    //   ╰                                             ━━━━━━━━━━━━  82 % ⚡ ╯
     readonly property int tileH: 150
     readonly property int pickerH: 30
+    // La carte du téléphone (PhoneWidget), sous les trois autres.
+    readonly property int phoneH: 76
 
     component Tile: Rectangle {
         id: tile
@@ -525,13 +529,13 @@ Item {
         }
         PowerAction {
             icon: Qt.resolvedUrl("../assets/icons/reboot.svg")
-            confirm: "Redémarrer ?"
+            confirm: I18n.tr("power.rebootConfirm")
             action: "reboot"
             visible: hwPanel.remote && hwPanel.measured
         }
         PowerAction {
             icon: Qt.resolvedUrl("../assets/icons/power.svg")
-            confirm: "Éteindre ?"
+            confirm: I18n.tr("power.offConfirm")
             action: "off"
             visible: hwPanel.remote && hwPanel.measured
         }
@@ -556,16 +560,16 @@ Item {
             spacing: 10
 
             Tile {
-                label: "Processeur"
+                label: I18n.tr("stats.cpu")
                 extra: hwPanel.cpuTemp
                 percent: hwPanel.measured ? hwPanel.cpuUsage : -1
                 detail: !hwPanel.remote ? hwPanel.cpuName
-                      : hwPanel.measured && hwPanel.server.cores > 0 ? hwPanel.server.cores + " cœurs" : ""
+                      : hwPanel.measured && hwPanel.server.cores > 0 ? I18n.trn("stats.cores", hwPanel.server.cores) : ""
                 history: hwPanel.cpuHistory
                 tone: Theme.accentColor
             }
             Tile {
-                label: "Mémoire"
+                label: I18n.tr("stats.memory")
                 extra: hwPanel.remote ? "" : hwPanel.ramBrand
                 percent: hwPanel.measured && hwPanel.ramTotalBytes > 0
                          ? Math.round(hwPanel.ramUsedBytes / hwPanel.ramTotalBytes * 100) : -1
@@ -577,18 +581,25 @@ Item {
             Tile {
                 // Un serveur sans carte graphique (ou pas encore relevé) : rien.
                 visible: !hwPanel.remote || (hwPanel.measured && hwPanel.server !== null && !!hwPanel.server.gpu)
-                label: "Carte graphique"
+                label: I18n.tr("stats.gpu")
                 extra: hwPanel.gpuTemp
                 percent: hwPanel.remote ? (hwPanel.serverGpuLive ? hwPanel.gpuUsagePercent : -1)
                        : hwPanel.gpuUsage.length > 0 ? hwPanel.gpuUsagePercent : -1
                 detail: hwPanel.remote ? hwPanel.serverGpuDetail
                       : hwPanel.gpuUsage.length > 0
                         ? hwPanel.gpuUsage.substring(hwPanel.gpuUsage.indexOf("—") + 2)
-                        : hwPanel.gpuAsleep ? "En veille · " + hwPanel.gpuName
+                        : hwPanel.gpuAsleep? I18n.tr("stats.asleep") + " · " + hwPanel.gpuName
                         : hwPanel.gpuName
                 history: hwPanel.gpuHistory
                 tone: Theme.colorGpu
             }
+        }
+
+        // Le téléphone, sous les cartes, quelle que soit la machine choisie :
+        // c'est celui relié à ce PC.
+        PhoneWidget {
+            Layout.fillWidth: true
+            Layout.preferredHeight: hwPanel.phoneH
         }
     }
 }

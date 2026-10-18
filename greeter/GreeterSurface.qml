@@ -18,7 +18,7 @@ Item {
     required property string message
     required property bool messageIsError
     required property bool busy
-    property string prompt: "Mot de passe…"
+    property string prompt: I18n.tr("auth.password")
     property bool echoInput: false
 
     signal submitted(user: string, secret: string)
@@ -43,7 +43,7 @@ Item {
 
         userName: surface.userName
         userEditable: true
-        subtitle: "Ouvrir une session"
+        subtitle: I18n.tr("greeter.subtitle")
         message: surface.message
         messageIsError: surface.messageIsError
         busy: surface.busy
@@ -70,12 +70,12 @@ Item {
             }
 
             PowerButton {
-                label: "Redémarrer"
+                label: I18n.tr("power.reboot")
                 onActivated: power.run(["systemctl", "reboot"])
             }
 
             PowerButton {
-                label: "Éteindre"
+                label: I18n.tr("power.off")
                 danger: true
                 onActivated: power.run(["systemctl", "poweroff"])
             }

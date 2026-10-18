@@ -1,101 +1,27 @@
 ---
-title: Panneaux
+title: Panels
 group: Structure
-summary: Le chrome de haut niveau — barre de conversation, widgets flottants, dock IA, réglages.
+summary: The top-level chrome — conversation bar, floating widgets, AI dock, settings.
 links: [shell, widgets, ai, theme]
 ---
 
-# Panneaux (`panels/`)
+# Panels (`panels/`)
 
-Le **chrome de haut niveau** : les fenêtres Wayland qui composent l'interface.
-Elles hébergent les [widgets](#widgets) et sont pilotées par [le shell](#shell).
+The **top-level chrome**: the Wayland windows that make up the interface.
+They host the [widgets](#widgets) and are driven by [the shell](#shell).
 
-| Fichier | Rôle |
+| File | Role |
 | --- | --- |
-| `ConversationBar.qml` | La barre du bas, centrée, cachée par défaut : elle monte quand on dit « Karénine » ou qu'on tape Super, et repart une fois la réponse lue. Une capsule de verre (floutée par Hyprland) qui s'étire sur un ressort, le flocon NixOS (il saute et s'allume quand karenine écoute) et le champ qui parle au pilote. Écoute et réflexion l'entourent d'un halo irisé (surface `quickshell-conversation-glow`, sans flou). La réponse s'affiche au-dessus, sur une carte du même verre que la capsule : la demande et une croix pour fermer, les actions du pilote en pastilles, puis sa réponse. Ce qu'on tape cherche aussi (applications, fichiers, réglages, web) : les suggestions s'empilent juste au-dessus, sur une carte du même verre que la capsule, la meilleure contre la barre (↑ y entre) ; écrire referme le hub, et envoyer une demande au pilote aussi, pour laisser voir sa réponse. |
-| `WidgetHub.qml` | Les widgets, dans la capsule de la barre de conversation que le flocon agrandit vers le haut : un widget à la fois, en largeur (Explorer — les dossiers du PC —, Système, Téléphone, Lecteur, Musique — le métronome au-dessus de l'accordeur —, Réglages), une barre d'onglets juste au-dessus du champ ; au-dessus de tous, la barre du haut (`HubTopBar.qml` : alimentation ; capture d'écran — clic : une région, clic droit : l'écran entier, enregistrée dans le dossier Images —, luminosité du rétroéclairage, volume). |
-| `FloatingWidgets.qml` | Une surface plein écran, cliquable seulement sur ses cartes (`WidgetCard.qml`) : il n'y reste que le contrôle gestuel, ouvert par anna. |
-| `SessionToast.qml` | La bulle des sessions Claude Code (permissions, attentes, tours finis), en haut à droite. |
-| `AiDock.qml` | Le dock IA (widget « sessions ») : le texte d'une session, contre le bord gauche sur un verre flouté — déplié (conversation, revue, savoir), réduit (le bas et le champ) ou caché. |
-| `BottomDock.qml` | Le dock du bas : carrousel horizontal de navigation, recherche, et mode IA. |
-| `CardCarousel.qml` | Le carrousel lui-même — la mécanique, partagée par les trois vues. |
-
-## Les trois vues du dock
-
-Une seule surface, trois contenus :
-
-| Vue | Déclencheur | Contenu |
-| --- | --- | --- |
-| Navigation | requête vide | le dossier courant |
-| Résultats | une requête | tous types mélangés, classés par pertinence |
-| IA | le bouton `✦` | les conversations Claude de la machine |
-
-Le contenu change, jamais la mécanique : `CardCarousel` reçoit une liste plate
-de cartes et ne sait rien de leur type. C'est ce qui garantit qu'un fichier, un
-réglage, une page web et une conversation se parcourent et s'activent
-exactement de la même façon.
-
-## Le carrousel
-
-Il **tourne**. La carte retenue est clouée au milieu et n'en bouge pas : c'est
-la bande qui défile dessous, et le tour boucle — après la dernière carte on
-revient à la première sans buter. Les extrémités du chemin sont transparentes,
-donc le raccord ne se voit pas.
-
-**Seule la carte du centre agit.** Ses boutons sont les seuls affichés, et une
-pression ailleurs ne lance rien : elle ramène la carte visée au milieu. Il faut
-donc deux gestes pour ouvrir une carte lointaine — l'amener au centre, puis
-l'activer — et c'est voulu : un seul « ici » à l'écran, une seule cible.
-
-Cette bascule vit dans `CardFrame` (`primaryEnabled` / `focusRequested`), pas
-dans chaque carte : c'est l'unique endroit qui décide entre « agir » et « venir
-au centre ». Ce que *signifie* agir est décidé par le dock, en un seul endroit
-lui aussi.
-
-| Geste | Effet |
-| --- | --- |
-| ← → / molette | fait tourner le carrousel d'une colonne |
-| `Entrée` | active la carte du centre |
-| ↑ ↓ sur une carte réglable | modifient la valeur sur place |
-| ↓ sinon | entre dans le dossier du centre |
-| ↑ sinon, ou `Retour arr.` | remonte d'un dossier |
-| `Tab` | change de rangée dans la colonne centrale (quadrillage) |
-| clic sur une carte | l'amène au centre ; si elle y est déjà, l'active |
-
-Les deux axes ne font pas le même travail : **gauche/droite fait tourner la
-bande, haut/bas travaille en profondeur** — dans l'arborescence, ou dans la
-valeur que porte la carte.
-
-Activer, c'est ouvrir dans l'application par défaut : `xdg-open` traite fichier
-et dossier pareil, donc `Entrée` sur un dossier l'ouvre dans le gestionnaire de
-fichiers. Entrer dans un dossier est l'autre geste, ↓, qui ne quitte pas le
-dock. Sur une carte de réglage, activer fait ce que le réglage sait faire —
-basculer le thème, ouvrir les réglages, prendre la capture.
-
-Une carte est « réglable » quand sa source le déclare (`adjust` dans la charge
-utile) : le dock ne connaît pas les réglages un par un. Aujourd'hui, le volume
-et la teinte de la couleur d'accent.
-
-Le quadrillage n'est pas une autre mécanique : la liste est découpée en
-colonnes de deux cartes, et c'est la colonne qui est le pas du défilement. La
-dernière colonne est souvent incomplète — viser sa deuxième ligne se rabat sur
-la première.
-
-## Mode IA
-
-La session au centre est celle qu'on lit dans le volet posé au-dessus : faire
-tourner le carrousel change de conversation. Il n'y a pas d'arborescence ici,
-donc `Entrée` et ↓ descendent tous deux dans le champ de reprise, et `Échap`
-sort du mode. Le champ de recherche y filtre les
-sessions au lieu de chercher sur le disque.
-
-Seules les sessions Claude Code y figurent : celles de Claude Desktop n'ont pas
-de transcript lisible localement, elles restent cherchables par la recherche.
+| `ConversationBar.qml` | The bottom bar, centered, hidden by default: it rises when you say “Karénine” or press Super, and leaves once the answer has been read. A glass capsule (blurred by Hyprland) that stretches on a spring, the NixOS snowflake (it jumps and lights up when karenine listens) and the field that talks to the pilot. Listening and thinking surround it with an iridescent halo (surface `quickshell-conversation-glow`, unblurred). The answer shows above it, on a card of the same glass as the capsule: the request and a cross to close, the pilot's actions as chips, then its answer. What you type also searches (applications, files, settings, web): the suggestions stack just above, on a card of the same glass, the best one against the bar (↑ enters it); typing closes the hub, and so does sending a request to the pilot, to let its answer show. |
+| `WidgetHub.qml` | The widgets, inside the conversation bar's capsule that the snowflake grows upwards: one widget at a time, full width (Explorer — the computer's folders —, System, Phone, Notifications, Player, Music — the metronome above the tuner —, Settings), a tab bar just above the field; above them all, the top bar (`HubTopBar.qml`: power; screenshot — click: a region, right click: the whole screen, saved in the Pictures folder —, backlight brightness, volume). |
+| `FloatingWidgets.qml` | A full-screen surface, clickable only on its cards (`WidgetCard.qml`): only gesture control is left there, opened by anna. |
+| `AiDock.qml` | The AI dock (“sessions” widget): a session's text, against the left edge on blurred glass — expanded (conversation, review, knowledge), collapsed (the bottom and the field) or hidden. |
 
 ## Relations
 
-- Ouverts/fermés selon l'état maintenu par [`shell.qml`](#shell) et les messages
-  [IPC](#shell).
-- Leur contenu vient des [widgets](#widgets) ; le panneau IA héberge le
-  [cluster IA](#ai).
-- Leur apparence suit le [thème](#theme).
+- Opened/closed according to the state kept by [`shell.qml`](#shell) and the
+  [IPC](#shell) messages.
+- Their content comes from the [widgets](#widgets); the AI panel hosts the
+  [AI cluster](#ai).
+- Their look follows the [theme](#theme), their text the
+  [interface language](#languages).

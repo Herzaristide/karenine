@@ -233,7 +233,7 @@ fn resolve(rel: &str) -> Result<PathBuf, String> {
 pub fn read(rel: &str) -> Result<String, String> {
     let p = resolve(rel)?;
     if std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0) > READ_MAX {
-        return Err("note trop grande pour l'aperçu".into());
+        return Err(crate::i18n::tr("knowledge.too_big"));
     }
     let text = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
     Ok(front_matter(&text).1.to_string())

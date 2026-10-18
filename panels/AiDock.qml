@@ -165,7 +165,7 @@ Scope {
         var path = n.path;
         ClaudeLive.readNote(path, function (text) {
             if (dock.note && dock.note.path === path)
-                dock.noteText = text === null ? "(note illisible)" : text;
+                dock.noteText = text === null ? I18n.tr("dock.noteUnreadable") : text;
         });
     }
 
@@ -327,8 +327,8 @@ Scope {
     }
 
     // Un tour du pilote vient de finir. S'il a agi et confirmé en une phrase,
-    // la confirmation part dans la bulle et le dock se referme : « baisse le
-    // son » ne demande rien de plus. Une réponse plus longue, une question en
+    // le dock se referme (la barre de conversation montre la confirmation) :
+    // « baisse le son » ne demande rien de plus. Une réponse plus longue, une question en
     // retour ou une erreur restent à l'écran.
     Connections {
         target: ClaudeLive
@@ -346,8 +346,13 @@ Scope {
             var last = replies.length > 0 ? replies[replies.length - 1].text : "";
             if (!acted || failed || last.length === 0 || last.length > 140 || last.endsWith("?"))
                 return;
-            ClaudeLive.alert({ id: "", project: "pilote", kind: "pilot", text: last });
             closeLater.restart();
+        }
+        // Le pilote demande avant une action sensible : c'est ici qu'on lui
+        // répond, même quand on lui a parlé depuis la barre.
+        function onPilotRequestChanged() {
+            if (ClaudeLive.pilotRequest && !dock.open)
+                Widgets.apply("sessions", "ouvrir");
         }
     }
 
@@ -632,9 +637,9 @@ Scope {
     }
 
     function stateLabel(s) {
-        return s.state === "waiting" ? "t'attend"
-             : s.state === "working" ? "travaille"
-             : "au repos";
+        return s.state === "waiting" ? I18n.tr("session.waiting")
+             : s.state === "working" ? I18n.tr("session.working")
+             : I18n.tr("session.idle");
     }
 
     function sessionLabel(s) {
@@ -770,11 +775,11 @@ Scope {
                         Text {
                             Layout.fillWidth: true
                             elide: Text.ElideRight
-                            text: dock.showKnowledge ? "Savoir"
-                                : dock.showHistory ? "Historique"
+                            text: dock.showKnowledge ? I18n.tr("dock.knowledge")
+                                : dock.showHistory ? I18n.tr("dock.history")
                                 : dock.selected ? dock.sessionLabel(dock.selected)
                                 : dock.past ? dock.past.project + " — " + dock.past.title
-                                : dock.toPilot ? "Pilote" : "Nouvelle session"
+                                : dock.toPilot ? I18n.tr("dock.pilot") : I18n.tr("dock.newSession")
                             font.family: dock.uiFont
                             font.pixelSize: 15
                             font.weight: Font.DemiBold
@@ -831,13 +836,13 @@ Scope {
                         spacing: 6
 
                         Chip {
-                            label: "+ nouvelle"
+                            label: "+ " + I18n.tr("dock.new")
                             active: dock.composingNew && !dock.overlay
                             onActivated: dock.startNew()
                         }
 
                         Chip {
-                            label: "⟲ historique"
+                            label: "⟲ " + I18n.tr("dock.historyChip")
                             active: dock.showHistory || dock.past !== null
                             onActivated: {
                                 var on = !dock.showHistory;
@@ -849,7 +854,7 @@ Scope {
                         }
 
                         Chip {
-                            label: "◈ savoir" + (dock.toReview > 0 ? "  " + dock.toReview : "")
+                            label: "◈ " + I18n.tr("dock.knowledgeChip") + (dock.toReview > 0 ? "  " + dock.toReview : "")
                             active: dock.showKnowledge
                             onActivated: {
                                 var on = !dock.showKnowledge;
@@ -888,13 +893,13 @@ Scope {
 
                                 Repeater {
                                     model: [
-                                        { key: "", label: "tout" },
-                                        { key: "à-relire", label: "à relire" },
-                                        { key: "recherche", label: "recherche" },
-                                        { key: "projet", label: "projets" },
-                                        { key: "skill", label: "skills" },
-                                        { key: "lab", label: "lab" },
-                                        { key: "journal", label: "journal" }
+                                        { key: "", label: I18n.tr("notes.filter.all") },
+                                        { key: "à-relire", label: I18n.tr("notes.filter.toReview") },
+                                        { key: "recherche", label: I18n.tr("notes.filter.research") },
+                                        { key: "projet", label: I18n.tr("notes.filter.projects") },
+                                        { key: "skill", label: I18n.tr("notes.filter.skills") },
+                                        { key: "lab", label: I18n.tr("notes.filter.lab") },
+                                        { key: "journal", label: I18n.tr("notes.filter.journal") }
                                     ]
 
                                     Chip {
@@ -988,9 +993,8 @@ Scope {
                                         visible: noteList.count === 0
                                         wrapMode: Text.Wrap
                                         text: ClaudeLive.notes.length === 0
-                                              ? "Le coffre est vide pour l'instant. En fin de session, « ◈ Capitaliser » "
-                                                + "y range ce qui mérite d'être gardé."
-                                              : "Aucune note ne correspond."
+                                              ? I18n.tr("notes.emptyVault")
+                                              : I18n.tr("notes.noMatch")
                                         font.family: dock.uiFont
                                         font.pixelSize: 12
                                         color: Theme.textDim
@@ -1023,7 +1027,7 @@ Scope {
                                         }
                                         ActionButton {
                                             visible: dock.note !== null && dock.note.statut === "à-relire"
-                                            label: "Relu"
+                                            label: I18n.tr("notes.reviewed")
                                             primary: true
                                             tint: Theme.glow(0)
                                             onActivated: {
@@ -1062,7 +1066,7 @@ Scope {
                                             wrapMode: TextEdit.Wrap
                                             textFormat: TextEdit.MarkdownText
                                             text: dock.note ? dock.noteText
-                                                  : "Choisis une note au-dessus — ou tape pour chercher, puis Entrée."
+                                                  : I18n.tr("notes.pick")
                                             font.family: dock.uiFont
                                             font.pixelSize: 13
                                             color: dock.note ? Theme.textBody : Theme.textDim
@@ -1143,7 +1147,7 @@ Scope {
                                 spacing: 6
 
                                 Chip {
-                                    label: "✦ pilote"
+                                    label: "✦ " + I18n.tr("session.pilot")
                                     active: dock.toPilot
                                     onActivated: dock.targetIndex = -1
                                 }
@@ -1154,7 +1158,7 @@ Scope {
                                     Chip {
                                         required property var modelData
                                         required property int index
-                                        label: modelData.kind === "recherche" ? "✎ recherche" : modelData.name
+                                        label: modelData.kind === "recherche" ? "✎ " + I18n.tr("dock.research") : modelData.name
                                         active: dock.targetIndex === index
                                         onActivated: dock.targetIndex = index
                                     }
@@ -1226,11 +1230,7 @@ Scope {
                                     anchors.fill: parent
                                     visible: pilotThread.count === 0
                                     wrapMode: Text.Wrap
-                                    text: "Le pilote agit sur ton bureau : son, fenêtres, applications, "
-                                          + "projets, notes. Une tâche de code ou de recherche, il la confie "
-                                          + "à une session complète, qui apparaît en haut.\n\n"
-                                          + "« baisse le son »   « ouvre zed sur karenine »   "
-                                          + "« corrige le dock qui s'ouvre tout seul dans karenine »"
+                                    text: I18n.tr("dock.pilotHint")
                                     font.family: dock.uiFont
                                     font.pixelSize: 12
                                     color: Theme.textDim
@@ -1242,9 +1242,7 @@ Scope {
                                 Layout.fillWidth: true
                                 visible: !dock.toPilot
                                 wrapMode: Text.Wrap
-                                text: "Une session Claude Code complète, lancée directement. "
-                                      + "Dans un dépôt, elle travaille par défaut dans une copie isolée : "
-                                      + "ton code ne bouge pas tant que tu n'as pas fusionné."
+                                text: I18n.tr("dock.sessionHint")
                                 font.family: dock.uiFont
                                 font.pixelSize: 12
                                 color: Theme.textSecondary
@@ -1256,21 +1254,21 @@ Scope {
 
                                 Chip {
                                     visible: dock.target !== null && dock.target.kind === "projet"
-                                    label: (dock.isolate ? "☑" : "☐") + " copie isolée (worktree)"
+                                    label: (dock.isolate ? "☑ " : "☐ ") + I18n.tr("dock.isolated")
                                     active: dock.isolate
                                     onActivated: dock.isolate = !dock.isolate
                                 }
 
                                 Chip {
                                     visible: dock.toPilot
-                                    label: (dock.withClipboard ? "☑" : "☐") + " joindre le presse-papiers"
+                                    label: (dock.withClipboard ? "☑ " : "☐ ") + I18n.tr("dock.attachClipboard")
                                     active: dock.withClipboard
                                     onActivated: dock.withClipboard = !dock.withClipboard
                                 }
 
                                 Chip {
                                     visible: dock.toPilot && pilotThread.count > 0
-                                    label: "↺ oublier"
+                                    label: "↺ " + I18n.tr("dock.forget")
                                     onActivated: ClaudeLive.pilotReset()
                                 }
                             }
@@ -1339,7 +1337,7 @@ Scope {
                                 anchors.centerIn: parent
                                 visible: thread.count === 0
                                 text: dock.selected && dock.selected.state === "working"
-                                      ? "Claude démarre…" : "Rien à afficher pour l'instant."
+                                      ? I18n.tr("dock.claudeStarting") : I18n.tr("dock.nothingYet")
                                 font.family: dock.uiFont
                                 font.pixelSize: 12
                                 color: Theme.textDim
@@ -1347,11 +1345,11 @@ Scope {
                         }
                     }
 
-                    // ── Sa demande de permission ─────────────────────
-                    // Valider en lisant la conversation.
+                    // ── La demande de permission du pilote ───────────
+                    // Les sessions Claude Code demandent dans leur terminal.
                     Rectangle {
                         Layout.fillWidth: true
-                        visible: !dock.overlay && dock.selected !== null && !!dock.selected.request
+                        visible: !dock.overlay && ClaudeLive.pilotRequest !== null
                         implicitHeight: requestCol.implicitHeight + 16
                         radius: 14
                         color: Qt.alpha(Theme.colorAmber, 0.12)
@@ -1368,7 +1366,7 @@ Scope {
                             Text {
                                 width: parent.width
                                 textFormat: Text.StyledText
-                                readonly property var r: dock.selected ? dock.selected.request : null
+                                readonly property var r: ClaudeLive.pilotRequest
                                 text: r ? "<b>" + r.tool + "</b>  "
                                           + r.summary.replace(/&/g, "&amp;").replace(/</g, "&lt;") : ""
                                 wrapMode: Text.WrapAnywhere
@@ -1383,22 +1381,21 @@ Scope {
                                 spacing: 6
 
                                 ActionButton {
-                                    label: "Autoriser"
+                                    label: I18n.tr("permission.allow")
                                     primary: true
                                     tint: Theme.glow(0)
-                                    onActivated: ClaudeLive.decide(dock.selected.request.req, "allow")
+                                    onActivated: ClaudeLive.decide(ClaudeLive.pilotRequest.req, "allow")
                                 }
                                 ActionButton {
-                                    visible: dock.selected !== null && !!dock.selected.request
-                                             && dock.selected.request.always !== ""
-                                    label: "Toujours"
+                                    visible: ClaudeLive.pilotRequest !== null && ClaudeLive.pilotRequest.always !== ""
+                                    label: I18n.tr("permission.always")
                                     tint: Theme.glow(0)
-                                    onActivated: ClaudeLive.decide(dock.selected.request.req, "always")
+                                    onActivated: ClaudeLive.decide(ClaudeLive.pilotRequest.req, "always")
                                 }
                                 ActionButton {
-                                    label: "Refuser"
+                                    label: I18n.tr("permission.deny")
                                     tint: Theme.colorDanger
-                                    onActivated: ClaudeLive.decide(dock.selected.request.req, "deny")
+                                    onActivated: ClaudeLive.decide(ClaudeLive.pilotRequest.req, "deny")
                                 }
                             }
                         }
@@ -1419,7 +1416,7 @@ Scope {
                                 return "";
                             if (!s.worktree)
                                 return s.cwd.replace(/^\/home\/[^/]+/, "~")
-                                       + (s.managed ? "" : "  ·  dans un terminal");
+                                       + (s.managed ? "" : "  ·  " + I18n.tr("dock.inTerminal"));
                             var r = dock.review;
                             if (!r)
                                 return s.worktree.branch;
@@ -1429,11 +1426,11 @@ Scope {
                                 del += r.files[i].removed;
                             }
                             var bits = [s.worktree.branch];
-                            bits.push(r.files.length === 0 ? "aucune modification en cours"
-                                      : r.files.length + " fichier" + (r.files.length > 1 ? "s" : "")
+                            bits.push(r.files.length === 0 ? I18n.tr("review.noChanges")
+                                      : I18n.trn("review.files", r.files.length)
                                         + "  +" + add + " −" + del);
                             if (r.ahead > 0)
-                                bits.push(r.ahead + " commit" + (r.ahead > 1 ? "s" : "") + " à fusionner dans " + r.base);
+                                bits.push(I18n.trn("review.ahead", r.ahead, { base: r.base }));
                             return bits.join("  ·  ");
                         }
                     }
@@ -1448,13 +1445,13 @@ Scope {
                         ActionButton {
                             visible: dock.selected !== null && dock.selected.managed
                                      && dock.selected.state === "idle" && dock.selected.id !== "pilote"
-                            label: "◈ Capitaliser"
+                            label: "◈ " + I18n.tr("dock.capitalize")
                             tint: Theme.glow(0)
                             onActivated: ClaudeLive.send(dock.selected.id, "/capitaliser", dock.selected.cwd)
                         }
                         ActionButton {
                             visible: dock.selected !== null && dock.selected.managed && dock.selected.state !== "idle"
-                            label: "Arrêter"
+                            label: I18n.tr("common.stop")
                             tint: Theme.colorDanger
                             onActivated: ClaudeLive.stop(dock.selectedId)
                         }
@@ -1463,7 +1460,7 @@ Scope {
                             onActivated: ClaudeLive.open(dock.selected.cwd, "zed", "")
                         }
                         ActionButton {
-                            label: "Terminal"
+                            label: I18n.tr("common.terminal")
                             onActivated: {
                                 var s = dock.selected;
                                 // Une session de terminal : sa fenêtre existe déjà.
@@ -1484,7 +1481,7 @@ Scope {
                         }
                         ActionButton {
                             visible: dock.review !== null && dock.review.ahead > 0 && dock.review.files.length === 0
-                            label: "Fusionner"
+                            label: I18n.tr("review.merge")
                             primary: true
                             tint: Theme.glow(0)
                             onActivated: {
@@ -1497,7 +1494,7 @@ Scope {
                         }
                         ActionButton {
                             visible: dock.review !== null
-                            label: dock.confirmDiscard ? "Vraiment jeter ?" : "Jeter"
+                            label: dock.confirmDiscard ? I18n.tr("review.discardConfirm") : I18n.tr("review.discard")
                             tint: Theme.colorDanger
                             primary: dock.confirmDiscard
                             onActivated: {
@@ -1561,18 +1558,18 @@ Scope {
                                     font.weight: Font.Medium
                                     placeholderText: {
                                         if (dock.showKnowledge)
-                                            return "Chercher dans le savoir…  (⏎ ouvre la première note)";
+                                            return I18n.tr("dock.input.knowledge");
                                         if (dock.composingNew && dock.toPilot)
                                             return ClaudeLive.pilotBusy
-                                                   ? "Le pilote travaille…"
-                                                   : "Demande au pilote : son, fenêtres, apps, notes, ou une tâche de code…";
+                                                   ? I18n.tr("dock.input.pilotBusy")
+                                                   : I18n.tr("dock.input.pilot");
                                         if (dock.composingNew)
-                                            return "Demande à Claude…  (⏎ envoie, espace maintenu dicte, ⇧⏎ nouvelle ligne)";
+                                            return I18n.tr("dock.input.new");
                                         if (dock.past)
-                                            return "Reprendre cette conversation…";
+                                            return I18n.tr("dock.input.resume");
                                         if (dock.inTerminal)
-                                            return "Session ouverte dans un terminal : réponds-y (bouton Terminal)";
-                                        return "Répondre à Claude…";
+                                            return I18n.tr("dock.input.inTerminal");
+                                        return I18n.tr("dock.input.reply");
                                     }
                                     placeholderTextColor: Qt.alpha(Theme.textPrimary, 0.42)
                                     font.family: dock.uiFont
@@ -1641,7 +1638,7 @@ Scope {
                                 Layout.alignment: Qt.AlignVCenter
                                 visible: !dock.overlay && !dock.inTerminal
                                 text: ClaudeLive.voicePhase === "idle" ? "🎙"
-                                      : ClaudeLive.voicePhase === "listening" ? "● j'écoute" : "… transcription"
+                                      : ClaudeLive.voicePhase === "listening" ? "● " + I18n.tr("dock.listening") : "… " + I18n.tr("dock.transcription")
                                 font.family: dock.uiFont
                                 font.pixelSize: 13
                                 color: ClaudeLive.voicePhase === "idle"

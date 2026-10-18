@@ -142,8 +142,12 @@ pub async fn load() -> Vec<Server> {
     let Ok(Ok(out)) = tokio::time::timeout(Duration::from_secs(4), child).await else {
         return vec![];
     };
-    let ssh_config = std::fs::read_to_string(crate::paths::home_dir().join(".ssh/config")).unwrap_or_default();
-    parse_status(&String::from_utf8_lossy(&out.stdout), &parse_ssh_config(&ssh_config))
+    let ssh_config =
+        std::fs::read_to_string(crate::paths::home_dir().join(".ssh/config")).unwrap_or_default();
+    parse_status(
+        &String::from_utf8_lossy(&out.stdout),
+        &parse_ssh_config(&ssh_config),
+    )
 }
 
 fn parse_status(json: &str, aliases: &[(String, String)]) -> Vec<Server> {
@@ -171,7 +175,13 @@ fn parse_status(json: &str, aliases: &[(String, String)]) -> Vec<Server> {
                 name: p.host_name,
                 host,
                 // IPv4 first.
-                ip: p.ips.iter().find(|ip| !ip.contains(':')).or(p.ips.first()).cloned().unwrap_or_default(),
+                ip: p
+                    .ips
+                    .iter()
+                    .find(|ip| !ip.contains(':'))
+                    .or(p.ips.first())
+                    .cloned()
+                    .unwrap_or_default(),
                 last_seen: if p.online { String::new() } else { p.last_seen },
                 online: p.online,
                 os: p.os,
@@ -192,11 +202,19 @@ fn parse_ssh_config(text: &str) -> Vec<(String, String)> {
         }
         // `Key value` or `Key=value`; keywords ignore case.
         let (key, value) = match line.find(|c: char| c.is_whitespace() || c == '=') {
-            Some(i) => (&line[..i], line[i..].trim_start_matches(|c: char| c.is_whitespace() || c == '=').trim()),
+            Some(i) => (
+                &line[..i],
+                line[i..]
+                    .trim_start_matches(|c: char| c.is_whitespace() || c == '=')
+                    .trim(),
+            ),
             None => (line, ""),
         };
         match key.to_ascii_lowercase().as_str() {
-            "host" => blocks.push((value.split_whitespace().map(str::to_string).collect(), String::new())),
+            "host" => blocks.push((
+                value.split_whitespace().map(str::to_string).collect(),
+                String::new(),
+            )),
             // A `Match` block belongs to no host.
             "match" => blocks.push((vec![], String::new())),
             "hostname" => {
@@ -271,7 +289,10 @@ pub async fn sample_all(memory: &mut Memory) -> Vec<ServerStats> {
         .await
         .into_iter()
         .map(|s| {
-            let live = memory.gpu.get(&s.name).map_or(true, |(at, _)| at.elapsed() >= GPU_EVERY);
+            let live = memory
+                .gpu
+                .get(&s.name)
+                .map_or(true, |(at, _)| at.elapsed() >= GPU_EVERY);
             let names = !memory.gpu_names.contains_key(&s.name);
             tokio::spawn(async move {
                 let result = if s.online && !s.host.is_empty() {
@@ -287,7 +308,9 @@ pub async fn sample_all(memory: &mut Memory) -> Vec<ServerStats> {
 
     let mut out = Vec::new();
     for t in tasks {
-        let Ok((server, result)) = t.await else { continue };
+        let Ok((server, result)) = t.await else {
+            continue;
+        };
         let mut stats = match result {
             None => base(&server),
             Some(Ok(text)) => {
@@ -296,7 +319,11 @@ pub async fn sample_all(memory: &mut Memory) -> Vec<ServerStats> {
                 }
                 parse(&server, &text, memory)
             }
-            Some(Err(error)) => ServerStats { ssh: true, error, ..base(&server) },
+            Some(Err(error)) => ServerStats {
+                ssh: true,
+                error,
+                ..base(&server)
+            },
         };
         stats.can_wake = wake.contains_key(&server.name);
         out.push(stats);
@@ -371,7 +398,11 @@ fn parse_wake(text: &str) -> Option<Wake> {
 
 /// The magic packet: six 0xff, then the MAC sixteen times.
 fn magic_packet(mac: &str) -> Option<Vec<u8>> {
-    let bytes: Vec<u8> = mac.split([':', '-']).map(|b| u8::from_str_radix(b, 16)).collect::<Result<_, _>>().ok()?;
+    let bytes: Vec<u8> = mac
+        .split([':', '-'])
+        .map(|b| u8::from_str_radix(b, 16))
+        .collect::<Result<_, _>>()
+        .ok()?;
     if bytes.len() != 6 {
         return None;
     }
@@ -386,8 +417,10 @@ fn magic_packet(mac: &str) -> Option<Vec<u8>> {
 pub async fn power(name: &str, action: &str) -> Result<(), String> {
     match action {
         "on" => {
-            let w = load_wake().remove(name).ok_or("Adresse MAC inconnue : il faut l'avoir vu en ligne une fois.")?;
-            let packet = magic_packet(&w.mac).ok_or("Adresse MAC illisible.")?;
+            let w = load_wake()
+                .remove(name)
+                .ok_or_else(|| crate::i18n::tr("servers.unknown_mac"))?;
+            let packet = magic_packet(&w.mac).ok_or_else(|| crate::i18n::tr("servers.bad_mac"))?;
             let sock = std::net::UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?;
             sock.set_broadcast(true).map_err(|e| e.to_string())?;
             let mut sent = false;
@@ -396,14 +429,30 @@ pub async fn power(name: &str, action: &str) -> Result<(), String> {
                     sent |= sock.send_to(&packet, (to, 9)).is_ok();
                 }
             }
-            if sent { Ok(()) } else { Err("Envoi impossible sur le réseau local.".into()) }
+            if sent {
+                Ok(())
+            } else {
+                Err(crate::i18n::tr("servers.send_failed"))
+            }
         }
         "off" | "reboot" => {
-            let server = load().await.into_iter().find(|s| s.name == name).ok_or("Appareil inconnu.")?;
+            let server = load()
+                .await
+                .into_iter()
+                .find(|s| s.name == name)
+                .ok_or("Appareil inconnu.")?;
             if server.host.is_empty() {
                 return Err("Pas de ssh vers cet appareil.".into());
             }
-            systemctl(&server.host, if action == "off" { "poweroff" } else { "reboot" }).await
+            systemctl(
+                &server.host,
+                if action == "off" {
+                    "poweroff"
+                } else {
+                    "reboot"
+                },
+            )
+            .await
         }
         _ => Err(format!("action inconnue : {action}")),
     }
@@ -415,8 +464,10 @@ async fn systemctl(host: &str, verb: &str) -> Result<(), String> {
     let script = format!("sudo -n systemctl {verb} 2>/dev/null || systemctl {verb}");
     let child = tokio::process::Command::new("ssh")
         .args([
-            "-o", "BatchMode=yes",
-            "-o", "ConnectTimeout=4",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=4",
             "--",
             host,
             // `||` : sh and fish alike.
@@ -434,12 +485,25 @@ async fn systemctl(host: &str, verb: &str) -> Result<(), String> {
         return Ok(());
     }
     let err = String::from_utf8_lossy(&out.stderr);
-    if ["authentication required", "Access denied"].iter().any(|r| err.contains(r)) {
-        return Err("Refusé : sudo demande un mot de passe.".into());
+    if ["authentication required", "Access denied"]
+        .iter()
+        .any(|r| err.contains(r))
+    {
+        return Err(crate::i18n::tr("servers.sudo_password"));
     }
     // ssh itself failed (key, name, route); otherwise the link just dropped.
-    let unreachable = ["Permission denied", "Could not resolve", "timed out", "No route", "refused"];
-    match err.lines().rev().find(|l| unreachable.iter().any(|u| l.contains(u))) {
+    let unreachable = [
+        "Permission denied",
+        "Could not resolve",
+        "timed out",
+        "No route",
+        "refused",
+    ];
+    match err
+        .lines()
+        .rev()
+        .find(|l| unreachable.iter().any(|u| l.contains(u)))
+    {
         Some(line) => Err(line.trim().to_string()),
         None => Ok(()),
     }
@@ -462,12 +526,18 @@ async fn run_script(host: &str, script: &str) -> Result<String, String> {
     let control = format!("{}/anna-ssh-%C", crate::paths::runtime_dir());
     let child = tokio::process::Command::new("ssh")
         .args([
-            "-o", "BatchMode=yes",
-            "-o", "ConnectTimeout=4",
-            "-o", "ServerAliveInterval=5",
-            "-o", "ControlMaster=auto",
-            "-o", &format!("ControlPath={control}"),
-            "-o", "ControlPersist=120",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=4",
+            "-o",
+            "ServerAliveInterval=5",
+            "-o",
+            "ControlMaster=auto",
+            "-o",
+            &format!("ControlPath={control}"),
+            "-o",
+            "ControlPersist=120",
             "--",
             host,
             script,
@@ -476,13 +546,17 @@ async fn run_script(host: &str, script: &str) -> Result<String, String> {
         .kill_on_drop(true)
         .output();
     let out = match tokio::time::timeout(Duration::from_secs(8), child).await {
-        Err(_) => return Err("délai dépassé".into()),
+        Err(_) => return Err(crate::i18n::tr("timeout")),
         Ok(Err(e)) => return Err(format!("ssh : {e}")),
         Ok(Ok(o)) => o,
     };
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
-        let last = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("injoignable");
+        let last = err
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("injoignable");
         return Err(last.trim().to_string());
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
@@ -492,7 +566,10 @@ fn parse(server: &Server, text: &str, memory: &mut Memory) -> ServerStats {
     let parts: Vec<&str> = text.split("@@").map(str::trim).collect();
     let part = |i: usize| parts.get(i).copied().unwrap_or("");
 
-    let mut s = ServerStats { ssh: true, ..base(server) };
+    let mut s = ServerStats {
+        ssh: true,
+        ..base(server)
+    };
 
     // CPU: the delta since the last sample (0 on the first).
     if let Some((total, active)) = cpu_totals(part(0)) {
@@ -511,7 +588,11 @@ fn parse(server: &Server, text: &str, memory: &mut Memory) -> ServerStats {
     let mut total_kb = 0;
     let mut avail_kb = 0;
     for line in part(1).lines() {
-        let kb = line.split_whitespace().nth(1).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+        let kb = line
+            .split_whitespace()
+            .nth(1)
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
         if line.starts_with("MemTotal:") {
             total_kb = kb;
         } else if line.starts_with("MemAvailable:") {
@@ -524,11 +605,17 @@ fn parse(server: &Server, text: &str, memory: &mut Memory) -> ServerStats {
     s.uptime_s = part(2).parse::<f64>().map(|v| v as u64).unwrap_or(0);
 
     let mut load = part(3).lines();
-    s.load1 = load.next().and_then(|v| v.trim().parse().ok()).unwrap_or(0.0);
+    s.load1 = load
+        .next()
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0.0);
     s.cores = load.next().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
 
     // Millidegrees.
-    s.temp = part(4).parse::<u64>().map(|v| (v / 1000) as u32).unwrap_or(0);
+    s.temp = part(4)
+        .parse::<u64>()
+        .map(|v| (v / 1000) as u32)
+        .unwrap_or(0);
 
     s.disks = parse_df(part(5));
     s.hostname = part(6).to_string();
@@ -594,7 +681,11 @@ fn gpu(server: &str, text: &str, memory: &mut Memory) -> Option<RemoteGpu> {
                 let read = f.len() >= 6;
                 let card = RemoteGpu {
                     asleep: f[2] != "active",
-                    usage: if read { num(4).map_or(-1, |v| v.min(100) as i32) } else { -1 },
+                    usage: if read {
+                        num(4).map_or(-1, |v| v.min(100) as i32)
+                    } else {
+                        -1
+                    },
                     mem_used: num(5).unwrap_or(0),
                     mem_total: num(3).unwrap_or(0),
                     // Millidegrees.
@@ -636,7 +727,9 @@ fn gpu(server: &str, text: &str, memory: &mut Memory) -> Option<RemoteGpu> {
         .cloned()
         .unwrap_or_else(|| "Carte graphique".into());
     if read {
-        memory.gpu.insert(server.to_string(), (Instant::now(), card.clone()));
+        memory
+            .gpu
+            .insert(server.to_string(), (Instant::now(), card.clone()));
     } else if !card.asleep {
         if let Some((_, last)) = memory.gpu.get(server) {
             card.usage = last.usage;
@@ -746,7 +839,12 @@ mod tests {
 
     #[test]
     fn script_output_parses() {
-        let server = Server { name: "gary".into(), host: "gary".into(), online: true, ..Default::default() };
+        let server = Server {
+            name: "gary".into(),
+            host: "gary".into(),
+            online: true,
+            ..Default::default()
+        };
         let text = "cpu  100 0 50 800 50 0 0 0\n@@\nMemTotal: 1000 kB\nMemAvailable: 400 kB\n@@\n\
                     3600.5\n@@\n0.42\n8\n@@\n45000\n@@\n/dev/sda1 500 100 400 20% /\n@@\ngary";
         let mut mem = Memory::default();
@@ -764,7 +862,11 @@ mod tests {
         // A second sample, 3 s later on an idle 12-core server: 0.58 % → 1 %.
         let text = "cpu  17112 2 8812 6937537 1215 4792 1159 0 0 0";
         let mut mem = Memory::default();
-        parse(&server, "cpu  17104 2 8803 6933957 1215 4789 1158 0 0 0", &mut mem);
+        parse(
+            &server,
+            "cpu  17104 2 8803 6933957 1215 4789 1158 0 0 0",
+            &mut mem,
+        );
         assert_eq!(parse(&server, text, &mut mem).cpu_usage, 1);
     }
 
@@ -797,8 +899,16 @@ mod tests {
         assert!(!mem.gpu.contains_key("gary"));
 
         // Awake and read live; its name was asked once.
-        let g = gpu("gary", "amd 0000:03:00.0 active 17163091968 42 2147483648 51000", &mut mem).unwrap();
-        assert_eq!((g.name.as_str(), g.usage, g.mem_used, g.temp), ("Radeon RX 7600", 42, 2147483648, 51));
+        let g = gpu(
+            "gary",
+            "amd 0000:03:00.0 active 17163091968 42 2147483648 51000",
+            &mut mem,
+        )
+        .unwrap();
+        assert_eq!(
+            (g.name.as_str(), g.usage, g.mem_used, g.temp),
+            ("Radeon RX 7600", 42, 2147483648, 51)
+        );
         assert!(mem.gpu.contains_key("gary"));
 
         // Awake but not read this time: its last measures.

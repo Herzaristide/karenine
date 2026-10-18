@@ -1,38 +1,42 @@
 ---
 title: Installation
-group: Utilisation
-summary: Installer karenine via le flake (recommandé) ou manuellement hors NixOS.
+group: Usage
+summary: Install karenine through the flake (recommended) or by hand outside NixOS.
 links: [configuration, development, architecture]
 ---
 
 # Installation
 
-## Via le flake (recommandé)
+## Through the flake (recommended)
 
-`packages.default` assemble le layout prêt pour `~/.config/quickshell`. Dans la
-configuration NixOS/Home-Manager qui consomme ce flake :
+`packages.default` assembles the layout ready for `~/.config/quickshell`. In
+the NixOS/Home-Manager configuration that consumes this flake:
 
 ```nix
 home.file.".config/quickshell".source = karenine.packages.${system}.default;
 ```
 
-Le paquet copie `shell.qml`, `services`, `panels`, `widgets`, `ai`, `assets` dans
-`$out`. C'est la **seule source de vérité** du layout — plus de copie de fichiers
-bruts côté config. Le daemon `anna` est un paquet séparé
-(`packages.anna`), à lancer en service utilisateur.
+The package copies `shell.qml`, `services`, `panels`, `widgets`, `auth`, `lock`, `greeter`,
+`i18n`, `assets` into `$out`. It is the **single source of truth** for the
+layout — no more raw file copies on the configuration side. The `anna` daemon
+is a separate package (`packages.anna`), to run as a user service.
 
-## Manuel (hors NixOS)
+anna reads its messages from the dictionaries of the installed layout,
+`~/.config/quickshell/i18n`; set `KARENINE_I18N` if the layout lives
+elsewhere (see [Languages](#languages)).
 
-1. Copier/symlink le contenu du dépôt dans `~/.config/quickshell/` (en préservant
-   les sous-dossiers).
-2. Builder et lancer le daemon `anna` (`cargo build --release` dans `anna/`,
-   nécessite `alsa-lib` + `pkg-config`).
-3. Lancer `quickshell`.
+## By hand (outside NixOS)
 
-Grâce aux chemins relatifs et au socket `anna` (voir [Architecture](#architecture)),
-aucun réglage de préfixe n'est nécessaire.
+1. Copy/symlink the repository's content into `~/.config/quickshell/`
+   (keeping the subfolders).
+2. Build and run the `anna` daemon (`cargo build --release` in `anna/`,
+   needs `alsa-lib` + `pkg-config`).
+3. Run `quickshell`.
 
-## Ensuite
+Thanks to relative paths and the `anna` socket (see
+[Architecture](#architecture)), no prefix setting is needed.
 
-- Ajuster les [réglages codés en dur](#configuration) (écran, accent).
-- Pour contribuer, voir [Développement](#development).
+## Next
+
+- Adjust the [hard-coded settings](#configuration) (screen, accent).
+- To contribute, see [Development](#development).

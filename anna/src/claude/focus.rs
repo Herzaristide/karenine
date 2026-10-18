@@ -69,18 +69,9 @@ pub fn window_pid(pid: u32) -> Option<u32> {
     ancestry(pid).into_iter().find(|p| windows.contains(p))
 }
 
-/// Whether the window hosting `pid` is the one the user is looking at.
-pub fn is_focused(pid: u32) -> bool {
-    let active = hyprctl_json("activewindow")
-        .get("pid")
-        .and_then(|p| p.as_u64())
-        .map(|p| p as u32);
-    active.is_some() && active == window_pid(pid)
-}
-
 /// Focus the window hosting the `claude` process `pid`.
 pub fn focus(pid: u32) -> Result<(), String> {
-    let w = window_pid(pid).ok_or("fenêtre introuvable")?;
+    let w = window_pid(pid).ok_or_else(|| crate::i18n::tr("window_not_found"))?;
     // Lua dispatcher syntax: Hyprland's Lua config rejects the legacy
     // `focuswindow pid:N` form (see gesture/output.rs).
     let out = Command::new("hyprctl")

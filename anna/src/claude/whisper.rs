@@ -110,11 +110,13 @@ pub struct Server {
     child: Child,
     port: u16,
     pub last_use: Instant,
+    /// The language it transcribes (`fr`, `auto`…).
+    pub lang: String,
 }
 
 impl Server {
     /// Start whisper-server on a free local port and wait until it answers.
-    pub fn start(model: &std::path::Path, prompt: &str) -> Result<Server, String> {
+    pub fn start(model: &std::path::Path, prompt: &str, lang: &str) -> Result<Server, String> {
         let port = TcpListener::bind("127.0.0.1:0")
             .and_then(|l| l.local_addr())
             .map(|a| a.port())
@@ -126,7 +128,7 @@ impl Server {
         let mut child = Command::new("whisper-server")
             .arg("-m")
             .arg(model)
-            .args(["-l", "fr", "--prompt", prompt, "-t", &threads])
+            .args(["-l", lang, "--prompt", prompt, "-t", &threads])
             .args(["--host", "127.0.0.1", "--port", &port.to_string()])
             .args(gpu_args())
             .stdin(Stdio::null())
@@ -137,14 +139,17 @@ impl Server {
         let deadline = Instant::now() + START_WITHIN;
         loop {
             if let Ok(Some(status)) = child.try_wait() {
-                return Err(format!("whisper-server s'est arrêté ({status})"));
+                return Err(crate::i18n::tr_args(
+                    "whisper.stopped",
+                    &[("status", &status.to_string())],
+                ));
             }
             if TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], port))).is_ok() {
                 break;
             }
             if Instant::now() > deadline {
                 let _ = child.kill();
-                return Err("whisper-server ne répond pas".into());
+                return Err(crate::i18n::tr("whisper.no_answer"));
             }
             std::thread::sleep(Duration::from_millis(100));
         }
@@ -152,6 +157,7 @@ impl Server {
             child,
             port,
             last_use: Instant::now(),
+            lang: lang.to_string(),
         };
         // Warm-up: the first pass compiles the GPU shaders (or loads them
         // from the driver's cache). Better now than on the user's first word.

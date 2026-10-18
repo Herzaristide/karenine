@@ -123,7 +123,7 @@ Item {
                     visible: root.showInternalHeader
 
                     Text {
-                        text: "Paramètres"
+                        text: I18n.tr("settings.title")
                         font.family: "Inter"
                         font.pixelSize: 14
                         font.weight: Font.Bold
@@ -145,7 +145,7 @@ Item {
                 // concerné : il suit l'écran qui a le focus.
                 Text {
                     Layout.bottomMargin: 10
-                    text: "Écran"
+                    text: I18n.tr("settings.screen")
                     font.family: "Inter"
                     font.pixelSize: 12
                     font.letterSpacing: 0
@@ -197,7 +197,7 @@ Item {
                                 Text {
                                     width: parent.width
                                     text: screenRow.modelData ? screenRow.modelData.model || screenRow.modelData.name
-                                                              : "Auto"
+                                                              : I18n.tr("settings.screen.auto")
                                     font.family: "Inter"
                                     font.pixelSize: 12
                                     font.weight: Font.Medium
@@ -209,7 +209,7 @@ Item {
                                     text: screenRow.modelData
                                           ? screenRow.modelData.name + "  ·  " + screenRow.modelData.width
                                             + "×" + screenRow.modelData.height
-                                          : "défaut : " + (Display.defaultName || "—")
+                                          : I18n.tr("settings.screen.default", { name: Display.defaultName || "—" })
                                     font.family: "Inter"
                                     font.pixelSize: 10
                                     color: Theme.textSecondary
@@ -247,7 +247,7 @@ Item {
                 Text {
                     Layout.topMargin: 6
                     Layout.bottomMargin: 10
-                    text: "Accordeur"
+                    text: I18n.tr("settings.tuner")
                     font.family: "Inter"
                     font.pixelSize: 12
                     font.letterSpacing: 0
@@ -270,14 +270,14 @@ Item {
                         spacing: 1
 
                         Text {
-                            text: "Référence (A4)"
+                            text: I18n.tr("settings.tuner.reference")
                             font.family: "Inter"
                             font.pixelSize: 12
                             font.weight: Font.Medium
                             color: Theme.textPrimary
                         }
                         Text {
-                            text: Tuning.refFreq === 440 ? "diapason standard" : "standard : 440 Hz"
+                            text: Tuning.refFreq === 440 ? I18n.tr("settings.tuner.standard") : I18n.tr("settings.tuner.standardIs")
                             font.family: "Inter"
                             font.pixelSize: 10
                             color: Theme.textSecondary
@@ -351,7 +351,7 @@ Item {
                 // anna le garde d'un redémarrage à l'autre.
                 Text {
                     Layout.bottomMargin: 10
-                    text: "Voix"
+                    text: I18n.tr("settings.voice")
                     font.family: "Inter"
                     font.pixelSize: 12
                     font.letterSpacing: 0
@@ -383,7 +383,7 @@ Item {
 
                         Text {
                             width: parent.width
-                            text: "Mot d'éveil « Karénine »"
+                            text: I18n.tr("settings.voice.wake")
                             font.family: "Inter"
                             font.pixelSize: 12
                             font.weight: Font.Medium
@@ -396,7 +396,7 @@ Item {
                             width: parent.width
                             text: !ClaudeLive.voiceWake && ClaudeLive.voiceError
                                   ? ClaudeLive.voiceError
-                                  : ClaudeLive.voiceWake ? "à l'écoute" : "désactivé"
+                                  : ClaudeLive.voiceWake ? I18n.tr("settings.voice.listening") : I18n.tr("common.off")
                             font.family: "Inter"
                             font.pixelSize: 10
                             color: Theme.textSecondary
@@ -430,6 +430,145 @@ Item {
                         onClicked: ClaudeLive.voiceWakeToggle()
                     }
                 }
+
+                // La langue parlée (whisper, réponses du pilote) : à part de
+                // celle de l'interface. ‹ › passent d'un choix à l'autre.
+                Rectangle {
+                    id: voiceLangRow
+                    readonly property int at: Math.max(0, I18n.voiceChoices.findIndex(c => c.code === I18n.voice))
+
+                    function step(d) {
+                        var n = I18n.voiceChoices.length;
+                        I18n.setVoice(I18n.voiceChoices[(voiceLangRow.at + d + n) % n].code);
+                    }
+
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 46
+                    Layout.topMargin: -10
+                    Layout.bottomMargin: 18
+                    radius: 14
+                    color: Qt.alpha(Theme.textPrimary, activeFocus ? 0.09 : 0.05)
+                    border.color: Qt.alpha(Theme.textPrimary, 0.08)
+                    border.width: 1
+
+                    activeFocusOnTab: true
+                    Keys.onLeftPressed: voiceLangRow.step(-1)
+                    Keys.onRightPressed: voiceLangRow.step(1)
+                    Keys.onPressed: (event) => root.activates(event, () => voiceLangRow.step(1))
+                    FocusRing { radius: voiceLangRow.radius + gap }
+
+                    Column {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 12
+                        anchors.right: voiceLangButtons.left
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 1
+
+                        Text {
+                            width: parent.width
+                            text: I18n.tr("settings.voice.language")
+                            font.family: "Inter"
+                            font.pixelSize: 12
+                            font.weight: Font.Medium
+                            color: Theme.textPrimary
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            width: parent.width
+                            text: I18n.voiceChoices.length > 0 ? I18n.voiceChoices[voiceLangRow.at].name : ""
+                            font.family: "Inter"
+                            font.pixelSize: 10
+                            color: Theme.textSecondary
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    Row {
+                        id: voiceLangButtons
+                        anchors.right: parent.right
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 4
+                        GlassButton { implicitWidth: 24; implicitHeight: 24; fontSize: 13; text: "‹"; onClicked: voiceLangRow.step(-1) }
+                        GlassButton { implicitWidth: 24; implicitHeight: 24; fontSize: 13; text: "›"; onClicked: voiceLangRow.step(1) }
+                    }
+                }
+
+                // ── LANGUE section ─────────────────────────────────
+                // Une ligne par fichier de i18n/ : une langue ajoutée là
+                // apparaît ici d'elle-même.
+                Text {
+                    Layout.bottomMargin: 10
+                    text: I18n.tr("settings.language")
+                    font.family: "Inter"
+                    font.pixelSize: 12
+                    font.letterSpacing: 0
+                    color: Theme.accentMuted
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.bottomMargin: 18
+                    spacing: 6
+
+                    Repeater {
+                        model: I18n.available
+
+                        delegate: Rectangle {
+                            id: langRow
+
+                            required property var modelData
+                            readonly property bool selected: I18n.lang === modelData.code
+
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 36
+                            radius: 12
+                            color: selected ? Qt.alpha(Theme.glow(0), 0.16)
+                                            : Qt.alpha(Theme.textPrimary, langMa.containsMouse || activeFocus ? 0.09 : 0.05)
+                            border.color: selected ? Qt.alpha(Theme.glow(0), 0.38) : Qt.alpha(Theme.textPrimary, 0.08)
+                            border.width: 1
+                            Behavior on color { ColorAnimation { duration: 160 } }
+
+                            activeFocusOnTab: true
+                            Keys.onPressed: (event) => root.activates(event, () => I18n.setLang(langRow.modelData.code))
+                            FocusRing { radius: langRow.radius + gap }
+
+                            Text {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 12
+                                anchors.right: langCode.left
+                                anchors.rightMargin: 6
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: langRow.modelData.name
+                                font.family: "Inter"
+                                font.pixelSize: 12
+                                font.weight: Font.Medium
+                                color: Theme.textPrimary
+                                elide: Text.ElideRight
+                            }
+
+                            Text {
+                                id: langCode
+                                anchors.right: parent.right
+                                anchors.rightMargin: 12
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: langRow.modelData.code
+                                font.family: "Inter"
+                                font.pixelSize: 10
+                                color: Theme.textSecondary
+                            }
+
+                            MouseArea {
+                                id: langMa
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: I18n.setLang(langRow.modelData.code)
+                            }
+                        }
+                    }
+                }
             }
 
             ColumnLayout {
@@ -441,7 +580,7 @@ Item {
                 // ── APPARENCE section ──────────────────────────────
                 Text {
                     Layout.bottomMargin: 10
-                    text: "Apparence"
+                    text: I18n.tr("settings.appearance")
                     font.family: "Inter"
                     font.pixelSize: 12
                     font.letterSpacing: 0
@@ -484,7 +623,7 @@ Item {
                     Item { Layout.fillWidth: true }
 
                     Text {
-                        text: Theme.darkMode ? "Sombre" : "Clair"
+                        text: Theme.darkMode ? I18n.tr("settings.theme.dark") : I18n.tr("settings.theme.light")
                         font.family: "Inter"
                         font.pixelSize: 11
                         color: Theme.textSecondary
@@ -822,7 +961,7 @@ Item {
                         spacing: 6
 
                         Text {
-                            text: root.rainbowActive ? "Arrêter" : "Arc-en-ciel"
+                            text: root.rainbowActive ? I18n.tr("common.stop") : I18n.tr("settings.rainbow")
                             font.family: "Inter"
                             font.pixelSize: 11
                             font.weight: Font.Medium
@@ -863,7 +1002,7 @@ Item {
 
                     Text {
                         anchors.centerIn: parent
-                        text: "↺ Défaut"
+                        text: "↺ " + I18n.tr("settings.reset")
                         font.family: "Inter"
                         font.pixelSize: 11
                         font.weight: Font.Medium

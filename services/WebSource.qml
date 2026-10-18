@@ -15,7 +15,7 @@ QtObject {
     // C'est donc un choix de configuration, et il tient sur ces trois lignes.
     readonly property var engines: [
         { id: "web",  name: "Google",          url: "https://www.google.com/search?q=%s" },
-        { id: "nix",  name: "Options NixOS",   url: "https://search.nixos.org/options?query=%s" },
+        { id: "nix",  name: I18n.tr("search.nixOptions"), url: "https://search.nixos.org/options?query=%s" },
         { id: "gh",   name: "GitHub",          url: "https://github.com/search?q=%s" }
     ]
 
@@ -44,7 +44,7 @@ QtObject {
         if (direct.length > 0)
             out.push({
                 type: src.type, id: "web:direct", title: direct,
-                subtitle: "Ouvrir l'adresse", meta: "",
+                subtitle: I18n.tr("search.openAddress"), meta: "",
                 tone: Theme.colorCyan, score: 900,
                 payload: { url: direct }
             });

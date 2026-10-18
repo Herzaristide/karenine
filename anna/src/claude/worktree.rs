@@ -159,7 +159,7 @@ fn changes(porcelain: &str, numstat: &str) -> Vec<FileChange> {
 }
 
 pub fn review(cwd: &str) -> Result<Review, String> {
-    let wt = parse(cwd).ok_or("pas une copie isolée (worktree)")?;
+    let wt = parse(cwd).ok_or_else(|| crate::i18n::tr("worktree.not_isolated"))?;
     let path = wt.path();
     let base = git(&wt.repo, &["rev-parse", "--abbrev-ref", "HEAD"])?
         .trim()
@@ -190,11 +190,11 @@ pub fn review(cwd: &str) -> Result<Review, String> {
 }
 
 pub fn commit(cwd: &str, message: &str) -> Result<(), String> {
-    let wt = parse(cwd).ok_or("pas une copie isolée (worktree)")?;
+    let wt = parse(cwd).ok_or_else(|| crate::i18n::tr("worktree.not_isolated"))?;
     let path = wt.path();
     git(&path, &["add", "-A"])?;
     let msg = if message.trim().is_empty() {
-        format!("Travail de la session {}", wt.name)
+        crate::i18n::tr_args("worktree.commit_message", &[("name", &wt.name)])
     } else {
         message.trim().to_string()
     };
@@ -203,7 +203,7 @@ pub fn commit(cwd: &str, message: &str) -> Result<(), String> {
 }
 
 pub fn discard(cwd: &str) -> Result<(), String> {
-    let wt = parse(cwd).ok_or("pas une copie isolée (worktree)")?;
+    let wt = parse(cwd).ok_or_else(|| crate::i18n::tr("worktree.not_isolated"))?;
     // Twice: `claude --worktree` locks the copies it makes.
     git(
         &wt.repo,
@@ -220,19 +220,19 @@ pub fn discard(cwd: &str) -> Result<(), String> {
 pub fn merge(cwd: &str) -> Result<(), String> {
     let r = review(cwd)?;
     if !r.files.is_empty() {
-        return Err("des modifications ne sont pas commitées dans la copie".into());
+        return Err(crate::i18n::tr("worktree.uncommitted"));
     }
     if r.ahead == 0 {
-        return Err("rien à fusionner".into());
+        return Err(crate::i18n::tr("worktree.nothing_to_merge"));
     }
     let dirty = git(
         &r.worktree.repo,
         &["status", "--porcelain", "--untracked-files=no"],
     )?;
     if !dirty.trim().is_empty() {
-        return Err(format!(
-            "le dépôt {} a des modifications en cours",
-            r.worktree.repo_name()
+        return Err(crate::i18n::tr_args(
+            "worktree.repo_dirty",
+            &[("repo", &r.worktree.repo_name())],
         ));
     }
     if let Err(e) = git(
@@ -240,7 +240,10 @@ pub fn merge(cwd: &str) -> Result<(), String> {
         &["merge", "--no-ff", "--no-edit", &r.worktree.branch],
     ) {
         let _ = git(&r.worktree.repo, &["merge", "--abort"]);
-        return Err(format!("fusion impossible, annulée : {e}"));
+        return Err(crate::i18n::tr_args(
+            "worktree.merge_failed",
+            &[("error", &e)],
+        ));
     }
     discard(cwd)
 }

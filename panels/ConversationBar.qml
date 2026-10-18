@@ -398,7 +398,7 @@ PanelWindow { // qmllint disable uncreatable-type
         if (!item || item.type !== "setting")
             return "";
         return ({ "volume": "volume", "theme": "theme",
-                  "accent": "accent", "screen": "screens" })[item.payload.key] || "";
+                  "accent": "accent", "screen": "screens", "language": "screens" })[item.payload.key] || "";
     }
 
     // La couleur d'accent à une teinte donnée : saturation et luminosité ne
@@ -501,7 +501,7 @@ PanelWindow { // qmllint disable uncreatable-type
             spacing: 8
             Text {
                 anchors.verticalCenter: parent.verticalCenter
-                text: Theme.darkMode ? "sombre" : "clair"
+                text: Theme.darkMode ? I18n.tr("theme.dark") : I18n.tr("theme.light")
                 font.family: "JetBrains Mono"
                 font.pixelSize: 10
                 color: Theme.textSecondary
@@ -545,7 +545,7 @@ PanelWindow { // qmllint disable uncreatable-type
             Text {
                 anchors.verticalCenter: parent.verticalCenter
                 width: 34
-                text: Audio.muted ? "muet" : Audio.percent + " %"
+                text: Audio.muted ? I18n.tr("volume.muted") : I18n.tr("common.percent", { n: Audio.percent })
                 horizontalAlignment: Text.AlignRight
                 font.family: "JetBrains Mono"
                 font.pixelSize: 10
@@ -587,12 +587,20 @@ PanelWindow { // qmllint disable uncreatable-type
             return DefaultApps.browser ? DefaultApps.browser.icon : "";
         case "wallpaper":
             return Quickshell.iconPath("preferences-desktop-wallpaper", true);
+        case "note":
+            if (p.create)
+                return Quickshell.iconPath("document-new", true);
+            // Une note image se montre elle-même.
+            if (p.note && p.note.image)
+                return "file://" + p.note.image.split("/").map(encodeURIComponent).join("/");
+            return Quickshell.iconPath("text-x-generic", true);
         case "setting":
             switch (p.key) {
             case "volume":     return Quickshell.iconPath("audio-volume-high", true);
             case "theme":      return Quickshell.iconPath("preferences-desktop-theme", true);
             case "accent":     return Quickshell.iconPath("preferences-desktop-color", true);
             case "screenshot": return Quickshell.iconPath("applets-screenshooter", true);
+            case "language":   return Quickshell.iconPath("preferences-desktop-locale", true);
             }
         }
         return "";
@@ -600,8 +608,9 @@ PanelWindow { // qmllint disable uncreatable-type
 
     readonly property var imageSuffixes: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]
     readonly property var typeLabels: ({
-        "app": "app", "file": "fichier", "setting": "réglage", "web": "web",
-        "wallpaper": "fond"
+        "app": I18n.tr("search.type.app"), "file": I18n.tr("search.type.file"),
+        "setting": I18n.tr("search.type.setting"), "web": I18n.tr("search.type.web"),
+        "wallpaper": I18n.tr("search.type.wallpaper"), "note": I18n.tr("search.type.note")
     })
 
     // ── Le dernier tour du pilote ────────────────────────────────
@@ -891,7 +900,7 @@ PanelWindow { // qmllint disable uncreatable-type
                     Text {
                         id: askLabel
                         anchors.centerIn: parent
-                        text: "↵ réponds dans la barre"
+                        text: "↵ " + I18n.tr("bar.answerHere")
                         font.family: bar.uiFont
                         font.pixelSize: 11
                         font.weight: Font.Medium
@@ -1082,7 +1091,7 @@ PanelWindow { // qmllint disable uncreatable-type
                     Text {
                         id: kindLabel
                         anchors.centerIn: parent
-                        text: row.current ? "↵ ouvrir"
+                        text: row.current ? "↵ " + I18n.tr("common.open")
                                           : bar.typeLabels[row.modelData.type] || row.modelData.type
                         font.family: bar.uiFont
                         font.pixelSize: 10
@@ -1825,9 +1834,9 @@ PanelWindow { // qmllint disable uncreatable-type
                 x: on ? 0 : 10
                 Behavior on opacity { NumberAnimation { duration: 160 } }
                 Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-                text: bar.asking && answer.shown ? "Ta réponse…"
-                    : ClaudeLive.voiceWake ? "Demander ou chercher, ou dire « Karénine »"
-                    : "Demander à Karénine ou chercher…"
+                text: bar.asking && answer.shown ? I18n.tr("bar.yourAnswer")
+                    : ClaudeLive.voiceWake ? I18n.tr("bar.placeholderWake")
+                    : I18n.tr("bar.placeholder")
                 font.family: bar.uiFont
                 font.pixelSize: 15
                 color: Qt.alpha(Theme.textPrimary, 0.42)
@@ -1862,7 +1871,7 @@ PanelWindow { // qmllint disable uncreatable-type
                 Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
                 elide: Text.ElideLeft
                 text: ClaudeLive.voiceText.length > 0 ? ClaudeLive.voiceText
-                    : ClaudeLive.voicePhase === "listening" ? "J'écoute…" : "Je transcris…"
+                    : ClaudeLive.voicePhase === "listening" ? I18n.tr("voice.listening") : I18n.tr("voice.transcribing")
                 font.family: bar.uiFont
                 font.pixelSize: 15
                 font.weight: Font.Medium

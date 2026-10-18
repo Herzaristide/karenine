@@ -113,26 +113,15 @@ pub enum Command {
     /// The live sessions, once: `[{id, project, cwd, state, since, …}, …]`.
     ClaudeList,
     /// Keep connection open; daemon pushes `{"sessions":[…]}` on every
-    /// change, with an `"alert":{id, project, kind, text}` when a session
-    /// starts waiting on the user or a long turn ends.
+    /// change.
     ClaudeWatch,
     /// Focus the window hosting a session: `{"ok":true}` or
     /// `{"ok":false,"error":"…"}`.
     ClaudeFocus {
         id: String,
     },
-    /// Sent by `anna hook` on PermissionRequest; the connection stays open
-    /// until the request ends, then gets `{"decision":"allow"|"always"|
-    /// "deny"|"terminal"}` (see claude/permission.rs).
-    ClaudePermission {
-        pid: Option<u32>,
-        tool: String,
-        summary: String,
-        #[serde(default)]
-        always: String,
-        event: crate::claude::HookEvent,
-    },
-    /// Answer an open permission request from the bar. `decision` is
+    /// Answer an open permission request of the pilot, from the dock
+    /// (see claude/permission.rs). `decision` is
     /// "allow", "always", "deny" or "terminal". `{"ok":true}`, or
     /// `{"ok":false}` when the request is already over.
     ClaudeDecide {

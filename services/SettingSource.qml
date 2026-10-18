@@ -10,7 +10,7 @@ QtObject {
     id: src
 
     readonly property string type:  "setting"
-    readonly property string label: "Paramètres"
+    readonly property string label: I18n.tr("settings.title")
     readonly property int    limit: 5
 
     signal produced(int seq, var items)
@@ -21,34 +21,39 @@ QtObject {
     // un par un.
     readonly property var entries: [
         {
-            key: "volume", title: "Volume", control: "volume", adjust: true,
-            keywords: "volume son audio muet mute sound haut-parleur"
+            key: "volume", title: I18n.tr("setting.volume"), control: "volume", adjust: true,
+            keywords: "volume son audio muet mute sound haut-parleur speaker"
         },
         {
-            key: "theme", title: "Thème", control: "toggle", adjust: false,
+            key: "theme", title: I18n.tr("setting.theme"), control: "toggle", adjust: false,
             keywords: "theme thème sombre clair dark light mode apparence"
         },
         {
-            key: "accent", title: "Couleur d'accent", control: "action", adjust: true,
-            keywords: "accent couleur color palette thème"
+            key: "accent", title: I18n.tr("setting.accent"), control: "action", adjust: true,
+            keywords: "accent couleur color colour palette thème theme"
         },
         {
-            key: "screenshot", title: "Capture d'écran", control: "shot", adjust: false,
+            key: "screenshot", title: I18n.tr("setting.screenshot"), control: "shot", adjust: false,
             keywords: "capture screenshot écran image grim"
         },
         {
-            key: "screen", title: "Écran d'affichage", control: "screens", adjust: false,
-            keywords: "écran ecran moniteur affichage display screen interface barre"
+            key: "screen", title: I18n.tr("setting.screen"), control: "screens", adjust: false,
+            keywords: "écran ecran moniteur affichage display screen monitor interface barre bar"
+        },
+        {
+            key: "language", title: I18n.tr("settings.language"), control: "screens", adjust: false,
+            keywords: "langue language langage idioma sprache english anglais français french traduction translation"
         }
     ]
 
     function _subtitle(key) {
         switch (key) {
-        case "volume":     return Audio.muted ? "coupé" : Audio.percent + " %";
-        case "theme":      return Theme.darkMode ? "sombre" : "clair";
+        case "volume":     return Audio.muted ? I18n.tr("volume.muted") : I18n.tr("common.percent", { n: Audio.percent });
+        case "theme":      return Theme.darkMode ? I18n.tr("theme.dark") : I18n.tr("theme.light");
         case "accent":     return Theme.accentHex;
-        case "screenshot": return "région ou écran entier";
+        case "screenshot": return I18n.tr("setting.screenshot.subtitle");
         case "screen":     return Display.screenKey(Display.primary);
+        case "language":   return (I18n.available.find(l => l.code === I18n.lang) || { name: I18n.lang }).name;
         }
         return "";
     }
@@ -121,6 +126,14 @@ QtObject {
                 var keys = [""].concat(Quickshell.screens.map(s => Display.screenKey(s)));
                 var at = keys.indexOf(Display.preferred);
                 Display.setPreferred(keys[(at + 1) % keys.length]);
+            }
+            break;
+
+        case "language":
+            // Comme l'écran : ouvrir, c'est passer à la langue suivante.
+            if (actionId === "open") {
+                var langs = I18n.available.map(l => l.code);
+                I18n.setLang(langs[(langs.indexOf(I18n.lang) + 1) % langs.length]);
             }
             break;
         case "screenshot":

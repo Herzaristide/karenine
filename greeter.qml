@@ -5,6 +5,7 @@ import Quickshell.Wayland
 import Quickshell.Services.Greetd
 import "auth"
 import "greeter"
+import "services"
 
 // Écran de connexion (remplace regreet), lancé par greetd dans un Hyprland
 // dédié :
@@ -19,6 +20,7 @@ import "greeter"
 // la session sans se déconnecter.
 //
 // Les trois valeurs ci-dessous sont des défauts substitués par la config Nix.
+// La langue vient de KARENINE_LANG (voir services/I18n.qml), anglais sinon.
 ShellRoot {
     id: root
 
@@ -30,7 +32,7 @@ ShellRoot {
     readonly property bool preview: !Greetd.available
 
     property string userName: root.defaultUser
-    property string message: root.preview ? "Aperçu — greetd absent, Échap pour quitter" : ""
+    property string message: root.preview ? I18n.tr("greeter.preview") : ""
     property bool messageIsError: false
     property bool busy: false
 
@@ -40,7 +42,7 @@ ShellRoot {
     // saisie lui est envoyée telle quelle, avec son invite à la place du
     // « Mot de passe… ».
     property bool awaitingResponse: false
-    property string prompt: "Mot de passe…"
+    property string prompt: I18n.tr("auth.password")
     property bool echoInput: false
 
     // L'écran qui reçoit la carte : le primaire s'il est branché, sinon le
@@ -56,7 +58,7 @@ ShellRoot {
 
     function resetPrompt(): void {
         root.awaitingResponse = false;
-        root.prompt = "Mot de passe…";
+        root.prompt = I18n.tr("auth.password");
         root.echoInput = false;
     }
 
@@ -73,7 +75,7 @@ ShellRoot {
             return;
 
         if (root.preview) {
-            root.fail("Aperçu : aucune session à ouvrir");
+            root.fail(I18n.tr("greeter.previewNoSession"));
             return;
         }
 
@@ -104,7 +106,7 @@ ShellRoot {
                 } else {
                     root.busy = false;
                     root.awaitingResponse = true;
-                    root.prompt = message.trim() || "Réponse…";
+                    root.prompt = message.trim() || I18n.tr("greeter.answer");
                     root.echoInput = echoResponse;
                 }
                 return;
@@ -117,12 +119,12 @@ ShellRoot {
         }
 
         function onAuthFailure(message: string): void {
-            root.fail("Mauvais mot de passe");
+            root.fail(I18n.tr("auth.wrongPassword"));
         }
 
         function onReadyToLaunch(): void {
             root.messageIsError = false;
-            root.message = "Ouverture de la session…";
+            root.message = I18n.tr("greeter.opening");
             Greetd.launch(root.sessionCommand, [], true);
         }
 

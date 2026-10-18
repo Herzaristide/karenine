@@ -406,7 +406,7 @@ fn read_temps() -> (u32, u32) {
 fn gpu_name_from_lspci() -> String {
     let out = match run_stdout("lspci", &[]) {
         Some(o) => o,
-        None => return "Non détecté".into(),
+        None => return crate::i18n::tr("not_detected"),
     };
     for line in out.lines() {
         if line.contains("VGA") || line.contains("3D") || line.contains("Display") {
@@ -420,7 +420,7 @@ fn gpu_name_from_lspci() -> String {
             }
         }
     }
-    "Non détecté".into()
+    crate::i18n::tr("not_detected")
 }
 
 /// Read a file and parse its leading integer (sysfs single-value files).

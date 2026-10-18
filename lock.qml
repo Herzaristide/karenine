@@ -22,7 +22,7 @@ import "services"
 ShellRoot {
     id: root
 
-    readonly property string userName: Quickshell.env("USER") || "utilisateur"
+    readonly property string userName: Quickshell.env("USER") || I18n.tr("auth.user")
     readonly property string primaryScreen: "DP-1"
 
     // Vidéo de fond, posée par le lanceur (lock-session côté NixOS). Absente,
@@ -67,14 +67,14 @@ ShellRoot {
             }
 
             root.messageIsError = true;
-            root.message = result === PamResult.MaxTries ? "Trop de tentatives" : "Mauvais mot de passe";
+            root.message = result === PamResult.MaxTries ? I18n.tr("auth.tooManyTries") : I18n.tr("auth.wrongPassword");
         }
 
         onError: (error) => {
             root.busy = false;
             root.pendingPassword = "";
             root.messageIsError = true;
-            root.message = "Erreur PAM : " + PamError.toString(error);
+            root.message = I18n.tr("auth.pamError", { error: PamError.toString(error) });
         }
     }
 
@@ -91,7 +91,7 @@ ShellRoot {
             root.busy = false;
             root.pendingPassword = "";
             root.messageIsError = true;
-            root.message = "Impossible de démarrer PAM";
+            root.message = I18n.tr("auth.pamStart");
         }
     }
 

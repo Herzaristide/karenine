@@ -174,19 +174,19 @@ Item {
             var lines = rawOutput.length > 0 ? rawOutput.split("\n") : [];
             rawOutput = "";
             if (lines.length === 0 || lines[0] === "NOTFOUND") {
-                root.lyricsText = "No lyrics found.";
+                root.lyricsText = I18n.tr("lyrics.notFound");
             } else if (lines[0] === "SYNCED") {
                 var parsed = root.parseLrc(lines.slice(1));
                 if (parsed.length > 0) {
                     root.lyricLines = parsed;
                     root.isSynced   = true;
                 } else {
-                    root.lyricsText = lines.slice(1).join("\n") || "No lyrics found.";
+                    root.lyricsText = lines.slice(1).join("\n") || I18n.tr("lyrics.notFound");
                 }
             } else if (lines[0] === "PLAIN") {
-                root.lyricsText = lines.slice(1).join("\n") || "No lyrics found.";
+                root.lyricsText = lines.slice(1).join("\n") || I18n.tr("lyrics.notFound");
             } else {
-                root.lyricsText = lines.join("\n") || "No lyrics found.";
+                root.lyricsText = lines.join("\n") || I18n.tr("lyrics.notFound");
             }
             root.lyricsLoading = false;
         }
@@ -645,7 +645,7 @@ Item {
 
                 Text {
                     id: titleText
-                    text: root.hasPlayer && root.player.trackTitle ? root.player.trackTitle : "Rien en lecture"
+                    text: root.hasPlayer && root.player.trackTitle ? root.player.trackTitle : I18n.tr("player.nothingPlaying")
                     font.family: "Inter"
                     font.pixelSize: 16
                     font.weight: Font.Medium
@@ -684,7 +684,7 @@ Item {
             Text {
                 Layout.fillWidth: true
                 horizontalAlignment: Text.AlignHCenter
-                text: root.hasPlayer && root.player.trackArtist ? root.player.trackArtist : (root.hasPlayer ? "—" : "Aucun lecteur actif")
+                text: root.hasPlayer && root.player.trackArtist ? root.player.trackArtist : (root.hasPlayer ? "—" : I18n.tr("player.noPlayer"))
                 font.family: "Inter"
                 font.pixelSize: 12
                 color: Theme.textSecondary
@@ -885,7 +885,7 @@ Item {
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
             visible: root.lyricsLoading
-            text: "Fetching lyrics…"
+            text: I18n.tr("lyrics.fetching")
             font.family: "Inter"
             font.pixelSize: 11
             color: Theme.textDim
@@ -902,8 +902,8 @@ Item {
             anchors.centerIn: parent
             visible: !root.lyricsLoading && (!root.isSynced || root.lyricLines.length === 0)
             text: root.lyricsText && root.lyricsText.length > 0 && !root.isSynced
-                  ? "Synced lyrics unavailable"
-                  : "No lyrics found"
+                  ? I18n.tr("lyrics.noSynced")
+                  : I18n.tr("lyrics.notFound")
             horizontalAlignment: Text.AlignHCenter
             width: parent.width - 16
             wrapMode: Text.WordWrap

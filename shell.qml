@@ -14,6 +14,12 @@ ShellRoot {
     signal barToggled()
     signal barClosed()
 
+    // Les singletons ne naissent qu'au premier usage. Ceux-ci doivent tourner
+    // dès le démarrage, même sans rien d'ouvert : le serveur de notifications
+    // (sinon personne ne tient org.freedesktop.Notifications) et la batterie,
+    // qui prévient quand elle faiblit.
+    readonly property var resident: [Notifications, Battery]
+
     // Les anciens numéros de widget (widget:N) des raccourcis existants.
     readonly property var legacyWidgets: ({ 0: "stats", 1: "sessions", 3: "musique", 4: "lecteur" })
 
@@ -26,7 +32,8 @@ ShellRoot {
     //   echo "controls" > /tmp/qs-panel.fifo   → bascule les réglages (sortie, entrée, webcam)
     //   echo "camera"   > /tmp/qs-panel.fifo   → bascule le widget caméra/gestes
     //   echo "close"    > /tmp/qs-panel.fifo   → ferme tout
-    //   NOM : stats, lecteur, musique, son, camera, reglages, sessions, tout
+    //   NOM : explorer, stats, notifications, notes, lecteur, musique, son, camera,
+    //         reglages, sessions, tout
     //   ACTION : ouvrir, fermer, basculer (le défaut)
     //   « widget:N » reste compris : 0=stats 1=sessions 3=musique 4=lecteur
     Process {
@@ -110,17 +117,6 @@ ShellRoot {
         model: root.primaryScreens
 
         FloatingWidgets {
-            property var modelData
-            screen: modelData
-        }
-    }
-
-    // Alertes des sessions Claude Code (attente, long tour terminé), dans le
-    // coin haut droit de l'écran de l'interface.
-    Variants {
-        model: root.primaryScreens
-
-        SessionToast {
             property var modelData
             screen: modelData
         }

@@ -15,13 +15,11 @@ import "../widgets"
 //
 //   ╭ 🔒 ☾ ⇥ ↻ ⏻ ╮   ╭ ☀ ━━●── 80 %  │  🔊 ━━━●─ 64 % ╮  ╭ ⌗ ╮  ╭ [87]▸ ╮
 //
-// Verrouiller et mettre en veille partent d'un clic. Se déconnecter,
-// redémarrer et éteindre demandent une confirmation : le premier clic
-// élargit le bouton en rouge (« Éteindre ? ») pendant 3 s, le second agit.
+// Chaque bouton d'alimentation agit dès le premier clic, sans confirmation.
 // Les curseurs se partagent la place qui reste : la barre peut être étroite.
 //
-// Au clavier : Tab passe d'un bouton à l'autre, Entrée ou Espace l'actionne
-// (deux fois pour ce qui se confirme ; Échap renonce). Maj+Entrée sur la
+// Au clavier : Tab passe d'un bouton à l'autre, Entrée ou Espace l'actionne.
+// Maj+Entrée sur la
 // capture prend l'écran entier, comme le clic droit. Sur un curseur, ← →
 // (ou ↑ ↓) règlent par pas, Début et Fin vont aux bouts.
 Item {
@@ -159,27 +157,16 @@ Item {
         }
     }
 
-    // Un bouton d'alimentation : à confirmer s'il a un `confirmLabel`.
+    // Un bouton d'alimentation : un clic, et la commande part.
     component PowerButton: Rectangle {
         id: pb
         property string icon
-        property string confirmLabel: ""
         property var command: []
         property bool closeFirst: false
-        // En attente du second clic.
-        property bool armed: false
 
         readonly property bool hovered: pbMa.containsMouse || pb.activeFocus
-        readonly property color danger: Theme.colorDanger
 
         function press() {
-            if (pb.confirmLabel !== "" && !pb.armed) {
-                pb.armed = true;
-                disarm.restart();
-                return;
-            }
-            pb.armed = false;
-            disarm.stop();
             top.run(pb.command, pb.closeFirst);
         }
 
@@ -188,54 +175,23 @@ Item {
             if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                 pb.press();
                 event.accepted = true;
-            } else if (event.key === Qt.Key_Escape && pb.armed) {
-                pb.armed = false;
-                disarm.stop();
-                event.accepted = true;
             }
         }
-        // Le clavier part ailleurs : plus de confirmation en suspens.
-        onActiveFocusChanged: if (!pb.activeFocus) pb.armed = false
 
         anchors.verticalCenter: parent.verticalCenter
         height: top.btnSize
-        width: pb.armed ? confirmText.implicitWidth + top.btnSize + 10 : top.btnSize
-        Behavior on width { NumberAnimation { duration: 320; easing.type: Easing.OutQuint } }
+        width: top.btnSize
         radius: height / 2
-        color: pb.armed ? Qt.alpha(pb.danger, 0.22)
-                        : Qt.alpha(Theme.textPrimary, pb.hovered ? 0.1 : 0)
+        color: Qt.alpha(Theme.textPrimary, pb.hovered ? 0.1 : 0)
         Behavior on color { ColorAnimation { duration: 180; easing.type: Easing.OutCubic } }
         scale: pbMa.pressed ? 0.92 : 1
         Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-        clip: true
 
         Glyph {
-            id: pbGlyph
-            x: (top.btnSize - width) / 2
-            anchors.verticalCenter: parent.verticalCenter
+            anchors.centerIn: parent
             icon: pb.icon
-            tint: pb.armed ? pb.danger : Theme.iconColor
-            strength: pb.armed || pb.hovered ? 1 : 0.8
-        }
-
-        Text {
-            id: confirmText
-            anchors.left: pbGlyph.right
-            anchors.leftMargin: 7
-            anchors.verticalCenter: parent.verticalCenter
-            text: pb.confirmLabel
-            font.family: top.bar.uiFont
-            font.pixelSize: 12
-            font.weight: Font.DemiBold
-            color: pb.danger
-            opacity: pb.armed ? 1 : 0
-            Behavior on opacity { NumberAnimation { duration: 200 } }
-        }
-
-        Timer {
-            id: disarm
-            interval: 3000
-            onTriggered: pb.armed = false
+            tint: Theme.iconColor
+            strength: pb.hovered ? 1 : 0.8
         }
 
         MouseArea {
@@ -246,7 +202,6 @@ Item {
             onClicked: pb.press()
         }
 
-        // Dans le bouton : il rogne ce qui dépasse (clip).
         FocusRing { gap: 0 }
     }
 
@@ -369,9 +324,9 @@ Item {
 
                 PowerButton { icon: "lock.svg"; command: ["loginctl", "lock-session"]; closeFirst: true }
                 PowerButton { icon: "suspend.svg"; command: ["systemctl", "suspend"]; closeFirst: true }
-                PowerButton { icon: "logout.svg"; confirmLabel: "Se déconnecter ?"; command: ["hyprctl", "dispatch", "hl.dsp.exit()"] }
-                PowerButton { icon: "reboot.svg"; confirmLabel: "Redémarrer ?"; command: ["systemctl", "reboot"] }
-                PowerButton { icon: "power.svg"; confirmLabel: "Éteindre ?"; command: ["systemctl", "poweroff"] }
+                PowerButton { icon: "logout.svg"; command: ["hyprctl", "dispatch", "hl.dsp.exit()"] }
+                PowerButton { icon: "reboot.svg"; command: ["systemctl", "reboot"] }
+                PowerButton { icon: "power.svg"; command: ["systemctl", "poweroff"] }
             }
         }
 
@@ -434,7 +389,7 @@ Item {
                     onStepped: (dir) => dir > 0 ? Audio.up() : Audio.down()
                 }
                 Percent {
-                    text: Audio.muted ? "muet" : Math.round(volSlider.shown * 100) + " %"
+                    text: Audio.muted ? I18n.tr("volume.muted") : I18n.tr("common.percent", { n: Math.round(volSlider.shown * 100) })
                     color: Audio.muted ? Theme.textDim : Theme.textSecondary
                 }
             }

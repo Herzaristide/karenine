@@ -7,7 +7,7 @@ QtObject {
     id: src
 
     readonly property string type:  "app"
-    readonly property string label: "Applications"
+    readonly property string label: I18n.tr("search.apps")
     readonly property int    limit: 6
 
     signal produced(int seq, var items)

@@ -153,6 +153,116 @@ Item {
         root.opened();
     }
 
+    // ── L'envoi au téléphone ─────────────────────────────────────
+    // Les fichiers sélectionnés partent vers le téléphone appairé avec KDE
+    // Connect (anna phone share, un à la fois), comme un dépôt sur la carte
+    // de l'onglet Téléphone. Les dossiers restent : KDE Connect n'envoie que
+    // des fichiers. Le téléphone n'est suivi (phone_watch) que tant qu'il y a
+    // une sélection à lui envoyer : le premier appairé et à portée.
+    property var phone: null
+    // Le retour du dernier envoi, dans la pastille du bas, effacé seul.
+    property string notice: ""
+
+    Socket {
+        id: phoneSock
+        path: Anna.socketPath
+        connected: root.visible && root.selectedCount > 0
+        parser: SplitParser {
+            onRead: (line) => {
+                try {
+                    var msg = JSON.parse(line);
+                    if (msg.phone === undefined)
+                        return;
+                    var found = null;
+                    (msg.phone.phones || []).forEach(p => {
+                        if (!found && p.paired && p.reachable)
+                            found = p;
+                    });
+                    root.phone = found;
+                } catch (e) { /* ligne partielle */ }
+            }
+        }
+        onConnectedChanged: {
+            if (connected)
+                write('{"cmd":"phone_watch"}\n');
+            else
+                root.phone = null;
+        }
+    }
+
+    function sendToPhone() {
+        // Un envoi en cours : il finit d'abord.
+        if (shareProc.running || shareProc.pending.length > 0)
+            return;
+        if (!root.phone) {
+            root.say(I18n.tr("explorer.noPhone"));
+            return;
+        }
+        var files = [];
+        for (var i = 0; i < folder.count; i++) {
+            var p = folder.get(i, "filePath");
+            if (root.isSelected(p) && !folder.get(i, "fileIsDir"))
+                files.push(p);
+        }
+        if (files.length === 0) {
+            root.say(I18n.tr("explorer.onlyFiles"));
+            return;
+        }
+        shareProc.device = root.phone.id;
+        shareProc.name = root.phone.name;
+        shareProc.pending = files;
+        shareProc.sent = 0;
+        shareProc.failure = "";
+        root.say(I18n.trn("explorer.sending", files.length, { name: root.phone.name }));
+        shareProc.next();
+    }
+
+    Process {
+        id: shareProc
+        property string device: ""
+        property string name: ""
+        property var pending: []
+        property int sent: 0
+        property string failure: ""
+        stdout: StdioCollector { id: shareOut }
+
+        function next() {
+            if (shareProc.pending.length === 0) {
+                root.say(shareProc.failure !== ""
+                         ? shareProc.failure
+                         : I18n.trn("explorer.phoneSent", shareProc.sent, { name: shareProc.name }));
+                return;
+            }
+            shareProc.command = ["anna", "phone", "share", shareProc.device, shareProc.pending[0]];
+            shareProc.pending = shareProc.pending.slice(1);
+            shareProc.running = true;
+        }
+        onRunningChanged: {
+            if (running)
+                return;
+            try {
+                var r = JSON.parse(shareOut.text);
+                if (r.ok)
+                    shareProc.sent++;
+                else
+                    shareProc.failure = r.error || I18n.tr("common.failedSentence");
+            } catch (e) {
+                shareProc.failure = I18n.tr("anna.noAnswer");
+            }
+            Qt.callLater(shareProc.next);
+        }
+    }
+
+    function say(text) {
+        root.notice = text;
+        noticeTimer.restart();
+    }
+    Timer {
+        id: noticeTimer
+        interval: 3500
+        onTriggered: root.notice = ""
+    }
+
     function up() {
         if (root.path !== root.rootDir)
             root.go(root.parentOf(root.path));
@@ -339,7 +449,7 @@ Item {
                 // onglets : le sélecteur ne dit pas une machine qu'on ne voit pas.
                 Widgets.machine = root.remote ? { name: root.machine.name, host: root.machine.host } : null;
                 root.error = srv.name + " : " + (mountErr.text.trim().split("\n").pop()
-                                                 || "connexion impossible");
+                                                 || I18n.tr("explorer.cannotConnect"));
                 return;
             }
             // Le serveur d'avant n'a plus de raison de rester monté.
@@ -694,7 +804,7 @@ Item {
                             id: diskSize
                             anchors.right: parent.right
                             anchors.baseline: diskLabel.baseline
-                            text: disk.modelData.used + " / " + disk.modelData.size + " Go  ·  " + Math.round(disk.pct * 100) + " %"
+                            text: disk.modelData.used + " / " + I18n.tr("unit.gb", { n: disk.modelData.size }) + "  ·  " + I18n.tr("common.percent", { n: Math.round(disk.pct * 100) })
                             font.family: "Inter"
                             font.pixelSize: 10
                             font.features: { "tnum": 1 }
@@ -839,7 +949,7 @@ Item {
                     anchors.left: parent.left
                     anchors.leftMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
-                    text: root.selectedCount + (root.selectedCount > 1 ? " sélectionnés" : " sélectionné")
+                    text: I18n.trn("explorer.selected", root.selectedCount)
                     font.family: "Inter"
                     font.pixelSize: 12
                     font.weight: Font.Medium
@@ -861,6 +971,16 @@ Item {
                     cursorShape: Qt.PointingHandCursor
                     onClicked: root.clearSelection()
                 }
+            }
+
+            // La sélection vers le téléphone (KDE Connect) ; estompé tant
+            // qu'aucun n'est à portée.
+            GlassButton {
+                implicitHeight: 30
+                visible: root.selectedCount > 0
+                icon: "../assets/icons/phone.svg"
+                opacity: root.phone ? 1 : 0.4
+                onClicked: root.sendToPhone()
             }
 
             // Les fichiers cachés : allumé, ils apparaissent.
@@ -898,7 +1018,7 @@ Item {
     Text {
         anchors.centerIn: grid
         visible: grid.count === 0
-        text: folder.status === FolderListModel.Loading ? "…" : "Dossier vide"
+        text: folder.status === FolderListModel.Loading ? "…" : I18n.tr("explorer.emptyFolder")
         font.family: "Inter"
         font.pixelSize: 13
         color: Theme.textSecondary
@@ -1106,7 +1226,7 @@ Item {
             // Le porteur du glisser vers les autres applications. La tuile ne
             // bouge pas : ce proxy invisible est la cible du drag, et son
             // passage en Drag.active démarre le glisser système (le montage
-            // de dragType Automatic, comme dans panels/cards/FileCard.qml).
+            // de dragType Automatic,).
             // Une tuile sélectionnée emporte toute la sélection.
             Item {
                 id: dragProxy
@@ -1183,13 +1303,14 @@ Item {
 
     // ── La connexion en cours, ou son échec ──────────────────────
     // Une pastille en bas de la grille : le dossier d'avant reste affiché
-    // en attendant. Un clic sur l'erreur la congédie.
+    // en attendant. Un clic sur l'erreur la congédie. Hors connexion, elle
+    // dit aussi où en est l'envoi au téléphone.
     Rectangle {
         anchors.horizontalCenter: grid.horizontalCenter
         anchors.bottom: grid.bottom
         anchors.bottomMargin: 8
         z: 5
-        visible: root.connecting !== "" || root.error !== ""
+        visible: root.connecting !== "" || root.error !== "" || root.notice !== ""
         width: Math.min(statusLabel.implicitWidth + 28, grid.width - 20)
         height: 30
         radius: 15
@@ -1201,7 +1322,9 @@ Item {
             id: statusLabel
             anchors.centerIn: parent
             width: Math.min(implicitWidth, parent.width - 28)
-            text: root.error !== "" ? root.error + "   ✕" : "Connexion à " + root.connecting + "…"
+            text: root.error !== "" ? root.error + "   ✕"
+                : root.connecting !== "" ? I18n.tr("explorer.connecting", { name: root.connecting })
+                : root.notice
             elide: Text.ElideMiddle
             font.family: "Inter"
             font.pixelSize: 12

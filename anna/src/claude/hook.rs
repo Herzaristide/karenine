@@ -1,24 +1,22 @@
 //! `anna hook` — the command Claude Code runs on its lifecycle events.
 //!
 //! Declared once in the Claude Code settings for SessionStart,
-//! UserPromptSubmit, PostToolUse, Notification, Stop, SessionEnd and
-//! PermissionRequest, it reads the event JSON on stdin and hands a trimmed
-//! copy to the daemon.
+//! UserPromptSubmit, PostToolUse, Notification, Stop and SessionEnd, it
+//! reads the event JSON on stdin and hands a trimmed copy to the daemon.
+//! Permission requests are left to Claude Code's own dialog: a
+//! PermissionRequest still declared there is ignored.
 //!
 //! It must never get in Claude's way:
 //!   - exit 0, always — for Claude Code, exit 2 means "block this prompt /
 //!     this tool";
 //!   - print nothing — on SessionStart and UserPromptSubmit, stdout is added
-//!     to the model's context. The one exception is PermissionRequest, whose
-//!     stdout carries the answer given in the bar (see permission.rs);
+//!     to the model's context;
 //!   - be quick — PostToolUse runs after every tool call. A missing daemon
 //!     costs one failed connect, and the write is bounded by a timeout.
-//!     PermissionRequest is the only event that waits, and only for as long as
-//!     the daemon holds the request.
 
-use super::{excerpt, focus, permission, HookEvent, Outcome};
+use super::{excerpt, focus, HookEvent};
 use serde_json::Value;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
@@ -60,44 +58,6 @@ fn claude_pid() -> Option<u32> {
     None
 }
 
-/// Ask the daemon, wait for the bar's answer, and print it for Claude Code.
-/// Any failure — no daemon, no answer, garbage — prints nothing, which
-/// leaves the request to the terminal's dialog.
-fn permission(v: &Value, event: HookEvent, sock: UnixStream) {
-    let tool = v.get("tool_name").and_then(Value::as_str).unwrap_or("?");
-    let input = v.get("tool_input").cloned().unwrap_or(Value::Null);
-    let suggestions = v
-        .get("permission_suggestions")
-        .cloned()
-        .unwrap_or(Value::Null);
-    let msg = serde_json::json!({
-        "cmd": "claude_permission",
-        "pid": claude_pid(),
-        "tool": tool,
-        "summary": permission::summarize(tool, &input, &event.cwd),
-        "always": permission::always_label(&suggestions),
-        "event": event,
-    });
-
-    let mut sock = sock;
-    let _ = sock.set_write_timeout(Some(Duration::from_millis(300)));
-    // A little longer than the daemon holds a request.
-    let _ = sock.set_read_timeout(Some(permission::ANSWER_WITHIN + Duration::from_secs(10)));
-    if writeln!(sock, "{msg}").is_err() {
-        return;
-    }
-    let mut line = String::new();
-    if BufReader::new(&sock).read_line(&mut line).is_err() {
-        return;
-    }
-    let outcome = serde_json::from_str::<Value>(&line)
-        .ok()
-        .and_then(|r| Outcome::parse(r.get("decision")?.as_str()?));
-    if let Some(out) = outcome.and_then(|o| permission::hook_output(o, &suggestions)) {
-        println!("{out}");
-    }
-}
-
 pub fn run() {
     if SILENT_ENV.iter().any(|k| std::env::var_os(k).is_some()) {
         return;
@@ -110,14 +70,13 @@ pub fn run() {
         return;
     };
     let Some(event) = trim(&v) else { return };
+    // Claude Code's dialog answers it: printing nothing leaves it there.
+    if event.hook_event_name == "PermissionRequest" {
+        return;
+    }
     let Ok(mut sock) = UnixStream::connect(crate::paths::socket_path()) else {
         return;
     };
-
-    if event.hook_event_name == "PermissionRequest" {
-        permission(&v, event, sock);
-        return;
-    }
 
     let msg = serde_json::json!({
         "cmd": "claude_hook",

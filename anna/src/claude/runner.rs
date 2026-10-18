@@ -6,9 +6,10 @@
 //! session may run for an hour.
 //!
 //! Nothing else is special about them: they report through the same hooks
-//! as a terminal session, their permission requests go to the bar, and their
-//! transcript is the usual JSONL — `claude --resume` in a terminal picks them
-//! up. Project sessions run in their own copy of the repository
+//! as a terminal session, their transcript is the usual JSONL — `claude
+//! --resume` in a terminal picks them up. Without a terminal, they have no
+//! permission dialog: what no rule allows is refused.
+//! Project sessions run in their own copy of the repository
 //! (`--worktree`, see worktree.rs).
 //!
 //! A managed session dies with anna (restart, rebuild); its transcript stays,
@@ -74,7 +75,14 @@ fn user_line(text: &str) -> String {
 /// survives a daemon restart — with the session's environment.
 fn launch(args: &[&str]) -> Result<(), String> {
     let status = std::process::Command::new("systemd-run")
-        .args(["--user", "--collect", "--quiet", "-p", "ExitType=cgroup", "--"])
+        .args([
+            "--user",
+            "--collect",
+            "--quiet",
+            "-p",
+            "ExitType=cgroup",
+            "--",
+        ])
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -84,7 +92,10 @@ fn launch(args: &[&str]) -> Result<(), String> {
     if status.success() {
         Ok(())
     } else {
-        Err(format!("{} n'a pas pu démarrer", args[0]))
+        Err(crate::i18n::tr_args(
+            "could_not_start",
+            &[("what", args[0])],
+        ))
     }
 }
 
@@ -233,7 +244,7 @@ impl Runner {
             .procs()
             .get(id)
             .map(|p| Arc::clone(&p.stdin))
-            .ok_or("session non lancée depuis le dock")?;
+            .ok_or_else(|| crate::i18n::tr("session.not_from_dock"))?;
         let mut w = stdin.lock().await;
         w.write_all(user_line(text).as_bytes())
             .await
@@ -248,7 +259,7 @@ impl Runner {
             .procs()
             .get(id)
             .map(|p| p.pid)
-            .ok_or("session non lancée depuis le dock")?;
+            .ok_or_else(|| crate::i18n::tr("session.not_from_dock"))?;
         let ok = std::process::Command::new("kill")
             .args(["-TERM", &pid.to_string()])
             .status()
@@ -256,7 +267,7 @@ impl Runner {
         if ok {
             Ok(())
         } else {
-            Err("arrêt impossible".into())
+            Err(crate::i18n::tr("session.cannot_stop"))
         }
     }
 

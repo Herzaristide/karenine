@@ -19,22 +19,24 @@ import Quickshell
 Singleton {
     id: widgets
 
-    readonly property var names: ["explorer", "stats", "telephone", "lecteur", "musique", "son", "camera", "reglages", "sessions"]
+    readonly property var names: ["explorer", "stats", "notifications", "notes", "lecteur", "musique", "son", "camera", "reglages", "sessions"]
 
     // Les onglets des widgets, dans l'ordre de la barre d'onglets.
-    readonly property var hubTabs: ["explorer", "stats", "telephone", "lecteur", "musique", "reglages"]
+    readonly property var hubTabs: ["explorer", "stats", "notifications", "notes", "lecteur", "musique", "reglages"]
     readonly property var hubLabels: ({
-        explorer: "Explorer",
-        stats: "Système",
-        telephone: "Téléphone",
-        lecteur: "Lecteur",
-        musique: "Musique",
-        reglages: "Réglages"
+        explorer: I18n.tr("widget.explorer"),
+        stats: I18n.tr("widget.stats"),
+        notifications: I18n.tr("widget.notifications"),
+        notes: I18n.tr("widget.notes"),
+        lecteur: I18n.tr("widget.player"),
+        musique: I18n.tr("widget.music"),
+        reglages: I18n.tr("widget.settings")
     })
     readonly property var hubIcons: ({
         explorer: "folder.svg",
         stats: "stats.svg",
-        telephone: "phone.svg",
+        notifications: "bell.svg",
+        notes: "notes.svg",
         lecteur: "play.svg",
         musique: "music.svg",
         reglages: "settings.svg"
@@ -58,7 +60,7 @@ Singleton {
 
     // Le titre de chaque carte flottante.
     readonly property var titles: ({
-        camera: "Contrôle gestuel"
+        camera: I18n.tr("widget.camera")
     })
 
     // { nom: true } pour chaque carte flottante ou le dock ouvert. Réaffecté
@@ -74,8 +76,9 @@ Singleton {
 
     // Les anciens noms d'onglets, devenus une partie d'un autre : « son »
     // (sortie, entrée) vit dans les réglages, le métronome et l'accordeur
-    // dans « musique », les serveurs du tailnet (« network ») dans « stats ».
-    readonly property var aliases: ({ son: "reglages", metronome: "musique", accordeur: "musique", network: "stats" })
+    // dans « musique », les serveurs du tailnet (« network ») et le téléphone
+    // (« telephone ») dans « stats ».
+    readonly property var aliases: ({ son: "reglages", metronome: "musique", accordeur: "musique", network: "stats", telephone: "stats" })
 
     function isOpen(name) {
         name = widgets.aliases[name] || name;

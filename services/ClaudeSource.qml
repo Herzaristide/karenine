@@ -12,7 +12,7 @@ QtObject {
     id: src
 
     readonly property string type:  "conversation"
-    readonly property string label: "Conversations"
+    readonly property string label: I18n.tr("search.conversations")
     readonly property int    limit: 5
 
     signal produced(int seq, var items)

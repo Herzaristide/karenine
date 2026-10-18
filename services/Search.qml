@@ -9,7 +9,7 @@ import QtQuick
 //                                  et activate(item, actionId)
 //   2. services/qmldir           : déclarer le nouveau composant
 //   3. ici                       : une propriété + une entrée dans `sources`
-//   4. panels/cards/<type>.qml   : la carte, nommée d'après `type`
+//   4. panels/ConversationBar.qml : l'icône et l'étiquette du type
 QtObject {
     id: root
 
@@ -47,9 +47,13 @@ QtObject {
     property WebSource webSource: WebSource {
         onProduced: (seq, items) => root._collect(seq, "web", items)
     }
+    // Les notes de l'onglet Notes, et « Créer une note » avec ce qu'on tape.
+    property NoteSource noteSource: NoteSource {
+        onProduced: (seq, items) => root._collect(seq, "note", items)
+    }
 
     readonly property var sources: [appSource, fileSource, settingSource,
-                                    wallpaperSource, webSource]
+                                    wallpaperSource, noteSource, webSource]
 
     // Le débounce protège la seule source coûteuse (fd) sans se faire sentir
     // sur les autres, qui répondent en moins d'une milliseconde.
@@ -118,6 +122,9 @@ QtObject {
     function _rebuild() {
         var local = [];
         var web = [];
+        // Ce qui doit rester proposé quoi qu'il arrive (`always` : « Créer
+        // une note ») : hors du seuil et de la limite.
+        var always = [];
 
         for (var i = 0; i < root.sources.length; i++) {
             var type = root.sources[i].type;
@@ -127,7 +134,7 @@ QtObject {
             for (var j = 0; j < items.length; j++) {
                 var it = items[j];
                 it.rank = it.score + (root.typeBonus[it.type] || 0);
-                (it.type === "web" ? web : local).push(it);
+                (it.always ? always : it.type === "web" ? web : local).push(it);
             }
         }
 
@@ -146,7 +153,8 @@ QtObject {
 
         var out = local.concat(web);
         out.sort(byRank);
-        out = out.slice(0, root.maxResults);
+        out = out.slice(0, root.maxResults - always.length).concat(always);
+        out.sort(byRank);
 
         var shown = out.map(function (it) {
             return it.id + "\u0001" + it.title + "\u0001" + it.subtitle;

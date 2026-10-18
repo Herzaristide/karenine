@@ -37,7 +37,7 @@ Item {
     // Les serveurs qu'on atteint par ssh ([Server] d'anna).
     property var servers: []
 
-    readonly property string localLabel: picker.localName || "Cet ordinateur"
+    readonly property string localLabel: picker.localName || I18n.tr("machine.thisComputer")
 
     function choose(entry) {
         picker.open = false;
@@ -218,7 +218,7 @@ Item {
                     anchors.right: parent.right
                     anchors.rightMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
-                    text: entry.local ? "local" : entry.modelData.online ? (entry.modelData.os || "") : "hors ligne"
+                    text: entry.local ? I18n.tr("machine.local") : entry.modelData.online ? (entry.modelData.os || "") : I18n.tr("machine.offline")
                     font.family: "Inter"
                     font.pixelSize: 10
                     color: Theme.textDim

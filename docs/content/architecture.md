@@ -1,72 +1,74 @@
 ---
 title: Architecture & conventions
-group: Général
-summary: Organisation du dépôt et règles d'import QML (qmldir, chemins relatifs, Qt.resolvedUrl).
-links: [shell, panels, widgets, ai, backend, theme]
+group: General
+summary: Repository layout and QML import rules (qmldir, relative paths, Qt.resolvedUrl).
+links: [shell, panels, widgets, ai, backend, theme, languages]
 ---
 
 # Architecture & conventions
 
-## Organisation du dépôt
+## Repository layout
 
 ```
-shell.qml            Point d'entrée Quickshell (barre + panneaux, IPC via FIFO)
-services/            Singletons transverses (voir Thème) et sources de recherche
-  Theme.qml, ClaudeSessions.qml
-  claude-index.sh, claude-transcript.sh   (voir « Scripts » ci-dessous)
-panels/              Chrome de haut niveau (fenêtres Wayland)
-  TopBar, BottomDock, CardCarousel, SidePanel, RightPanel
-widgets/             Contenu des panneaux
-  HardwareStats, NotesWidget, Metronome, Tuner, MusicPlayerWidget,
-  QuickControls, ChromaGraph, MiniGraph, Settings
-ai/                  Cluster chat IA
-  AIPanel (sélecteur), ClaudeChat, OllamaChat, OllamaTools,
-  SessionTranscript
-anna/                Daemon Rust unique (voir Backend)
+shell.qml            Quickshell entry point (bar + panels, IPC through a FIFO)
+services/            Cross-cutting singletons (see Theme) and search sources
+  Theme.qml, I18n.qml, ClaudeSessions.qml, Notifications.qml (notification server)
+  claude-index.sh   (see “Scripts” below)
+panels/              Top-level chrome (Wayland windows)
+  ConversationBar, WidgetHub, HubTopBar, FloatingWidgets, WidgetCard,
+  AiDock, PolkitPrompt
+widgets/             Panel contents
+  FileExplorer, HardwareStats, PhoneWidget, NotificationCenter, NotificationCard,
+  MusicPlayerWidget, Metronome,
+  Tuner, ChromaGraph, MiniGraph, GestureControls, Settings, DeviceSettings
+i18n/                One dictionary per language (en.json, fr.json…)
+anna/                Single Rust daemon (see Backend)
 assets/              nixos.svg
 ```
 
-Détail par couche : [le shell](#shell), [les panneaux](#panels),
-[les widgets](#widgets), [le cluster IA](#ai), [le backend](#backend).
+Per layer: [the shell](#shell), [the panels](#panels),
+[the widgets](#widgets), [the AI cluster](#ai), [the backend](#backend),
+[the languages](#languages).
 
-## Conventions QML
+## QML conventions
 
-- **Chaque sous-dossier a un `qmldir`.** Les composants sont importés par
-  **chemin relatif** (`import "../services"`, `import "../widgets"`, …).
-- On **n'utilise pas** `import "root:/…"` — déconseillé par Quickshell : ça casse
-  le LSP et les singletons.
+- **Every subfolder has a `qmldir`.** Components are imported by **relative
+  path** (`import "../services"`, `import "../widgets"`, …).
+- We **do not use** `import "root:/…"` — Quickshell advises against it: it
+  breaks the LSP and singletons.
+- **No user-facing text is written in the code**: it goes through
+  `I18n.tr("key")` and lives in `i18n/` (see [Languages](#languages)).
 
-## Scripts shell embarqués
+## Embedded shell scripts
 
-Le travail qui relève franchement du shell vit dans des fichiers `.sh` posés à
-côté du QML qui les lance, et non dans une chaîne JavaScript échappée — un
-programme awk entre apostrophes dans une chaîne QML n'est ni lisible ni
-testable. Les deux actuels servent le mode IA du [dock](#panels) :
+Work that is plainly shell work lives in `.sh` files next to the QML that
+runs them, not in an escaped JavaScript string — an awk program in quotes
+inside a QML string is neither readable nor testable. The current one feeds
+the bar's search and the [AI dock](#ai)'s history:
 
-| Script | Rôle |
+| Script | Role |
 | --- | --- |
-| `services/claude-index.sh` | L'index des conversations Claude de la machine, une ligne TSV par session. |
-| `services/claude-transcript.sh` | Les derniers échanges d'une session, un objet JSON par ligne. |
+| `services/claude-index.sh` | The index of the machine's Claude conversations, one TSV line per session. |
 
-L'indexeur ne lit que les deux bouts de chaque JSONL et tient en quatre
-processus quelle que soit la quantité de sessions — la version naïve, une
-poignée de `grep`/`jq` par fichier, coûtait 3 s là où celle-ci tient en 50 ms.
-C'est le prix des forks, pas celui du disque.
+The indexer only reads both ends of each JSONL and runs in four processes
+whatever the number of sessions — the naive version, a handful of
+`grep`/`jq` per file, took 3 s where this one takes 50 ms. The cost is the
+forks, not the disk.
 
-Le QML les localise par `Qt.resolvedUrl`, donc ils suivent l'installation comme
-le reste du layout.
+The QML finds it through `Qt.resolvedUrl`, so it follows the installation
+like the rest of the layout.
 
-## Relocalisable par conception
+## Relocatable by design
 
-- Les composants QML sont importés par **chemin relatif** : aucun chemin absolu,
-  le layout fonctionne quel que soit le préfixe d'installation.
-- Le backend est joint via le **socket** `$XDG_RUNTIME_DIR/anna.sock` (pas de
-  chemin en dur), ce qui permet les deux modes d'[installation](#installation).
+- QML components are imported by **relative path**: no absolute path, the
+  layout works whatever the installation prefix.
+- The backend is reached through the **socket** `$XDG_RUNTIME_DIR/anna.sock`
+  (no hard-coded path), which allows both [installation](#installation) modes.
 
-## Flux audio (daemon anna)
+## Audio flow (anna daemon)
 
-Le backend audio est natif : `anna` capture le micro et lit le clic via
-[`cpal`](https://crates.io/crates/cpal), et fait la DSP via
-[`rustfft`](https://crates.io/crates/rustfft). Toute la math est dérivée de la
-**fréquence réelle du périphérique** (pas de rééchantillonnage). Détails dans
-[Backend](#backend) et [Outils musicaux](#audio-tools).
+The audio backend is native: `anna` captures the microphone and plays the
+click through [`cpal`](https://crates.io/crates/cpal), and does the DSP with
+[`rustfft`](https://crates.io/crates/rustfft). All the math is derived from
+the **device's real sample rate** (no resampling). Details in
+[Backend](#backend) and [Music tools](#audio-tools).
