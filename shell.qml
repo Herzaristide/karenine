@@ -15,7 +15,7 @@ ShellRoot {
     signal barClosed()
 
     // Les anciens numéros de widget (widget:N) des raccourcis existants.
-    readonly property var legacyWidgets: ({ 0: "stats", 1: "sessions", 3: "metronome", 4: "musique" })
+    readonly property var legacyWidgets: ({ 0: "stats", 1: "sessions", 3: "musique", 4: "lecteur" })
 
     // ── IPC externe via FIFO /tmp/qs-panel.fifo ──────────────────────────
     //   echo "widget:NOM[:ACTION]" > /tmp/qs-panel.fifo → ouvre / ferme / bascule
@@ -26,9 +26,9 @@ ShellRoot {
     //   echo "controls" > /tmp/qs-panel.fifo   → bascule les réglages (sortie, entrée, webcam)
     //   echo "camera"   > /tmp/qs-panel.fifo   → bascule le widget caméra/gestes
     //   echo "close"    > /tmp/qs-panel.fifo   → ferme tout
-    //   NOM : stats, musique, metronome, son, camera, reglages, sessions, tout
+    //   NOM : stats, lecteur, musique, son, camera, reglages, sessions, tout
     //   ACTION : ouvrir, fermer, basculer (le défaut)
-    //   « widget:N » reste compris : 0=stats 1=sessions 3=metronome 4=musique
+    //   « widget:N » reste compris : 0=stats 1=sessions 3=musique 4=lecteur
     Process {
         id: ipcListener
         command: [

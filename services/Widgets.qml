@@ -7,47 +7,54 @@ import Quickshell
 // anna/src/claude/desk.rs), par la FIFO du shell :
 //
 //   echo "widget:stats"            > /tmp/qs-panel.fifo   → bascule
-//   echo "widget:musique:ouvrir"   > /tmp/qs-panel.fifo
+//   echo "widget:lecteur:ouvrir"   > /tmp/qs-panel.fifo
 //   echo "widget:tout:fermer"      > /tmp/qs-panel.fifo
 //
 // Les noms sont ceux de `names`, en français comme les outils du pilote.
 // Ceux de `hubTabs` vivent dans la capsule de la barre de conversation, que
 // le flocon agrandit vers le haut (panels/WidgetHub.qml) : un onglet chacun,
-// un seul affiché à la fois. « recherche » n'est pas un widget : les
-// résultats de ce qu'on tape dans le champ, qui l'ouvre de lui-même.
-// « camera » reste une carte flottante (FloatingWidgets), « sessions » le
-// dock IA.
+// un seul affiché à la fois. « explorer » parcourt les dossiers du PC
+// (widgets/FileExplorer.qml). « camera » reste une carte flottante
+// (FloatingWidgets), « sessions » le dock IA.
 Singleton {
     id: widgets
 
-    readonly property var names: ["stats", "network", "telephone", "musique", "metronome", "accordeur", "son", "camera", "reglages", "sessions"]
+    readonly property var names: ["explorer", "stats", "telephone", "lecteur", "musique", "son", "camera", "reglages", "sessions"]
 
     // Les onglets des widgets, dans l'ordre de la barre d'onglets.
-    readonly property var hubTabs: ["recherche", "stats", "network", "telephone", "musique", "metronome", "accordeur", "reglages"]
+    readonly property var hubTabs: ["explorer", "stats", "telephone", "lecteur", "musique", "reglages"]
     readonly property var hubLabels: ({
-        recherche: "Recherche",
+        explorer: "Explorer",
         stats: "Système",
-        network: "Network",
         telephone: "Téléphone",
+        lecteur: "Lecteur",
         musique: "Musique",
-        metronome: "Métronome",
-        accordeur: "Accordeur",
         reglages: "Réglages"
     })
     readonly property var hubIcons: ({
-        recherche: "search.svg",
+        explorer: "folder.svg",
         stats: "stats.svg",
-        network: "server.svg",
         telephone: "phone.svg",
+        lecteur: "play.svg",
         musique: "music.svg",
-        metronome: "metronome.svg",
-        accordeur: "tuner.svg",
         reglages: "settings.svg"
     })
 
     // Les widgets affichés dans la capsule, et l'onglet (gardé quand on les ferme).
     property bool hubOpen: false
     property string hubTab: "stats"
+    // Le dossier ouvert dans l'explorateur, gardé d'un onglet à l'autre ;
+    // vide : le dossier personnel.
+    property string explorerPath: ""
+    // La machine choisie, la même pour tous les onglets qui en montrent une
+    // (Explorer, Système ; cf. MachinePicker) : null pour celle-ci, sinon un
+    // serveur du tailnet ({ name, host }).
+    property var machine: null
+    readonly property string machineName: widgets.machine ? widgets.machine.name : ""
+    // Ce que l'Explorer en a monté : null pour celle-ci, sinon le serveur
+    // monté par sshfs (cf. FileExplorer.connect). Il rattrape `machine` dès
+    // qu'il est affiché.
+    property var explorerMachine: null
 
     // Le titre de chaque carte flottante.
     readonly property var titles: ({
@@ -66,8 +73,9 @@ Singleton {
     }
 
     // Les anciens noms d'onglets, devenus une partie d'un autre : « son »
-    // (sortie, entrée) vit dans les réglages.
-    readonly property var aliases: ({ son: "reglages" })
+    // (sortie, entrée) vit dans les réglages, le métronome et l'accordeur
+    // dans « musique », les serveurs du tailnet (« network ») dans « stats ».
+    readonly property var aliases: ({ son: "reglages", metronome: "musique", accordeur: "musique", network: "stats" })
 
     function isOpen(name) {
         name = widgets.aliases[name] || name;
@@ -108,7 +116,7 @@ Singleton {
                 widgets.closeAll();
             return true;
         }
-        if (widgets.names.indexOf(name) < 0)
+        if (widgets.names.indexOf(name) < 0 && !widgets.aliases[name])
             return false;
         var on = action === "ouvrir" ? true
                : action === "fermer" ? false

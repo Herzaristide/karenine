@@ -403,7 +403,7 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
 
         // ── tailnet devices ──────────────────────────────────────────────
         Command::ServersWatch => {
-            let mut memory = servers::CpuMemory::new();
+            let mut memory = servers::Memory::default();
             let mut interval = tokio::time::interval(Duration::from_secs(3));
             // A slow server delays the next round rather than stacking them.
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);

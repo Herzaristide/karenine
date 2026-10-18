@@ -12,11 +12,11 @@ import "../services"
 // ce qu'on y écrit va au pilote (ClaudeLive.pilotAsk), et sa réponse
 // s'affiche juste au-dessus.
 //
-//        ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-//      ░░  › baisse le son                            ░░   le dernier tour,
-//      ░░  · volume {"delta":-10}                     ░░   sans cadre, sur un
-//      ░░  Volume à 40 %.          (en grand)         ░░   voile flouté
-//        ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+//          ╭──────────────────────────────────────────╮
+//          │ › baisse le son                       ✕  │   le dernier tour,
+//          │ (volume {"delta":-10})                   │   sur une carte du
+//          │ Volume à 40 %.                           │   même verre
+//          ╰──────────────────────────────────────────╯
 //         ✦╭──────────────────────────────────────────╮✦  capsule de verre,
 //         ✦│ ❄  Demander à Karénine…             (🎤) │✦  halo irisé quand
 //         ✦╰──────────────────────────────────────────╯✦  elle écoute ou pense
@@ -30,12 +30,12 @@ import "../services"
 // Le flocon, à gauche, agrandit la capsule vers le haut pour montrer les
 // widgets, un onglet à la fois (panels/WidgetHub.qml).
 //
-// La même barre cherche : ce qu'on tape alimente l'onglet « Recherche » du
-// hub, où les résultats (applications, fichiers, réglages, web — le service
-// Search, celui de l'ancien dock) forment un quadrillage, le meilleur en bas
-// à gauche, près du champ. L'onglet ne s'ouvre pas de lui-même : on y va (flocon, ↑,
-// clic). Entrée part toujours au pilote ; sur l'onglet, ↑ entre dans la
-// grille, et Entrée ou un clic ouvre alors le résultat retenu.
+// La même barre cherche : dès la première lettre, les suggestions
+// (applications, fichiers, réglages, web — le service Search, celui de
+// l'ancien dock) s'empilent juste au-dessus, sur une carte du même verre que
+// la capsule, la meilleure contre la barre. Écrire referme les widgets.
+// Entrée part toujours au pilote ; ↑ entre dans la liste, et Entrée ou un
+// clic ouvre alors la suggestion retenue.
 //
 // Le texte est en Inter (installée par la config NixOS), le reste du bureau
 // en JetBrains Mono.
@@ -58,8 +58,11 @@ PanelWindow { // qmllint disable uncreatable-type
     WlrLayershell.namespace: "quickshell-conversation"
     // Exclusive le temps d'une demande au clavier : une surface layer ne
     // reçoit les frappes qu'une fois cliquée sinon.
-    WlrLayershell.keyboardFocus: bar.focusRequested ? WlrKeyboardFocus.Exclusive
-                                                    : WlrKeyboardFocus.OnDemand
+    // Pas pendant un glisser depuis l'explorateur : tant qu'une surface layer
+    // tient le clavier en exclusif, Hyprland ne donne plus le focus du
+    // pointeur aux fenêtres, qui ne verraient jamais le fichier arriver.
+    WlrLayershell.keyboardFocus: bar.focusRequested && !DragState.active
+                                 ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand
 
     anchors { bottom: true }
     margins { // qmllint disable unqualified unresolved-type
@@ -68,14 +71,15 @@ PanelWindow { // qmllint disable uncreatable-type
     // Cachée la plupart du temps : elle passe par-dessus les fenêtres quand
     // elle vient, plutôt que de leur prendre de la place pour rien.
     exclusiveZone: 0
-    // Plus large que la barre : le voile de la réponse s'efface sur les côtés.
+    // Un peu plus large que la barre : de la marge autour des cartes.
     implicitWidth: bar.barW + 240
     implicitHeight: Math.max(480, bar.barH + bar.hubMax + 20)
     color: "transparent"
 
     mask: Region { // qmllint disable unqualified
         Region { item: bar.shown ? pill : null }
-        Region { item: answer.shown && !bar.searching && !bar.dismissed && !Widgets.hubOpen ? flick : null }
+        Region { item: answer.on ? answer : null }
+        Region { item: results.visible ? results : null }
     }
 
     // ── Apparaître, disparaître ──────────────────────────────────
@@ -133,12 +137,7 @@ PanelWindow { // qmllint disable uncreatable-type
 
     Connections {
         target: Widgets
-        // Les résultats cachés, Entrée ne doit plus ouvrir celui qui était retenu.
-        function onHubTabChanged() {
-            bar.selected = -1;
-        }
         function onHubOpenChanged() {
-            bar.selected = -1;
             if (Widgets.hubOpen)
                 bar.dismissed = false;
             // Fermés avec le clavier dedans : il retourne au champ, sinon la
@@ -182,7 +181,7 @@ PanelWindow { // qmllint disable uncreatable-type
     // attend du texte. Pas pendant le contrôle gestuel : le curseur piloté au
     // doigt bouge sans cesse.
     readonly property int leaveSlack: 60
-    readonly property bool pointerInside: pillHover.hovered
+    readonly property bool pointerInside: pillHover.hovered || resultsHover.hovered
     readonly property bool typing: bar.shown && !bar.dismissed && !bar.voiceOn
                                    && !ClaudeLive.pilotBusy
                                    && (bar.focusRequested || input.activeFocus || input.text.length > 0)
@@ -196,7 +195,10 @@ PanelWindow { // qmllint disable uncreatable-type
     Timer {
         interval: 250
         repeat: true
-        running: bar.typing && !Gesture.active
+        // Ni pendant un glisser depuis l'explorateur : le curseur part forcément
+        // vers une autre application, et fermer la barre détruirait la tuile
+        // source au milieu du geste. Il repart de zéro au lâcher.
+        running: bar.typing && !Gesture.active && !DragState.active
         onRunningChanged: bar.closest = -1
         onTriggered: {
             if (bar.pointerInside)
@@ -220,12 +222,15 @@ PanelWindow { // qmllint disable uncreatable-type
     function cursorAt(line) {
         var xy = line.trim().split(",");
         var s = bar.screen;
-        if (xy.length !== 2 || !s || !bar.typing)
+        if (xy.length !== 2 || !s || !bar.typing || DragState.active)
             return;
         var x = parseFloat(xy[0]);
         var y = parseFloat(xy[1]);
 
-        // Le rectangle de la capsule, widgets ou résultats compris.
+        // Le rectangle de la capsule (widgets compris) seule : y ajouter les
+        // suggestions ferait sauter la distance quand elles apparaissent ou
+        // disparaissent (champ vidé), et la barre se fermerait sans que la
+        // souris ait bougé. Les survoler compte quand même (pointerInside).
         var left = s.x + (s.width - bar.barW) / 2;
         var bottom = s.y + s.height - bar.gap;
         var top = bottom - pill.height;
@@ -310,7 +315,7 @@ PanelWindow { // qmllint disable uncreatable-type
     }
 
     function submit() {
-        if (bar.resultsShown && bar.selected >= 0) {
+        if (bar.selected >= 0) {
             bar.activateResult(Search.results[bar.selected]);
             return;
         }
@@ -329,13 +334,10 @@ PanelWindow { // qmllint disable uncreatable-type
     }
 
     // ── La recherche ─────────────────────────────────────────────
-    // Ce qu'on tape part aussi dans Search, et ses résultats s'affichent dans
-    // l'onglet « Recherche » ; tant qu'on cherche, ils passent devant la
-    // réponse du pilote.
+    // Ce qu'on tape part aussi dans Search ; tant qu'il y a des suggestions,
+    // elles passent devant la réponse du pilote.
     readonly property bool searching: Search.active && !bar.voiceOn
-    // L'onglet des résultats est celui qu'on voit.
-    readonly property bool resultsShown: bar.hubOn && Widgets.hubTab === "recherche"
-    // Le résultat retenu au clavier ; -1 : Entrée va au pilote.
+    // La suggestion retenue au clavier ; -1 : Entrée va au pilote.
     property int selected: -1
 
     Connections {
@@ -360,18 +362,12 @@ PanelWindow { // qmllint disable uncreatable-type
         bar.release();
     }
 
-    // ← → dans le champ : vrai s'ils ont servi (tuile d'à côté, réglage
-    // retenu, ou widget d'à côté), faux pour laisser bouger le curseur du
-    // texte. Sur une tuile, ils passent à la voisine ; avec Maj, ils règlent
-    // le réglage retenu (volume, accent).
-    function arrow(dir, shift) {
-        if (bar.resultsShown && bar.selected >= 0) {
-            if (shift)
-                bar.adjustSelected(dir);
-            else
-                bar.selected = Math.max(0, Math.min(Search.results.length - 1, bar.selected + dir));
+    // ← → dans le champ : vrai s'ils ont servi (réglage retenu, ou widget
+    // d'à côté), faux pour laisser bouger le curseur du texte. Sur un
+    // réglage retenu (volume, accent), ils le règlent.
+    function arrow(dir) {
+        if (bar.adjustSelected(dir))
             return true;
-        }
         if (!Widgets.hubOpen || input.text.length > 0)
             return false;
         widgetHub.step(dir);
@@ -386,17 +382,14 @@ PanelWindow { // qmllint disable uncreatable-type
         return true;
     }
 
-    // ↑ ↓ dans la grille, une rangée à la fois (la première en bas, contre
-    // le champ) : ↑ y entre par la première tuile, ↓ depuis la première
-    // rangée revient au champ (-1). Vrai s'ils ont servi.
+    // ↑ ↓ dans la liste (la meilleure en bas, contre le champ) : ↑ y entre
+    // par la première, ↓ depuis elle revient au champ (-1). Vrai s'ils ont
+    // servi.
     function rowStep(dir) {
-        var n = bar.resultsShown && bar.searching ? Search.results.length : 0;
+        var n = results.on ? Search.results.length : 0;
         if (n === 0 || (dir < 0 && bar.selected < 0))
             return false;
-        if (dir > 0)
-            bar.selected = bar.selected < 0 ? 0 : Math.min(n - 1, bar.selected + bar.gridColumns);
-        else
-            bar.selected = bar.selected >= bar.gridColumns ? bar.selected - bar.gridColumns : -1;
+        bar.selected = Math.max(-1, Math.min(n - 1, bar.selected + dir));
         return true;
     }
 
@@ -547,8 +540,7 @@ PanelWindow { // qmllint disable uncreatable-type
             Component.onDestruction: Audio.active = false
             BarSlider {
                 anchors.verticalCenter: parent.verticalCenter
-                // À la largeur d'une tuile de résultat.
-                implicitWidth: 64
+                implicitWidth: 140
                 value: Audio.level
                 knobColor: Audio.muted ? Theme.textDim : bar.hue(0)
                 onMoved: (v) => Audio.set(v)
@@ -571,7 +563,7 @@ PanelWindow { // qmllint disable uncreatable-type
         id: accentControl
         BarSlider {
             id: accentSlider
-            implicitWidth: 104
+            implicitWidth: 170
             rainbow: true
             saturation: Math.max(0.35, Theme.accentColor.hsvSaturation)
             brightness: Math.max(0.35, Theme.accentColor.hsvValue)
@@ -667,8 +659,10 @@ PanelWindow { // qmllint disable uncreatable-type
     }
 
     // ── La réponse, au-dessus de la barre ────────────────────────
-    // Pas de cadre : le texte, en grand, sur un voile flouté
-    // (veilWindow, plus bas).
+    // Une carte du même verre que la capsule et les suggestions (Hyprland la
+    // floute, son ombre vit avec celle de la capsule). En haut, ce qui a été
+    // demandé, discret, et de quoi la fermer ; puis ce que le pilote a fait,
+    // en pastilles ; puis sa réponse.
     Item {
         id: answer
 
@@ -694,27 +688,25 @@ PanelWindow { // qmllint disable uncreatable-type
         }
 
         readonly property bool hasContent: notice.length > 0 || bar.turn !== null
-
-        // Le voile déborde largement du texte pour s'effacer en douceur.
-        readonly property int fade: 90
+        readonly property bool on: shown && hasContent && !bar.searching && !bar.dismissed && !Widgets.hubOpen
+        readonly property int padX: 20
+        readonly property int padY: 16
 
         anchors.bottom: pill.top
+        anchors.bottomMargin: 10
         anchors.horizontalCenter: parent.horizontalCenter
-        width: bar.width
-        height: Math.min(column.implicitHeight + fade * 2, bar.height - bar.barH)
+        width: bar.barW
+        height: Math.min(column.implicitHeight + 2 * padY, bar.height - bar.barH - 20)
+        Behavior on height { NumberAnimation { duration: 260; easing.type: Easing.OutQuint } }
 
         visible: opacity > 0
-        opacity: shown && hasContent && !bar.searching && !bar.dismissed && !Widgets.hubOpen ? 1 : 0
+        opacity: on ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
 
         // Elle monte de la barre en décélérant, comme la capsule.
-        transformOrigin: Item.Bottom
-        scale: shown ? 1 : 0.98
-        Behavior on scale { NumberAnimation { duration: 460; easing.type: Easing.OutQuint } }
-        transform: Translate {
-            y: answer.shown ? 0 : 12
-            Behavior on y { NumberAnimation { duration: 460; easing.type: Easing.OutQuint } }
-        }
+        property real rise: answer.on ? 0 : 12
+        Behavior on rise { NumberAnimation { duration: 460; easing.type: Easing.OutQuint } }
+        transform: Translate { y: answer.rise }
 
         Timer {
             id: hideTimer
@@ -732,6 +724,24 @@ PanelWindow { // qmllint disable uncreatable-type
             }
         }
 
+        // Le verre, et son reflet en haut, comme la capsule.
+        Rectangle {
+            anchors.fill: parent
+            radius: 22
+            color: Qt.alpha(Theme.bgDeep, Theme.darkMode ? 0.62 : 0.7)
+            border.width: 1
+            border.color: Theme.darkMode ? Qt.rgba(1, 1, 1, 0.09) : Qt.rgba(0, 0, 0, 0.08)
+        }
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: 1
+            radius: 21
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: Theme.darkMode ? Qt.rgba(1, 1, 1, 0.07) : Qt.rgba(1, 1, 1, 0.5) }
+                GradientStop { position: Math.min(1, 30 / Math.max(1, answer.height)); color: "transparent" }
+            }
+        }
+
         // Un clic droit la congédie.
         MouseArea {
             anchors.fill: parent
@@ -742,10 +752,10 @@ PanelWindow { // qmllint disable uncreatable-type
         Flickable {
             id: flick
             anchors.fill: parent
-            anchors.leftMargin: (answer.width - bar.barW) / 2 + 12
-            anchors.rightMargin: anchors.leftMargin
-            anchors.topMargin: answer.fade
-            anchors.bottomMargin: answer.fade * 0.6
+            anchors.leftMargin: answer.padX
+            anchors.rightMargin: answer.padX
+            anchors.topMargin: answer.padY
+            anchors.bottomMargin: answer.padY
             contentHeight: column.implicitHeight
             clip: true
             boundsBehavior: Flickable.StopAtBounds
@@ -755,103 +765,157 @@ PanelWindow { // qmllint disable uncreatable-type
             Column {
                 id: column
                 width: flick.width
-                spacing: 8
+                spacing: 10
 
-                // Le texte seul, sous son ombre ; les points animés restent
-                // dehors, sinon l'ombre se recalculerait à chaque image tant que
-                // le pilote réfléchit.
-                Column {
+                Text {
                     width: parent.width
-                    spacing: 8
+                    visible: answer.notice.length > 0
+                    text: answer.notice
+                    wrapMode: Text.Wrap
+                    font.family: bar.uiFont
+                    font.pixelSize: 14
+                    font.weight: Font.Medium
+                    color: Theme.colorDanger
+                }
 
-                    // Une ombre douce sous les lettres : lisibles même là où le
-                    // voile s'éclaircit.
-                    layer.enabled: true
-                    layer.effect: MultiEffect {
-                        shadowEnabled: true
-                        shadowColor: Theme.darkMode ? "#000000" : "#ffffff"
-                        shadowBlur: 0.8
-                        shadowOpacity: 0.8
-                        shadowHorizontalOffset: 0
-                        shadowVerticalOffset: 1
-                    }
+                // Ce qui a été demandé — ou compris, pour vérifier la voix —,
+                // et la croix, à droite.
+                Item {
+                    width: parent.width
+                    height: Math.max(heard.implicitHeight, 22)
+                    visible: answer.notice.length === 0 && bar.turn !== null
 
                     Text {
-                        width: parent.width
-                        visible: answer.notice.length > 0
-                        text: answer.notice
+                        id: heard
+                        anchors.left: parent.left
+                        anchors.right: closeBtn.left
+                        anchors.rightMargin: 10
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "<font color='" + bar.hue(0) + "'>›</font>  "
+                              + (bar.turn ? bar.turn.heard.replace(/&/g, "&amp;").replace(/</g, "&lt;") : "")
+                        textFormat: Text.StyledText
                         wrapMode: Text.Wrap
-                        font.family: bar.uiFont
-                        font.pixelSize: 18
-                        color: Theme.colorDanger
-                    }
-
-                    // Ce qui a été demandé — ou compris, pour vérifier la voix.
-                    Text {
-                        width: parent.width
-                        visible: answer.notice.length === 0 && bar.turn !== null
-                        text: "› " + (bar.turn ? bar.turn.heard : "")
-                        wrapMode: Text.Wrap
-                        maximumLineCount: 3
+                        maximumLineCount: 2
                         elide: Text.ElideRight
                         font.family: bar.uiFont
                         font.pixelSize: 12
                         color: Theme.textSecondary
                     }
 
-                    // Ce que le pilote a fait, en une ligne discrète.
-                    Text {
-                        width: parent.width
-                        visible: text.length > 0
-                        text: answer.notice.length === 0 && bar.turn
-                              ? bar.turn.actions.map(a => "· " + a).join("   ") : ""
-                        wrapMode: Text.Wrap
-                        maximumLineCount: 2
-                        elide: Text.ElideRight
-                        font.family: "JetBrains Mono"
-                        font.pixelSize: 11
-                        color: Theme.accentMuted
+                    Rectangle {
+                        id: closeBtn
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 22
+                        height: 22
+                        radius: 11
+                        color: Qt.alpha(Theme.textPrimary, closeMa.containsMouse ? 0.1 : 0.05)
+                        Behavior on color { ColorAnimation { duration: 140 } }
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "✕"
+                            font.family: bar.uiFont
+                            font.pixelSize: 10
+                            color: closeMa.containsMouse ? Theme.textPrimary : Theme.textSecondary
+                        }
+                        MouseArea {
+                            id: closeMa
+                            anchors.fill: parent
+                            anchors.margins: -4
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: answer.hide()
+                        }
                     }
+                }
+
+                // Ce que le pilote a fait : une pastille par action, de la
+                // teinte de la barre, comme les types des suggestions.
+                Flow {
+                    width: parent.width
+                    spacing: 6
+                    visible: answer.notice.length === 0 && bar.turn !== null && bar.turn.actions.length > 0
+
+                    Repeater {
+                        model: answer.notice.length === 0 && bar.turn ? bar.turn.actions : []
+
+                        Rectangle {
+                            id: chip
+                            required property string modelData
+                            width: Math.min(chipLabel.implicitWidth + 18, column.width)
+                            height: 22
+                            radius: 11
+                            color: Qt.alpha(bar.hue(0), 0.13)
+                            border.width: 1
+                            border.color: Qt.alpha(bar.hue(0), 0.22)
+
+                            Text {
+                                id: chipLabel
+                                anchors.centerIn: parent
+                                width: Math.min(implicitWidth, column.width - 18)
+                                text: chip.modelData
+                                elide: Text.ElideRight
+                                font.family: "JetBrains Mono"
+                                font.pixelSize: 10
+                                color: Theme.textSecondary
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    width: parent.width
+                    visible: answer.notice.length === 0 && bar.turn !== null && bar.turn.reply.length > 0
+                    text: bar.turn ? bar.turn.reply : ""
+                    textFormat: Text.MarkdownText
+                    wrapMode: Text.Wrap
+                    // Une confirmation courte s'affiche plus grand, une longue
+                    // réponse à la taille du texte courant.
+                    font.family: bar.uiFont
+                    font.pixelSize: text.length > 220 ? 14 : 17
+                    font.weight: text.length > 220 ? Font.Normal : Font.Medium
+                    lineHeight: 1.2
+                    color: bar.turn && bar.turn.failed ? Theme.colorDanger : Theme.textPrimary
+                    linkColor: bar.hue(0.05)
+                    onLinkActivated: (link) => Qt.openUrlExternally(link)
+                }
+
+                // Le pilote attend une réponse : on la tape dans la barre.
+                Rectangle {
+                    visible: bar.asking && answer.notice.length === 0
+                    width: askLabel.implicitWidth + 20
+                    height: 24
+                    radius: 12
+                    color: Qt.alpha(bar.hue(0), 0.18)
+                    border.width: 1
+                    border.color: Qt.alpha(bar.hue(0), 0.38)
 
                     Text {
-                        width: parent.width
-                        visible: answer.notice.length === 0 && bar.turn !== null && bar.turn.reply.length > 0
-                        text: bar.turn ? bar.turn.reply : ""
-                        textFormat: Text.MarkdownText
-                        wrapMode: Text.Wrap
-                        // Une confirmation courte s'affiche en grand, une longue
-                        // réponse un peu moins pour tenir à l'écran.
-                        font.family: bar.uiFont
-                        font.pixelSize: text.length > 220 ? 17 : 22
-                        font.weight: Font.Medium
-                        lineHeight: 1.15
-                        color: bar.turn && bar.turn.failed ? Theme.colorDanger : Theme.textPrimary
-                        linkColor: Theme.accentColor
-                        onLinkActivated: (link) => Qt.openUrlExternally(link)
-                    }
-
-                    // Le pilote attend une réponse : on la tape dans la barre.
-                    Text {
-                        visible: bar.asking && answer.notice.length === 0
+                        id: askLabel
+                        anchors.centerIn: parent
                         text: "↵ réponds dans la barre"
-                        font.family: "JetBrains Mono"
+                        font.family: bar.uiFont
                         font.pixelSize: 11
-                        color: Theme.accentColor
+                        font.weight: Font.Medium
+                        color: Theme.textPrimary
                     }
                 }
 
                 // Le pilote réfléchit : trois points qui respirent.
                 Row {
                     visible: answer.notice.length === 0 && ClaudeLive.pilotBusy
+                    height: 14
                     spacing: 5
                     Repeater {
                         model: 3
                         Rectangle {
                             id: dot
                             required property int index
-                            width: 8
-                            height: 8
-                            radius: 4
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 7
+                            height: 7
+                            radius: 3.5
                             color: bar.hue(dot.index * 0.14)
                             SequentialAnimation on opacity {
                                 running: ClaudeLive.pilotBusy
@@ -867,167 +931,221 @@ PanelWindow { // qmllint disable uncreatable-type
         }
     }
 
-    // ── Les résultats, dans l'onglet « Recherche » ───────────────
-    // La page de l'onglet (WidgetHub.searchPage) : un quadrillage de tuiles,
-    // une par résultat — l'icône, le nom, puis où il se trouve. Le meilleur
-    // est en bas à gauche, contre les onglets et le champ, pour que ↑ y entre
-    // directement. Trois rangées tiennent ; au-delà, la grille défile.
-    readonly property int gridColumns: 5
+    // ── Les suggestions, au-dessus de la barre ───────────────────
+    // Une carte du même verre que la capsule (Hyprland la floute aussi, son
+    // ombre vit avec celle de la capsule), posée juste au-dessus : une ligne
+    // par suggestion, l'icône, le nom puis où il se trouve, et son type dans
+    // une pastille à droite. La meilleure est en bas, contre la barre, pour
+    // que ↑ y entre directement ; la retenue prend la teinte de la barre,
+    // comme l'onglet actif des widgets.
+    Item {
+        id: results
 
-    Component {
-        id: searchPage
+        readonly property int rowH: 40
+        readonly property int maxRows: 7
+        readonly property int pad: 6
+        // Les widgets ouverts (le flocon, champ rempli) les cachent.
+        readonly property bool on: bar.searching && bar.shown && !Widgets.hubOpen
+                                   && Search.results.length > 0
+        // La liste qui part peut laisser le curseur loin de la capsule sans
+        // qu'il ait bougé : la distance repart de là.
+        onOnChanged: bar.closest = -1
 
-        Item {
-            id: results
+        anchors.bottom: pill.top
+        anchors.bottomMargin: 10
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: bar.barW
+        height: Math.min(Search.results.length, maxRows) * rowH + 2 * pad
+        Behavior on height { NumberAnimation { duration: 220; easing.type: Easing.OutQuint } }
 
-            readonly property int tileH: 100
+        opacity: on ? 1 : 0
+        visible: opacity > 0
+        Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+        // Elle monte de la barre en décélérant, comme la capsule.
+        property real drop: results.on ? 0 : 10
+        Behavior on drop { NumberAnimation { duration: 460; easing.type: Easing.OutQuint } }
+        transform: Translate { y: results.drop }
 
-            // Pas de résultat, ou rien d'écrit : ce que l'onglet attend.
-            Text {
-                anchors.centerIn: parent
-                width: parent.width - 40
-                visible: grid.count === 0
-                text: bar.searching ? "Aucun résultat — Entrée demande à Karénine"
-                                    : "Écris dans le champ : applications, fichiers, réglages, web"
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.Wrap
-                font.family: bar.uiFont
-                font.pixelSize: 13
-                color: Theme.textSecondary
+        HoverHandler { id: resultsHover }
+
+        // Le verre, et son reflet en haut, comme la capsule.
+        Rectangle {
+            anchors.fill: parent
+            radius: 22
+            color: Qt.alpha(Theme.bgDeep, Theme.darkMode ? 0.62 : 0.7)
+            border.width: 1
+            border.color: Theme.darkMode ? Qt.rgba(1, 1, 1, 0.09) : Qt.rgba(0, 0, 0, 0.08)
+        }
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: 1
+            radius: 21
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: Theme.darkMode ? Qt.rgba(1, 1, 1, 0.07) : Qt.rgba(1, 1, 1, 0.5) }
+                GradientStop { position: Math.min(1, 30 / Math.max(1, results.height)); color: "transparent" }
+            }
+        }
+
+        ListView {
+            id: list
+            anchors.fill: parent
+            anchors.margins: results.pad
+
+            model: Search.results
+            verticalLayoutDirection: ListView.BottomToTop
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            interactive: contentHeight > height
+            currentIndex: bar.selected
+            highlightFollowsCurrentItem: false
+            onCurrentIndexChanged: {
+                if (currentIndex >= 0)
+                    positionViewAtIndex(currentIndex, ListView.Contain);
             }
 
-            GridView {
-                id: grid
-                anchors.fill: parent
+            delegate: Item {
+                id: row
+                required property var modelData
+                required property int index
+                width: list.width
+                height: results.rowH
 
-                model: bar.searching ? Search.results : []
-                cellWidth: width / bar.gridColumns
-                cellHeight: results.tileH
-                verticalLayoutDirection: GridView.BottomToTop
-                clip: true
-                boundsBehavior: Flickable.StopAtBounds
-                interactive: contentHeight > height
-                currentIndex: bar.selected
-                highlightFollowsCurrentItem: false
-                onCurrentIndexChanged: {
-                    if (currentIndex >= 0)
-                        positionViewAtIndex(currentIndex, GridView.Contain);
+                readonly property bool current: bar.selected === row.index
+                readonly property string icon: bar.iconFor(row.modelData)
+                // Un réglage se règle sur place : son contrôle prend la place
+                // de la pastille du type. Les écrans, eux, passent au suivant
+                // d'un clic.
+                readonly property string control: bar.controlFor(row.modelData)
+                readonly property bool hasControl: row.control !== "" && row.control !== "screens"
+
+                Rectangle {
+                    anchors.fill: parent
+                    radius: height / 2
+                    color: row.current ? Qt.alpha(bar.hue(0), 0.16)
+                                       : Qt.alpha(Theme.textPrimary, rowMa.containsMouse ? 0.06 : 0)
+                    border.width: row.current ? 1 : 0
+                    border.color: Qt.alpha(bar.hue(0), 0.38)
+                    Behavior on color { ColorAnimation { duration: 120 } }
                 }
 
-                delegate: Item {
-                    id: tile
-                    required property var modelData
-                    required property int index
-                    width: grid.cellWidth
-                    height: grid.cellHeight
+                // L'icône, à la taille du flocon de la barre, alignée sur lui.
+                Item {
+                    id: rowIcon
+                    anchors.left: parent.left
+                    anchors.leftMargin: 10
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 24
+                    height: 24
 
-                    readonly property bool current: bar.selected === tile.index
-                    readonly property string icon: bar.iconFor(tile.modelData)
-                    // Un réglage se règle sur place : son contrôle prend la
-                    // place du sous-titre.
-                    readonly property string control: bar.controlFor(tile.modelData)
-                    readonly property bool hasControl: tile.control !== "" && tile.control !== "screens"
+                    Image {
+                        id: rowImage
+                        anchors.fill: parent
+                        source: row.icon
+                        sourceSize.width: 48
+                        sourceSize.height: 48
+                        fillMode: row.icon.startsWith("file://") ? Image.PreserveAspectCrop
+                                                                 : Image.PreserveAspectFit
+                        asynchronous: true
+                        smooth: true
+                        visible: row.icon.length > 0 && rowImage.status !== Image.Error
+                    }
 
+                    // Repli : l'initiale, sur une pastille de la teinte du type.
                     Rectangle {
                         anchors.fill: parent
-                        anchors.margins: 4
-                        radius: 14
-                        color: Qt.alpha(bar.hue(0), tile.current ? 0.22 : 0.1)
-                        border.width: tile.current ? 1 : 0
-                        border.color: Qt.alpha(bar.hue(0), 0.38)
-                        opacity: tile.current || tileMa.containsMouse ? 1 : 0
-                        Behavior on opacity { NumberAnimation { duration: 120 } }
-                    }
+                        radius: 7
+                        visible: !rowImage.visible
+                        color: Qt.alpha(row.modelData.tone, 0.2)
 
-                    // L'icône, en haut au centre.
-                    Item {
-                        id: tileIcon
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        y: 14
-                        width: 32
-                        height: 32
-
-                        Image {
-                            id: tileImage
-                            anchors.fill: parent
-                            source: tile.icon
-                            sourceSize.width: 64
-                            sourceSize.height: 64
-                            fillMode: tile.icon.startsWith("file://") ? Image.PreserveAspectCrop
-                                                                      : Image.PreserveAspectFit
-                            asynchronous: true
-                            smooth: true
-                            visible: tile.icon.length > 0 && tileImage.status !== Image.Error
-                        }
-
-                        // Repli : l'initiale, sur une pastille de la teinte du type.
-                        Rectangle {
-                            anchors.fill: parent
-                            radius: 9
-                            visible: !tileImage.visible
-                            color: Qt.alpha(tile.modelData.tone, 0.2)
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: tile.modelData.title.substring(0, 1).toUpperCase()
-                                color: tile.modelData.tone
-                                font.family: bar.uiFont
-                                font.pixelSize: 15
-                                font.weight: Font.DemiBold
-                            }
+                        Text {
+                            anchors.centerIn: parent
+                            text: row.modelData.title.substring(0, 1).toUpperCase()
+                            color: row.modelData.tone
+                            font.family: bar.uiFont
+                            font.pixelSize: 12
+                            font.weight: Font.DemiBold
                         }
                     }
+                }
+
+                // Le type, dans une pastille de sa teinte ; sur la ligne
+                // retenue, ce qu'Entrée fera.
+                Rectangle {
+                    id: kind
+                    visible: !row.hasControl
+                    anchors.right: parent.right
+                    anchors.rightMargin: 8
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: kindLabel.implicitWidth + 16
+                    height: 22
+                    radius: 11
+                    color: row.current ? Qt.alpha(bar.hue(0), 0.22) : Qt.alpha(row.modelData.tone, 0.13)
+                    Behavior on color { ColorAnimation { duration: 120 } }
 
                     Text {
-                        id: tileTitle
-                        anchors.top: tileIcon.bottom
-                        anchors.topMargin: 8
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: parent.width - 16
-                        text: tile.modelData.title
-                        horizontalAlignment: Text.AlignHCenter
+                        id: kindLabel
+                        anchors.centerIn: parent
+                        text: row.current ? "↵ ouvrir"
+                                          : bar.typeLabels[row.modelData.type] || row.modelData.type
+                        font.family: bar.uiFont
+                        font.pixelSize: 10
+                        font.weight: Font.Medium
+                        color: row.current ? Theme.textPrimary : Theme.textSecondary
+                    }
+                }
+
+                // Le nom, aligné sur le texte du champ, puis où il se
+                // trouve, en plus discret.
+                Row {
+                    anchors.left: rowIcon.right
+                    anchors.leftMargin: 14
+                    anchors.right: row.hasControl ? controlSlot.left : kind.left
+                    anchors.rightMargin: 10
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 8
+
+                    Text {
+                        id: rowTitle
+                        width: Math.min(implicitWidth, parent.width)
+                        text: row.modelData.title
                         elide: Text.ElideRight
                         font.family: bar.uiFont
-                        font.pixelSize: 12
+                        font.pixelSize: 13
                         font.weight: Font.Medium
                         color: Theme.textPrimary
                     }
 
-                    // Où il se trouve, ou à défaut son type, en plus discret.
                     Text {
-                        visible: !tile.hasControl
-                        anchors.top: tileTitle.bottom
-                        anchors.topMargin: 2
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        width: parent.width - 16
-                        text: tile.modelData.subtitle
-                              || bar.typeLabels[tile.modelData.type] || tile.modelData.type
-                        horizontalAlignment: Text.AlignHCenter
+                        width: Math.max(0, parent.width - rowTitle.width - parent.spacing)
+                        anchors.baseline: rowTitle.baseline
+                        // Le contrôle dit déjà la valeur.
+                        text: row.hasControl ? "" : row.modelData.subtitle || ""
                         elide: Text.ElideMiddle
                         font.family: bar.uiFont
-                        font.pixelSize: 10
+                        font.pixelSize: 11
                         color: Theme.textSecondary
                     }
+                }
 
-                    MouseArea {
-                        id: tileMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: bar.activateResult(tile.modelData)
-                    }
+                MouseArea {
+                    id: rowMa
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: bar.activateResult(row.modelData)
+                }
 
-                    // Après la zone de clic de la tuile : le contrôle reçoit
-                    // les siens en premier.
-                    Loader {
-                        anchors.top: tileTitle.bottom
-                        anchors.topMargin: 6
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        active: tile.hasControl
-                        sourceComponent: tile.control === "theme" ? themeControl
-                                       : tile.control === "volume" ? volumeControl
-                                       : tile.control === "accent" ? accentControl : null
-                    }
+                // Après la zone de clic de la ligne : le contrôle reçoit les
+                // siens en premier.
+                Loader {
+                    id: controlSlot
+                    anchors.right: parent.right
+                    anchors.rightMargin: 14
+                    anchors.verticalCenter: parent.verticalCenter
+                    active: row.hasControl
+                    sourceComponent: row.control === "theme" ? themeControl
+                                   : row.control === "volume" ? volumeControl
+                                   : row.control === "accent" ? accentControl : null
                 }
             }
         }
@@ -1043,6 +1161,58 @@ PanelWindow { // qmllint disable uncreatable-type
     // Les teintes du halo, autour de la couleur d'accent.
     function hue(shift) {
         return Theme.glow(shift);
+    }
+
+    // L'ombre portée d'une carte de verre (suggestions, réponse), découpée à
+    // sa forme comme celle de la capsule : elle ne passe jamais sous le verre.
+    component CardShadow: Item {
+        id: cs
+        required property Item card
+        readonly property int margin: 40
+        width: cs.card.width + 2 * cs.margin
+        height: cs.card.height + 2 * cs.margin
+        visible: cs.card.visible
+
+        Item {
+            id: csShadow
+            anchors.fill: parent
+            visible: false
+            layer.enabled: true
+            Rectangle {
+                x: cs.margin
+                y: cs.margin + 6
+                width: cs.card.width
+                height: cs.card.height
+                radius: 22
+                color: "#000000"
+            }
+        }
+        Item {
+            id: csCut
+            anchors.fill: parent
+            visible: false
+            layer.enabled: true
+            Rectangle {
+                x: cs.margin
+                y: cs.margin
+                width: cs.card.width
+                height: cs.card.height
+                radius: 22
+                color: "#000000"
+            }
+        }
+        MultiEffect {
+            anchors.fill: parent
+            source: csShadow
+            autoPaddingEnabled: false
+            blurEnabled: true
+            blur: 1.0
+            blurMax: 32
+            opacity: (Theme.darkMode ? 0.55 : 0.22) * cs.card.opacity
+            maskEnabled: true
+            maskSource: csCut
+            maskInverted: true
+        }
     }
 
     // ── Le halo ──────────────────────────────────────────────────
@@ -1117,6 +1287,23 @@ PanelWindow { // qmllint disable uncreatable-type
                 maskSource: pillShape
                 maskInverted: true
             }
+        }
+
+        // La même ombre sous la carte des suggestions et sous celle de la
+        // réponse (jamais affichées ensemble).
+        CardShadow {
+            card: results
+            x: (parent.width - results.width) / 2 - margin
+            y: parent.height - bar.gap - pill.height - results.anchors.bottomMargin
+               - results.height - margin
+            transform: Translate { y: results.drop }
+        }
+        CardShadow {
+            card: answer
+            x: (parent.width - answer.width) / 2 - margin
+            y: parent.height - bar.gap - pill.height - answer.anchors.bottomMargin
+               - answer.height - margin
+            transform: Translate { y: answer.rise }
         }
 
         Item {
@@ -1204,137 +1391,6 @@ PanelWindow { // qmllint disable uncreatable-type
         }
     }
 
-    // ── Le voile de la réponse ───────────────────────────────────
-    // Les résultats, eux, sont dans la capsule (l'onglet « Recherche »).
-    // Une zone plus sombre, sans aucun bord, qui se fond dans l'écran. Deux
-    // couches : un rectangle flouté sous le texte, et un halo bien plus large
-    // flouté à mi-résolution puis agrandi deux fois, ce qui double la douceur
-    // du fondu (le flou de Qt plafonne à 64 px). Le voile descend autour de
-    // la capsule, découpé à sa forme : il ne passe jamais sur le verre.
-    // Il vit dans sa propre surface, sans flou ni clic : sur celle de la
-    // barre, la règle `ignore_alpha` d'Hyprland découperait une zone floutée
-    // à bord net au milieu du dégradé.
-    property PanelWindow veilWindow: PanelWindow { // qmllint disable uncreatable-type
-        screen: bar.screen
-        WlrLayershell.layer: WlrLayer.Top
-        WlrLayershell.namespace: "quickshell-conversation-veil"
-        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-        anchors { bottom: true }
-        margins { // qmllint disable unqualified unresolved-type
-            bottom: bar.gap - answerVeil.below
-        }
-        exclusionMode: ExclusionMode.Ignore
-        implicitWidth: bar.barW + 2 * answerVeil.spread
-        implicitHeight: answerVeil.below + bar.height + answerVeil.spread
-        color: "transparent"
-        mask: Region {} // qmllint disable unqualified
-
-        // La capsule, à sa place dans cette surface : le trou du voile.
-        Item {
-            id: veilCut
-            anchors.fill: parent
-            visible: false
-            layer.enabled: true
-            Rectangle {
-                x: answerVeil.spread
-                y: answerVeil.height - answerVeil.below - pill.height + bar.lift
-                width: bar.barW
-                height: pill.height
-                radius: bar.barH / 2
-                color: "#000000"
-            }
-        }
-
-        Item {
-            id: answerVeil
-            // La marge laissée au fondu autour du contenu, et sous la capsule.
-            readonly property int spread: 240
-            readonly property int below: 90
-            // Ce qu'il couvre : le texte de la réponse.
-            readonly property real contentH: flick.height
-            // L'écart entre le bas du contenu et la capsule.
-            readonly property real contentGap: answer.fade * 0.6
-            // Le bas du contenu et son centre, dans cette surface.
-            readonly property real listBottom: height - below - bar.barH - contentGap
-            readonly property real listCenter: listBottom - contentH / 2
-            readonly property color tint: Theme.bgDeep
-            anchors.fill: parent
-
-            opacity: answer.opacity
-            // Effacé, ses calques et ses flous ne sont plus recalculés.
-            visible: opacity > 0
-            transform: Translate {
-                y: answer.shown ? 0 : 12
-                Behavior on y { NumberAnimation { duration: 460; easing.type: Easing.OutQuint } }
-            }
-
-            layer.enabled: true
-            layer.effect: MultiEffect {
-                maskEnabled: true
-                maskInverted: true
-                maskSource: veilCut
-            }
-
-            // Le halo large : la moitié de sa taille, flouté, agrandi deux fois.
-            Item {
-                id: halo
-                width: (bar.barW + 120) / 2
-                height: (answerVeil.contentH + 120) / 2
-                x: (answerVeil.width - width) / 2
-                y: answerVeil.listCenter - height / 2
-                scale: 2
-
-                Rectangle {
-                    id: haloSource
-                    anchors.fill: parent
-                    radius: 30
-                    color: Qt.alpha(answerVeil.tint, Theme.darkMode ? 0.5 : 0.42)
-                    visible: false
-                    layer.enabled: true
-                }
-                MultiEffect {
-                    anchors.fill: haloSource
-                    source: haloSource
-                    blurEnabled: true
-                    blur: 1.0
-                    blurMax: 64
-                }
-            }
-
-            // Le cœur, plus sombre, juste sous le texte. Son calque a la
-            // taille du rectangle et de la marge du flou, pas de la surface :
-            // la réponse qui s'écrit le refloute sur bien moins
-            // de pixels.
-            Item {
-                id: core
-                // Le flou (blurMax) y tient.
-                readonly property int margin: 64
-                x: answerVeil.spread - 10 - margin
-                y: answerVeil.listBottom - answerVeil.contentH - 10 - margin
-                width: bar.barW + 20 + 2 * margin
-                height: answerVeil.contentH + 30 + 2 * margin
-                visible: false
-                layer.enabled: true
-                Rectangle {
-                    x: core.margin
-                    y: core.margin
-                    width: bar.barW + 20
-                    height: answerVeil.contentH + 30
-                    radius: 40
-                    color: Qt.alpha(answerVeil.tint, Theme.darkMode ? 0.6 : 0.5)
-                }
-            }
-            MultiEffect {
-                anchors.fill: core
-                source: core
-                autoPaddingEnabled: false
-                blurEnabled: true
-                blur: 1.0
-                blurMax: 64
-            }
-        }
-    }
-
     Item {
         id: pill
         anchors.bottom: parent.bottom
@@ -1372,8 +1428,8 @@ PanelWindow { // qmllint disable uncreatable-type
 
         // ── Le verre ─────────────────────────────────────────────
         // Translucide : Hyprland floute ce qui passe derrière (même règle de
-        // couche que le voile de la réponse). Son ombre portée vit avec le
-        // halo, dans la surface sans flou.
+        // couche que les cartes de la réponse et des suggestions). Son ombre
+        // portée vit avec le halo, dans la surface sans flou.
         // Les coins gardent le rayon de la capsule fermée : ouverte, elle
         // devient une carte aux mêmes arrondis.
         Rectangle {
@@ -1402,7 +1458,6 @@ PanelWindow { // qmllint disable uncreatable-type
             id: widgetHub
             bar: bar
             expand: bar.expand
-            searchPage: searchPage
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
@@ -1696,16 +1751,18 @@ PanelWindow { // qmllint disable uncreatable-type
 
                 // La recherche suit la frappe ; la voix, elle, n'écrit pas ici.
                 onTextChanged: {
-                    // Les résultats attendent dans leur onglet : écrire ne
-                    // l'ouvre pas.
                     Search.query = text;
+                    // Écrire referme les widgets : les suggestions prennent
+                    // leur place, au-dessus de la capsule.
+                    if (text.length > 0)
+                        Widgets.hubOpen = false;
                 }
 
                 Keys.onReturnPressed: bar.submit()
                 Keys.onEnterPressed: bar.submit()
-                // La grille est au-dessus : ↑ y monte, ↓ redescend vers le champ.
-                // Champ vide, les widgets sont au-dessus : ↑ les ouvre, puis
-                // y entre (sur les onglets) ; ↓ les referme.
+                // Les suggestions sont au-dessus : ↑ y monte, ↓ redescend vers
+                // le champ. Champ vide, les widgets sont au-dessus : ↑ les
+                // ouvre, puis y entre (sur les onglets) ; ↓ les referme.
                 Keys.onUpPressed: (event) => {
                     if (bar.rowStep(1))
                         return;
@@ -1713,11 +1770,7 @@ PanelWindow { // qmllint disable uncreatable-type
                         widgetHub.enter();
                     else if (input.text.length === 0)
                         Widgets.hubOpen = true;
-                    // Du texte, les widgets fermés : ↑ va voir les résultats.
-                    else if (!Widgets.hubOpen) {
-                        Widgets.hubTab = "recherche";
-                        Widgets.hubOpen = true;
-                    } else
+                    else
                         event.accepted = false;
                 }
                 Keys.onDownPressed: (event) => {
@@ -1738,20 +1791,16 @@ PanelWindow { // qmllint disable uncreatable-type
                         event.accepted = true;
                     }
                 }
-                // Sur une tuile retenue, ← → passent à la voisine (Maj+← →
-                // règlent le volume ou l'accent) ; champ vide et widgets
-                // ouverts, ils changent de widget ; ailleurs ils déplacent le
-                // curseur du texte.
-                Keys.onLeftPressed: (event) => event.accepted = bar.arrow(-1, event.modifiers & Qt.ShiftModifier)
-                Keys.onRightPressed: (event) => event.accepted = bar.arrow(1, event.modifiers & Qt.ShiftModifier)
-                // Une sélection en cours s'abandonne avant la barre. Sur
-                // l'onglet Recherche, Échap abandonne la recherche : le champ
-                // se vide.
+                // Sur un réglage retenu (volume, accent), ← → le règlent ;
+                // champ vide et widgets ouverts, ils changent de widget ;
+                // ailleurs ils déplacent le curseur du texte.
+                Keys.onLeftPressed: (event) => event.accepted = bar.arrow(-1)
+                Keys.onRightPressed: (event) => event.accepted = bar.arrow(1)
+                // Une sélection en cours s'abandonne avant les widgets, puis
+                // la barre.
                 Keys.onEscapePressed: {
                     if (bar.selected >= 0)
                         bar.selected = -1;
-                    else if (bar.resultsShown && input.text.length > 0)
-                        bar.release();
                     else if (Widgets.hubOpen)
                         Widgets.hubOpen = false;
                     else

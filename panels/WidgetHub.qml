@@ -17,7 +17,7 @@ import "../widgets"
 //   │                                                │
 //   │      le widget de l'onglet, à l'horizontale     │  fondu croisé et léger
 //   │                                                │  glissement d'un onglet
-//   │  ⌕ Recherche  ▦ Système  ▤ Network  ▶ Musique…  │  à l'autre
+//   │  ▭ Explorer  ▦ Système  ☏ Téléphone  ▶ Lecteur… │  à l'autre
 //   │ ────────────────────────────────────────────── │
 //   │ ❄  Demander à Karénine…                     🎤 │  le champ, inchangé
 //   ╰────────────────────────────────────────────────╯
@@ -39,9 +39,6 @@ FocusScope {
     required property var bar
     // De 0 à 1 : la part de la capsule ouverte (ConversationBar.expand).
     property real expand: 0
-    // L'onglet « Recherche » : la liste des résultats, que la barre fournit
-    // (elle tient la sélection au clavier et les contrôles des réglages).
-    property Component searchPage: null
 
     // Échap : le clavier retourne au champ.
     signal leave()
@@ -84,14 +81,14 @@ FocusScope {
 
     // La hauteur de chaque widget, à l'horizontale.
     readonly property var heights: ({
-        // Trois rangées de tuiles de résultats (ConversationBar.searchPage).
-        recherche: 300,
-        stats: 196,
-        network: 196,
+        // Les lieux, trois rangées de tuiles, les disques.
+        explorer: 300 + 56,
+        // Le choix de la machine, puis trois cartes.
+        stats: 30 + 10 + 150,
         telephone: 196,
-        musique: 210,
-        metronome: 150,
-        accordeur: 150,
+        lecteur: 210,
+        // Le métronome, le fil, l'accordeur.
+        musique: 150 + 1 + 150,
         reglages: 330
     })
     readonly property int contentH: hub.heights[Widgets.hubTab] || 200
@@ -154,7 +151,7 @@ FocusScope {
                 // Celui qui s'efface n'est plus atteignable, ni au clic ni à Tab.
                 enabled: page.isCurrent
                 // Créé par petits morceaux, entre les images : les gros widgets
-                // (musique, réglages) ne figent plus le début de l'ouverture.
+                // (lecteur, réglages) ne figent plus le début de l'ouverture.
                 asynchronous: true
 
                 // Fondu croisé, et un léger glissement du côté de l'onglet.
@@ -166,24 +163,51 @@ FocusScope {
                     Behavior on x { NumberAnimation { duration: 420; easing.type: Easing.OutQuint } }
                 }
 
-                sourceComponent: page.modelData === "recherche" ? hub.searchPage
+                sourceComponent: page.modelData === "explorer" ? explorerPage
                                : page.modelData === "stats" ? statsPage
-                               : page.modelData === "network" ? serversPage
                                : page.modelData === "telephone" ? phonePage
+                               : page.modelData === "lecteur" ? playerPage
                                : page.modelData === "musique" ? musicPage
-                               : page.modelData === "metronome" ? metronomePage
-                               : page.modelData === "accordeur" ? tunerPage
                                : settingsPage
             }
         }
     }
 
+    // Un fichier ouvert : la barre s'efface pour laisser voir l'application.
+    Component { id: explorerPage; FileExplorer { onOpened: hub.bar.dismiss() } }
     Component { id: statsPage; HardwareStats {} }
-    Component { id: serversPage; ServersWidget {} }
     Component { id: phonePage; PhoneWidget {} }
-    Component { id: musicPage; MusicPlayerWidget {} }
-    Component { id: metronomePage; Metronome { active: true } }
-    Component { id: tunerPage; Tuner { active: true } }
+    Component { id: playerPage; MusicPlayerWidget {} }
+    // Le métronome au-dessus de l'accordeur, un fil entre les deux.
+    Component {
+        id: musicPage
+        Item {
+            Metronome {
+                id: metronome
+                active: true
+                width: parent.width
+                height: 150
+            }
+            Rectangle {
+                anchors.top: metronome.bottom
+                x: 10
+                width: parent.width - 20
+                height: 1
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0.0; color: "transparent" }
+                    GradientStop { position: 0.5; color: Qt.alpha(Theme.textPrimary, 0.1) }
+                    GradientStop { position: 1.0; color: "transparent" }
+                }
+            }
+            Tuner {
+                active: true
+                y: 151
+                width: parent.width
+                height: 150
+            }
+        }
+    }
     Component { id: settingsPage; Settings { showInternalHeader: false } }
 
     // ── La barre d'onglets ───────────────────────────────────────

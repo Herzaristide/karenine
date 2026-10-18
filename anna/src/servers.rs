@@ -1,4 +1,4 @@
-//! The devices of the tailnet, and their stats over SSH, for the « Network »
+//! The devices of the tailnet, and their stats over SSH, for the « Système »
 //! tab.
 //!
 //! The list is Tailscale's (`tailscale status --json`): every other device of
@@ -24,10 +24,17 @@
 //! `~/.local/state/anna/servers-wake.json`; the magic packet goes there and
 //! to 255.255.255.255. It only reaches a machine on the same LAN as this one,
 //! with WoL enabled in its firmware and NIC.
+//!
+//! GPU: NVIDIA through `nvidia-smi` (it does not wake the card), AMD through
+//! amdgpu's sysfs. Reading an AMD card's activity re-arms its runtime-PM
+//! autosuspend timer (5 s): a headless discrete card read every sample would
+//! never sleep again (~115 W at boost, see hwstats.rs). So a suspended card
+//! is only reported asleep, and an active one is read live at most every
+//! `GPU_EVERY`, letting it suspend in between when idle.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Serialize, Clone, Debug, PartialEq, Default)]
 pub struct Server {
@@ -79,6 +86,22 @@ pub struct ServerStats {
     pub temp: u32,
     /// One per filesystem (btrfs subvolumes of one volume count once).
     pub disks: Vec<RemoteDisk>,
+    /// Its main GPU (NVIDIA, else the AMD card with the most VRAM).
+    pub gpu: Option<RemoteGpu>,
+}
+
+#[derive(Serialize, Default, Clone, Debug, PartialEq)]
+pub struct RemoteGpu {
+    pub name: String,
+    /// Runtime-suspended: nothing was read, so as not to wake it.
+    pub asleep: bool,
+    /// %, -1 when not measured yet.
+    pub usage: i32,
+    /// Bytes, 0 when unknown.
+    pub mem_used: u64,
+    pub mem_total: u64,
+    /// °C, 0 when unknown.
+    pub temp: u32,
 }
 
 // ── The list ────────────────────────────────────────────────────────────────
@@ -204,22 +227,59 @@ df -P -B1 2>/dev/null | tail -n +2; echo @@; \
 hostname; echo @@; \
 ip -o -4 route get 1.1.1.1 2>/dev/null; echo @@; \
 ip -o link 2>/dev/null; echo @@; \
-ip -o -4 addr 2>/dev/null";
+ip -o -4 addr 2>/dev/null; echo @@; ";
 
-/// The previous /proc/stat totals of each server, for the CPU delta.
-pub type CpuMemory = HashMap<String, (u64, u64)>;
+/// The GPUs, through `sh` (it needs variables). Per amdgpu card, one line
+/// `amd <pci> <runtime status> <vram total>`, followed when it is active and
+/// `$1` is 1 by `<busy %> <vram used> <millidegrees>` (`-` unreadable); when
+/// `$2` is 1, its lspci line as `name <pci> …`. Then `nvidia <csv>` per
+/// NVIDIA card. A suspended card is never read: on recent kernels the read
+/// fails (EBUSY) without waking it, on older ones it would wake it.
+const GPU_SCRIPT: &str = "sh -c 'for d in /sys/class/drm/card[0-9]/device; do \
+[ -r $d/mem_info_vram_total ] || continue; \
+s=$(cat $d/power/runtime_status 2>/dev/null || echo active); \
+a=$(basename $(readlink -f $d)); \
+l=\"amd $a $s $(cat $d/mem_info_vram_total)\"; \
+if [ \"$s\" = active ] && [ \"$1\" = 1 ]; then \
+l=\"$l $(cat $d/gpu_busy_percent 2>/dev/null || echo -) $(cat $d/mem_info_vram_used 2>/dev/null || echo -) \
+$(cat $d/hwmon/hwmon*/temp1_input 2>/dev/null | head -1)\"; fi; \
+echo \"$l\"; \
+if [ \"$2\" = 1 ]; then lspci -s $a 2>/dev/null | sed \"s/^/name $a /\"; fi; done; \
+nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu \
+--format=csv,noheader,nounits 2>/dev/null | sed \"s/^/nvidia /\"' sh";
+
+/// An active AMD card is read live at most this often (see the module doc).
+const GPU_EVERY: Duration = Duration::from_secs(15);
+
+/// What a sample remembers for the next ones, per server (by name).
+#[derive(Default)]
+pub struct Memory {
+    /// The previous /proc/stat totals, for the CPU delta.
+    cpu: HashMap<String, (u64, u64)>,
+    /// When its GPU was last read live, and what it said.
+    gpu: HashMap<String, (Instant, RemoteGpu)>,
+    /// The name of each of its GPUs (PCI address → name), asked once.
+    gpu_names: HashMap<String, HashMap<String, String>>,
+}
 
 /// Sample every device at once: over ssh those that run it and are online,
 /// from Tailscale alone the others.
-pub async fn sample_all(memory: &mut CpuMemory) -> Vec<ServerStats> {
+pub async fn sample_all(memory: &mut Memory) -> Vec<ServerStats> {
     let mut wake = load_wake();
     let known = wake.clone();
     let tasks: Vec<_> = load()
         .await
         .into_iter()
         .map(|s| {
+            let live = memory.gpu.get(&s.name).map_or(true, |(at, _)| at.elapsed() >= GPU_EVERY);
+            let names = !memory.gpu_names.contains_key(&s.name);
             tokio::spawn(async move {
-                let result = if s.online && !s.host.is_empty() { Some(run_script(&s.host).await) } else { None };
+                let result = if s.online && !s.host.is_empty() {
+                    let script = format!("{SCRIPT}{GPU_SCRIPT} {} {}", live as u8, names as u8);
+                    Some(run_script(&s.host, &script).await)
+                } else {
+                    None
+                };
                 (s, result)
             })
         })
@@ -398,7 +458,7 @@ fn base(server: &Server) -> ServerStats {
     }
 }
 
-async fn run_script(host: &str) -> Result<String, String> {
+async fn run_script(host: &str, script: &str) -> Result<String, String> {
     let control = format!("{}/anna-ssh-%C", crate::paths::runtime_dir());
     let child = tokio::process::Command::new("ssh")
         .args([
@@ -410,7 +470,7 @@ async fn run_script(host: &str) -> Result<String, String> {
             "-o", "ControlPersist=120",
             "--",
             host,
-            SCRIPT,
+            script,
         ])
         .stdin(std::process::Stdio::null())
         .kill_on_drop(true)
@@ -428,7 +488,7 @@ async fn run_script(host: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-fn parse(server: &Server, text: &str, memory: &mut CpuMemory) -> ServerStats {
+fn parse(server: &Server, text: &str, memory: &mut Memory) -> ServerStats {
     let parts: Vec<&str> = text.split("@@").map(str::trim).collect();
     let part = |i: usize| parts.get(i).copied().unwrap_or("");
 
@@ -436,14 +496,17 @@ fn parse(server: &Server, text: &str, memory: &mut CpuMemory) -> ServerStats {
 
     // CPU: the delta since the last sample (0 on the first).
     if let Some((total, active)) = cpu_totals(part(0)) {
-        if let Some(&(pt, pa)) = memory.get(&server.name) {
+        if let Some(&(pt, pa)) = memory.cpu.get(&server.name) {
             let dt = total.saturating_sub(pt);
             if dt > 0 {
-                s.cpu_usage = ((active.saturating_sub(pa)) * 100 / dt).min(100) as u8;
+                // Rounded, not truncated: an idle server at 0.6 % reads 1 %.
+                s.cpu_usage = ((active.saturating_sub(pa) * 100 + dt / 2) / dt).min(100) as u8;
             }
         }
-        memory.insert(server.name.clone(), (total, active));
+        memory.cpu.insert(server.name.clone(), (total, active));
     }
+
+    s.gpu = gpu(&server.name, part(10), memory);
 
     let mut total_kb = 0;
     let mut avail_kb = 0;
@@ -510,6 +573,91 @@ fn parse_df(text: &str) -> Vec<RemoteDisk> {
         }
     }
     by_source
+}
+
+/// The main GPU, from the GPU section of the script (`GPU_SCRIPT`): NVIDIA
+/// if there is one, else the AMD card with the most VRAM (the discrete one).
+/// Between two live reads, an active AMD card keeps its last measures.
+fn gpu(server: &str, text: &str, memory: &mut Memory) -> Option<RemoteGpu> {
+    let mut names = HashMap::new();
+    // (PCI address, the card, read live this time)
+    let mut amd: Vec<(String, RemoteGpu, bool)> = Vec::new();
+    let mut nvidia: Option<RemoteGpu> = None;
+    for line in text.lines() {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        let num = |i: usize| f.get(i).and_then(|v| v.parse::<u64>().ok());
+        match f.first().copied() {
+            Some("name") if f.len() >= 3 => {
+                names.insert(f[1].to_string(), short_gpu_name(&f[2..].join(" ")));
+            }
+            Some("amd") if f.len() >= 4 => {
+                let read = f.len() >= 6;
+                let card = RemoteGpu {
+                    asleep: f[2] != "active",
+                    usage: if read { num(4).map_or(-1, |v| v.min(100) as i32) } else { -1 },
+                    mem_used: num(5).unwrap_or(0),
+                    mem_total: num(3).unwrap_or(0),
+                    // Millidegrees.
+                    temp: num(6).map_or(0, |v| (v / 1000) as u32),
+                    ..Default::default()
+                };
+                amd.push((f[1].to_string(), card, read));
+            }
+            Some("nvidia") if nvidia.is_none() => {
+                // `name, utilization, memory used, memory total, temperature` (MiB).
+                let c: Vec<&str> = line["nvidia".len()..].split(',').map(str::trim).collect();
+                if c.len() >= 5 {
+                    let mib = |v: &str| v.parse::<u64>().unwrap_or(0) * 1024 * 1024;
+                    nvidia = Some(RemoteGpu {
+                        name: c[0].to_string(),
+                        asleep: false,
+                        usage: c[1].parse::<i32>().map_or(-1, |v| v.min(100)),
+                        mem_used: mib(c[2]),
+                        mem_total: mib(c[3]),
+                        temp: c[4].parse().unwrap_or(0),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    if !names.is_empty() {
+        memory.gpu_names.insert(server.to_string(), names);
+    }
+    if nvidia.is_some() {
+        return nvidia;
+    }
+
+    let (pci, mut card, read) = amd.into_iter().max_by_key(|(_, c, _)| c.mem_total)?;
+    card.name = memory
+        .gpu_names
+        .get(server)
+        .and_then(|n| n.get(&pci))
+        .cloned()
+        .unwrap_or_else(|| "Carte graphique".into());
+    if read {
+        memory.gpu.insert(server.to_string(), (Instant::now(), card.clone()));
+    } else if !card.asleep {
+        if let Some((_, last)) = memory.gpu.get(server) {
+            card.usage = last.usage;
+            card.mem_used = last.mem_used;
+            card.temp = last.temp;
+        }
+    }
+    Some(card)
+}
+
+/// « 03:00.0 VGA compatible controller: Advanced Micro Devices, Inc.
+/// [AMD/ATI] Navi 33 [Radeon RX 7600/7600 XT/…] (rev c0) » → « Radeon RX
+/// 7600 » ; « … [AMD/ATI] Raphael (rev c7) » → « Raphael ».
+fn short_gpu_name(lspci: &str) -> String {
+    let full = lspci.split_once(": ").map_or(lspci, |(_, d)| d);
+    let full = full.split(" (").next().unwrap_or(full).trim();
+    let name = match full.strip_suffix(']').and_then(|f| f.rsplit_once('[')) {
+        Some((_, inner)) => inner.split('/').next().unwrap_or(inner),
+        None => full.rsplit_once("] ").map_or(full, |(_, n)| n),
+    };
+    name.trim().to_string()
 }
 
 #[cfg(test)]
@@ -601,7 +749,7 @@ mod tests {
         let server = Server { name: "gary".into(), host: "gary".into(), online: true, ..Default::default() };
         let text = "cpu  100 0 50 800 50 0 0 0\n@@\nMemTotal: 1000 kB\nMemAvailable: 400 kB\n@@\n\
                     3600.5\n@@\n0.42\n8\n@@\n45000\n@@\n/dev/sda1 500 100 400 20% /\n@@\ngary";
-        let mut mem = CpuMemory::new();
+        let mut mem = Memory::default();
         let s = parse(&server, text, &mut mem);
         assert!(s.online);
         assert_eq!(s.ram_total, 1000 * 1024);
@@ -611,5 +759,60 @@ mod tests {
         assert_eq!(s.temp, 45);
         assert_eq!(s.disks.len(), 1);
         assert_eq!(s.hostname, "gary");
+        assert_eq!(s.gpu, None);
+
+        // A second sample, 3 s later on an idle 12-core server: 0.58 % → 1 %.
+        let text = "cpu  17112 2 8812 6937537 1215 4792 1159 0 0 0";
+        let mut mem = Memory::default();
+        parse(&server, "cpu  17104 2 8803 6933957 1215 4789 1158 0 0 0", &mut mem);
+        assert_eq!(parse(&server, text, &mut mem).cpu_usage, 1);
+    }
+
+    #[test]
+    fn gpu_names_are_shortened() {
+        assert_eq!(
+            short_gpu_name("03:00.0 VGA compatible controller: Advanced Micro Devices, Inc. [AMD/ATI] Navi 33 \
+                            [Radeon RX 7600/7600 XT/7600M XT/7600S/7700S / PRO W7600] (rev c0)"),
+            "Radeon RX 7600"
+        );
+        assert_eq!(
+            short_gpu_name("13:00.0 VGA compatible controller: Advanced Micro Devices, Inc. [AMD/ATI] Raphael (rev c7)"),
+            "Raphael"
+        );
+    }
+
+    #[test]
+    fn amd_gpu_sleeps_then_is_read() {
+        let mut mem = Memory::default();
+        // The discrete card asleep, the integrated one awake and read.
+        let text = "amd 0000:03:00.0 suspended 17163091968\n\
+                    name 0000:03:00.0 03:00.0 VGA compatible controller: AMD [AMD/ATI] Navi 33 [Radeon RX 7600/7600 XT] (rev c0)\n\
+                    amd 0000:13:00.0 active 536870912 3 100000 32000\n\
+                    name 0000:13:00.0 13:00.0 VGA compatible controller: AMD [AMD/ATI] Raphael (rev c7)";
+        let g = gpu("gary", text, &mut mem).unwrap();
+        assert_eq!(g.name, "Radeon RX 7600");
+        assert!(g.asleep);
+        assert_eq!(g.usage, -1);
+        // Never read asleep: the next sample may read it.
+        assert!(!mem.gpu.contains_key("gary"));
+
+        // Awake and read live; its name was asked once.
+        let g = gpu("gary", "amd 0000:03:00.0 active 17163091968 42 2147483648 51000", &mut mem).unwrap();
+        assert_eq!((g.name.as_str(), g.usage, g.mem_used, g.temp), ("Radeon RX 7600", 42, 2147483648, 51));
+        assert!(mem.gpu.contains_key("gary"));
+
+        // Awake but not read this time: its last measures.
+        let g = gpu("gary", "amd 0000:03:00.0 active 17163091968", &mut mem).unwrap();
+        assert_eq!(g.usage, 42);
+    }
+
+    #[test]
+    fn nvidia_gpu_wins() {
+        let mut mem = Memory::default();
+        let text = "amd 0000:13:00.0 active 536870912 3 100000 32000\n\
+                    nvidia GeForce RTX 3070, 12, 900, 8192, 47";
+        let g = gpu("box", text, &mut mem).unwrap();
+        assert_eq!(g.name, "GeForce RTX 3070");
+        assert_eq!((g.usage, g.mem_total, g.temp), (12, 8192 * 1024 * 1024, 47));
     }
 }

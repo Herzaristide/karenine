@@ -17,8 +17,6 @@ Item {
     property real ramUsedBytes: 0
     property string gpuName: "Chargement..."
     property string gpuUsage: ""
-    property var diskData: []
-    property string openTarget: ""
 
     // ── Historique des courbes : 80 points à 2 Hz, soit 40 s ──
     // (les trois courbes sont des Canvas redessinés en JS à chaque mesure :
@@ -34,82 +32,208 @@ Item {
     // RAM brand info (loaded once, provided by the daemon)
     property string ramBrand: ""
 
-    // ── Disques physiques ────────────────────────────────────────────────
-    // anna liste les systèmes de fichiers montés : sur btrfs, chaque
-    // sous-volume (/, /nix, /home…) revient avec la taille du volume entier.
-    // lsblk relie chaque source (partition, volume chiffré) à son disque :
-    // chaque système de fichiers compte une fois, puis on additionne par
-    // disque.
-    property var blockDevices: ({})   // chemin de la source → { disk, model }
-    property var disks: []            // [{ name, label, used, size, mount }]
-    // Les sources déjà cherchées dans lsblk sans succès (tmpfs, réseau…).
-    property var unknownSources: ({})
-    readonly property var diskColors: Theme.diskSeriesColors
+    // ── La machine relevée ───────────────────────────────────────────────
+    // Celle-ci (hwstats_watch), ou un serveur du tailnet : son relevé vient
+    // d'anna (servers_watch, par ssh, toutes les 3 s).
+    // Le choix est celui de tous les onglets (Widgets.machine).
+    readonly property string machine: Widgets.machineName
+    readonly property bool remote: hwPanel.machine !== ""
+    // Le dernier relevé du serveur ([ServerStats] d'anna), null avant le
+    // premier.
+    property var server: null
+
+    // Un relevé du serveur est là (en ligne, ssh a répondu).
+    readonly property bool measured: !hwPanel.remote
+        || (hwPanel.server !== null && hwPanel.server.online && hwPanel.server.ssh && !hwPanel.server.error)
+
+    onMachineChanged: hwPanel.reset()
+
+    // Une autre machine : rien de ce qu'on montrait ne vaut pour elle.
+    function reset() {
+        hwPanel.server = null;
+        hwPanel.notice = "";
+        hwPanel.cpuHistory = [];
+        hwPanel.ramHistory = [];
+        hwPanel.gpuHistory = [];
+        hwPanel.cpuUsage = 0;
+        hwPanel.ramTotalBytes = 0;
+        hwPanel.ramUsedBytes = 0;
+        hwPanel.cpuTemp = "";
+        hwPanel.gpuTemp = "";
+        hwPanel.gpuUsagePercent = 0;
+    }
+
+    // « actif 3 j », « actif 5 h », « actif 12 min ».
+    function formatUptime(s) {
+        if (s >= 86400) return "actif " + Math.floor(s / 86400) + " j";
+        if (s >= 3600) return "actif " + Math.floor(s / 3600) + " h";
+        return "actif " + Math.max(1, Math.floor(s / 60)) + " min";
+    }
+
+    // Ce qui s'affiche à droite du choix de la machine.
+    readonly property string machineStatus: {
+        if (!hwPanel.remote)
+            return "";
+        if (hwPanel.notice !== "")
+            return hwPanel.notice;
+        const s = hwPanel.server;
+        if (s === null)
+            return "Relevé en cours…";
+        if (!s.online)
+            return "Hors ligne";
+        if (s.error)
+            return s.error;
+        return [s.hostname, hwPanel.formatUptime(s.uptime_s),
+                "charge " + s.load1.toFixed(2).replace(".", ",")].filter(x => x).join("  ·  ");
+    }
+
+    function applyServer(s) {
+        hwPanel.server = s;
+        if (!s.online || !s.ssh || s.error)
+            return;
+        hwPanel.cpuUsage = s.cpu_usage;
+        hwPanel.cpuHistory = hwPanel.pushHistory(hwPanel.cpuHistory, s.cpu_usage);
+        hwPanel.cpuTemp = s.temp > 0 ? s.temp + "°C" : "";
+        hwPanel.ramTotalBytes = s.ram_total;
+        hwPanel.ramUsedBytes = s.ram_used;
+        if (s.ram_total > 0)
+            hwPanel.ramHistory = hwPanel.pushHistory(hwPanel.ramHistory, s.ram_used / s.ram_total * 100);
+        // Sa carte graphique : en veille, rien n'est lu (la lire la
+        // réveillerait) ; éveillée, anna la relit toutes les 15 s au plus.
+        const g = s.gpu;
+        hwPanel.gpuTemp = g && !g.asleep && g.temp > 0 ? g.temp + "°C" : "";
+        if (g && !g.asleep && g.usage >= 0) {
+            hwPanel.gpuUsagePercent = g.usage;
+            hwPanel.gpuHistory = hwPanel.pushHistory(hwPanel.gpuHistory, g.usage);
+        }
+    }
+
+    // Ce que dit la carte graphique du serveur, sous le pourcentage.
+    readonly property string serverGpuDetail: {
+        const g = hwPanel.server && hwPanel.measured ? hwPanel.server.gpu : null;
+        if (!g)
+            return "";
+        if (g.asleep)
+            return "En veille · " + g.name;
+        if (g.mem_total > 0 && g.mem_used > 0)
+            return hwPanel.formatGiB(g.mem_used) + " / " + hwPanel.formatGiB(g.mem_total) + " · " + g.name;
+        return g.name;
+    }
+    readonly property bool serverGpuLive: hwPanel.remote && hwPanel.measured && !!hwPanel.server.gpu
+        && !hwPanel.server.gpu.asleep && hwPanel.server.gpu.usage >= 0
+
+    Socket {
+        id: serversSock
+        path: Anna.socketPath
+        parser: SplitParser {
+            onRead: (line) => {
+                try {
+                    const msg = JSON.parse(line);
+                    const s = (msg.servers || []).find(x => x.name === hwPanel.machine);
+                    if (s)
+                        hwPanel.applyServer(s);
+                    else if (msg.servers)
+                        hwPanel.server = { online: false };
+                } catch (e) { /* ligne partielle */ }
+            }
+        }
+        onConnectedChanged: {
+            if (connected) write('{"cmd":"servers_watch"}\n');
+        }
+    }
+
+    // ── Les actions sur le serveur ───────────────────────────────────────
+    // Une session ssh dans le terminal du système ; allumer (Wake-on-LAN),
+    // éteindre ou redémarrer (ssh), par le client d'anna
+    // (anna/src/servers.rs::power). Refusé faute de sudo sans mot de passe :
+    // la même commande s'ouvre dans le terminal, pour le taper.
+    readonly property var powerSays: ({ on: "Réveil envoyé…", off: "Extinction…", reboot: "Redémarrage…" })
+    readonly property var powerCommand: ({ off: "sudo systemctl poweroff", reboot: "sudo systemctl reboot" })
+
+    // Ce que la dernière action a donné : il remplace l'état un moment.
+    property string notice: ""
+    function notify(text) {
+        hwPanel.notice = text;
+        noticeTimer.restart();
+    }
+    Timer {
+        id: noticeTimer
+        interval: 20000
+        onTriggered: hwPanel.notice = ""
+    }
+
+    function openTerminal() {
+        DefaultApps.runInTerminal("", ["ssh", Widgets.machine.host]);
+    }
+
+    function power(action) {
+        if (powerProc.running || !Widgets.machine)
+            return;
+        hwPanel.notify(hwPanel.powerSays[action]);
+        powerProc.server = Widgets.machine;
+        powerProc.action = action;
+        powerProc.command = ["anna", "servers", action, Widgets.machine.name];
+        powerProc.running = true;
+    }
 
     Process {
-        id: lsblkProc
-        command: ["lsblk", "-J", "-o", "NAME,PATH,TYPE,MODEL"]
-        stdout: StdioCollector {
-            onStreamFinished: hwPanel.applyLsblk(text)
-        }
-    }
-    Component.onCompleted: lsblkProc.running = true
-
-    function applyLsblk(text) {
-        const map = {};
-        try {
-            const tree = JSON.parse(text).blockdevices || [];
-            for (const d of tree) {
-                if (d.type !== "disk" || d.name.startsWith("zram"))
-                    continue;
-                // « Micron_3400_MTFDKBA1T0TFH » → « Micron 3400 ».
-                const model = (d.model || "").trim().replace(/_/g, " ").split(/\s+/).slice(0, 2).join(" ");
-                const info = { disk: d.name, model: model };
-                const walk = (n) => {
-                    map[n.path] = info;
-                    (n.children || []).forEach(walk);
-                };
-                walk(d);
+        id: powerProc
+        property var server: null
+        property string action: ""
+        stdout: StdioCollector { id: powerOut }
+        onRunningChanged: {
+            if (running)
+                return;
+            // Passé à une autre machine entre-temps : la réponse ne la concerne pas.
+            const here = powerProc.server.name === hwPanel.machine;
+            let r = null;
+            try { r = JSON.parse(powerOut.text); } catch (e) { /* anna absent */ }
+            let say = "";
+            if (!r && powerOut.text.indexOf("Usage") >= 0) {
+                // Le client répond par son aide : un anna d'avant ces actions.
+                say = "anna trop ancien : reconstruis-le.";
+            } else if (!r) {
+                say = "anna ne répond pas.";
+            } else if (!r.ok && hwPanel.powerCommand[powerProc.action] && (r.error || "").indexOf("sudo") >= 0) {
+                say = "sudo demande un mot de passe : terminal ouvert.";
+                DefaultApps.runInTerminal("", ["ssh", "-t", powerProc.server.host, hwPanel.powerCommand[powerProc.action]]);
+            } else if (!r.ok) {
+                say = r.error || "Échec.";
             }
-        } catch (e) { /* lsblk absent ou sortie inattendue : on garde les sources */ }
-        hwPanel.blockDevices = map;
-        hwPanel.groupDisks();
+            if (here && say !== "")
+                hwPanel.notify(say);
+        }
     }
 
-    function groupDisks() {
-        // Un système de fichiers par source : le point de montage le plus court.
-        const bySource = {};
-        for (const d of hwPanel.diskData) {
-            const prev = bySource[d.source];
-            if (!prev || d.mount.length < prev.mount.length)
-                bySource[d.source] = d;
-        }
-        const byDisk = {};
-        let missing = false;
-        for (const src of Object.keys(bySource)) {
-            const fs = bySource[src];
-            const dev = hwPanel.blockDevices[src];
-            if (!dev && !hwPanel.unknownSources[src]) {
-                missing = true;
-                hwPanel.unknownSources[src] = true;
+    // Redémarrer ou éteindre : le premier appui arme le bouton (en rouge,
+    // avec `confirm`) 3 s, le second agit.
+    component PowerAction: GlassButton {
+        id: pa
+        property string action
+        property string confirm
+        property bool armed: false
+        implicitHeight: hwPanel.pickerH
+        fontSize: 11
+        text: pa.armed ? pa.confirm : ""
+        danger: pa.armed
+        onActiveFocusChanged: if (!activeFocus) pa.armed = false
+        onVisibleChanged: if (!visible) pa.armed = false
+        onClicked: {
+            if (!pa.armed) {
+                pa.armed = true;
+                paDisarm.restart();
+                return;
             }
-            const key = dev ? dev.disk : src;
-            if (!byDisk[key])
-                byDisk[key] = { name: key, label: dev && dev.model ? dev.model : key.replace(/^\/dev\//, ""),
-                                used: 0, size: 0, mount: fs.mount };
-            const g = byDisk[key];
-            g.used += fs.used;
-            g.size += fs.size;
-            if (fs.mount.length < g.mount.length)
-                g.mount = fs.mount;
+            pa.armed = false;
+            paDisarm.stop();
+            hwPanel.power(pa.action);
         }
-        hwPanel.disks = Object.keys(byDisk).sort().map(k => byDisk[k]);
-        // Un disque branché depuis : lsblk ne le connaissait pas encore.
-        if (missing && !lsblkProc.running)
-            lsblkProc.running = true;
+        Timer {
+            id: paDisarm
+            interval: 3000
+            onTriggered: pa.armed = false
+        }
     }
-
-    onDiskDataChanged: groupDisks()
 
     // Combined series for the merged CPU/RAM/GPU graph
     readonly property var combinedSeries: {
@@ -143,8 +267,11 @@ Item {
     // native `anna` engine. We open one Unix socket, subscribe with
     // `hwstats_watch`, and receive one JSON snapshot every 250 ms (GPU and
     // disks refresh slower on the daemon side, they cost a process). The derived
-    // state below (histories, disk grouping, formatting) stays here.
+    // state below (histories, formatting) stays here; the disks are shown by
+    // the Explorer (FileExplorer.qml).
     function applyStats(s) {
+        // Une ligne arrivée juste après le passage à un serveur.
+        if (hwPanel.remote) return;
         // CPU
         if (s.cpu_name && s.cpu_name.length > 0) hwPanel.cpuName = s.cpu_name;
         hwPanel.cpuUsage   = s.cpu_usage;
@@ -170,22 +297,6 @@ Item {
             hwPanel.gpuUsage = "";
         }
         hwPanel.gpuTemp = s.gpu_temp > 0 ? s.gpu_temp + "°C" : "";
-
-        // Disks — remap to the {source,size,used,avail,mount} shape the UI and
-        // onDiskDataChanged expect (sizes in whole Go, as before).
-        const disks = s.disks || [];
-        const result = [];
-        for (let i = 0; i < disks.length; i++) {
-            const d = disks[i];
-            result.push({
-                source: d.source,
-                size:   d.size_gb,
-                used:   d.used_gb,
-                avail:  d.avail_gb,
-                mount:  d.mount
-            });
-        }
-        hwPanel.diskData = result;
     }
 
     Socket {
@@ -202,33 +313,41 @@ Item {
         }
     }
 
-    // Connect while visible; retry every 2 s if the daemon isn't up yet.
+    // Connect while visible, to the feed of the machine shown (the other one
+    // closed); retry every 2 s if the daemon isn't up yet.
     Timer {
+        id: connectTimer
         interval: 2000
         running: hwPanel.visible
         repeat: true
         triggeredOnStart: true
-        onTriggered: if (!statsSock.connected) statsSock.connected = true;
+        onTriggered: {
+            const sock = hwPanel.remote ? serversSock : statsSock;
+            if (!sock.connected) sock.connected = true;
+        }
     }
 
     onVisibleChanged: {
-        if (!visible) statsSock.connected = false;
+        if (!visible) {
+            statsSock.connected = false;
+            serversSock.connected = false;
+        }
     }
-
-    // ── Open folder in Dolphin ────────────────────────────────────────────
-    Process {
-        id: openFolderProc
-        command: ["dolphin", hwPanel.openTarget]
+    onRemoteChanged: {
+        statsSock.connected = false;
+        serversSock.connected = false;
+        if (hwPanel.visible) connectTimer.restart();
     }
 
     // ── UI : trois cartes, le pourcentage en grand, la courbe derrière ───
+    //   (▣ gary       ▾)       gary · actif 3 j · charge 0,42  (>_) (↻) (⏻)
     //   ╭ ● PROCESSEUR   45°C ╮ ╭ ● MÉMOIRE   ╮ ╭ ● GPU      47°C ╮
     //   │ 8%                  │ │ 27%        │ │ 5%              │
     //   │ i7-11800H      ~~~~~│ │ 4,2 / 15 Go│ │ 907 / 8192 Mio  │
     //   │~~~~~~~~~~~~~~~~~~~~~│ │~~~~~~~~~~~~│ │~~~~~~~~~~~~~~~~~│
     //   ╰─────────────────────╯ ╰────────────╯ ╰─────────────────╯
-    //   ( Micron 3400   232 / 953 Go · 24 % ▬▬▬───── )  (un disque, un autre…)
     readonly property int tileH: 150
+    readonly property int pickerH: 30
 
     component Tile: Rectangle {
         id: tile
@@ -360,7 +479,72 @@ Item {
         }
     }
 
+    // ── La machine, au-dessus des cartes ─────────────────────────────────
+    MachinePicker {
+        id: picker
+        z: 1
+        width: 150
+        height: hwPanel.pickerH
+    }
+
+    Text {
+        anchors.left: picker.right
+        anchors.leftMargin: 12
+        anchors.right: actions.left
+        anchors.rightMargin: 10
+        anchors.verticalCenter: picker.verticalCenter
+        horizontalAlignment: Text.AlignRight
+        text: hwPanel.machineStatus
+        elide: Text.ElideRight
+        font.family: "Inter"
+        font.pixelSize: 11
+        font.weight: Font.Medium
+        font.features: { "tnum": 1 }
+        color: hwPanel.notice === "" && hwPanel.server && hwPanel.server.error ? Theme.colorDanger : Theme.textDim
+    }
+
+    // Sur un serveur : en ligne, une session ssh, redémarrer et éteindre (à
+    // confirmer) ; hors ligne, le réveil, si son adresse MAC est connue.
+    Row {
+        id: actions
+        anchors.right: parent.right
+        anchors.verticalCenter: picker.verticalCenter
+        spacing: 6
+        visible: hwPanel.remote
+
+        GlassButton {
+            implicitHeight: hwPanel.pickerH
+            fontSize: 11
+            icon: Qt.resolvedUrl("../assets/icons/terminal.svg")
+            // Aussi quand ssh échoue : on y tape la phrase de passe.
+            visible: hwPanel.server !== null && hwPanel.server.online === true
+            onClicked: hwPanel.openTerminal()
+        }
+        PowerAction {
+            icon: Qt.resolvedUrl("../assets/icons/reboot.svg")
+            confirm: "Redémarrer ?"
+            action: "reboot"
+            visible: hwPanel.remote && hwPanel.measured
+        }
+        PowerAction {
+            icon: Qt.resolvedUrl("../assets/icons/power.svg")
+            confirm: "Éteindre ?"
+            action: "off"
+            visible: hwPanel.remote && hwPanel.measured
+        }
+        GlassButton {
+            implicitHeight: hwPanel.pickerH
+            fontSize: 11
+            icon: Qt.resolvedUrl("../assets/icons/power.svg")
+            accent: true
+            visible: hwPanel.server !== null && hwPanel.server.online === false
+                     && hwPanel.server.can_wake === true
+            onClicked: hwPanel.power("on")
+        }
+    }
+
     ColumnLayout {
+        anchors.topMargin: hwPanel.pickerH + 10
         anchors.fill: parent
         spacing: 10
 
@@ -371,122 +555,35 @@ Item {
             Tile {
                 label: "Processeur"
                 extra: hwPanel.cpuTemp
-                percent: hwPanel.cpuUsage
-                detail: hwPanel.cpuName
+                percent: hwPanel.measured ? hwPanel.cpuUsage : -1
+                detail: !hwPanel.remote ? hwPanel.cpuName
+                      : hwPanel.measured && hwPanel.server.cores > 0 ? hwPanel.server.cores + " cœurs" : ""
                 history: hwPanel.cpuHistory
                 tone: Theme.accentColor
             }
             Tile {
                 label: "Mémoire"
-                extra: hwPanel.ramBrand
-                percent: hwPanel.ramTotalBytes > 0
+                extra: hwPanel.remote ? "" : hwPanel.ramBrand
+                percent: hwPanel.measured && hwPanel.ramTotalBytes > 0
                          ? Math.round(hwPanel.ramUsedBytes / hwPanel.ramTotalBytes * 100) : -1
-                detail: hwPanel.formatGiB(hwPanel.ramUsedBytes) + " / " + hwPanel.formatGiB(hwPanel.ramTotalBytes)
+                detail: !hwPanel.measured ? ""
+                        : hwPanel.formatGiB(hwPanel.ramUsedBytes) + " / " + hwPanel.formatGiB(hwPanel.ramTotalBytes)
                 history: hwPanel.ramHistory
                 tone: Theme.colorRam
             }
             Tile {
+                // Un serveur sans carte graphique (ou pas encore relevé) : rien.
+                visible: !hwPanel.remote || (hwPanel.measured && hwPanel.server !== null && !!hwPanel.server.gpu)
                 label: "Carte graphique"
                 extra: hwPanel.gpuTemp
-                percent: hwPanel.gpuUsage.length > 0 ? hwPanel.gpuUsagePercent : -1
-                detail: hwPanel.gpuUsage.length > 0
+                percent: hwPanel.remote ? (hwPanel.serverGpuLive ? hwPanel.gpuUsagePercent : -1)
+                       : hwPanel.gpuUsage.length > 0 ? hwPanel.gpuUsagePercent : -1
+                detail: hwPanel.remote ? hwPanel.serverGpuDetail
+                      : hwPanel.gpuUsage.length > 0
                         ? hwPanel.gpuUsage.substring(hwPanel.gpuUsage.indexOf("—") + 2)
                         : hwPanel.gpuName
                 history: hwPanel.gpuHistory
                 tone: Theme.colorGpu
-            }
-        }
-
-        // Les disques physiques : une pastille chacun ; un clic ouvre son
-        // point de montage principal dans Dolphin.
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 8
-
-            Repeater {
-                model: hwPanel.disks.slice(0, 4)
-
-                Rectangle {
-                    id: disk
-                    required property var modelData
-                    required property int index
-                    readonly property real pct: disk.modelData.size > 0 ? disk.modelData.used / disk.modelData.size : 0
-
-                    function open() {
-                        hwPanel.openTarget = disk.modelData.mount;
-                        openFolderProc.running = true;
-                    }
-
-                    // Au clavier aussi : Tab, puis Entrée ou Espace.
-                    activeFocusOnTab: true
-                    Keys.onPressed: (event) => {
-                        if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                            disk.open();
-                            event.accepted = true;
-                        }
-                    }
-
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 52
-                    radius: 16
-                    color: Qt.alpha(Theme.textPrimary, diskMa.containsMouse || disk.activeFocus ? 0.09 : 0.05)
-                    border.width: 1
-                    border.color: Qt.alpha(Theme.textPrimary, 0.08)
-                    Behavior on color { ColorAnimation { duration: 140 } }
-
-                    Column {
-                        anchors.fill: parent
-                        anchors.leftMargin: 12
-                        anchors.rightMargin: 12
-                        anchors.topMargin: 9
-                        spacing: 6
-
-                        Item {
-                            width: parent.width
-                            height: mountText.implicitHeight
-                            Text {
-                                id: mountText
-                                width: parent.width - pctText.implicitWidth - 6
-                                text: disk.modelData.label
-                                font.family: "Inter"
-                                font.pixelSize: 12
-                                font.weight: Font.Medium
-                                color: Theme.textPrimary
-                                elide: Text.ElideMiddle
-                            }
-                            Text {
-                                id: pctText
-                                anchors.right: parent.right
-                                text: disk.modelData.used + " / " + disk.modelData.size + " Go  ·  " + Math.round(disk.pct * 100) + " %"
-                                font.family: "Inter"
-                                font.pixelSize: 10
-                                color: Theme.textDim
-                            }
-                        }
-                        Rectangle {
-                            width: parent.width
-                            height: 5
-                            radius: 2.5
-                            color: Qt.alpha(Theme.textPrimary, 0.1)
-                            Rectangle {
-                                width: parent.width * disk.pct
-                                height: parent.height
-                                radius: parent.radius
-                                color: hwPanel.diskColors[disk.index % hwPanel.diskColors.length]
-                            }
-                        }
-                    }
-
-                    MouseArea {
-                        id: diskMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: disk.open()
-                    }
-
-                    FocusRing { radius: disk.radius + gap }
-                }
             }
         }
     }

@@ -9,7 +9,8 @@ Settings 1.0 Settings.qml
 NixIcon 1.0 NixIcon.qml
 GestureControls 1.0 GestureControls.qml
 GlassButton 1.0 GlassButton.qml
-ServersWidget 1.0 ServersWidget.qml
 DeviceSettings 1.0 DeviceSettings.qml
 FocusRing 1.0 FocusRing.qml
 PhoneWidget 1.0 PhoneWidget.qml
+FileExplorer 1.0 FileExplorer.qml
+MachinePicker 1.0 MachinePicker.qml

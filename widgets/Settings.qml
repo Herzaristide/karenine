@@ -345,6 +345,91 @@ Item {
                         }
                     }
                 }
+
+                // ── VOIX section ───────────────────────────────────
+                // Le mot d'éveil « Karénine » (anna/src/claude/wake.rs) :
+                // anna le garde d'un redémarrage à l'autre.
+                Text {
+                    Layout.bottomMargin: 10
+                    text: "Voix"
+                    font.family: "Inter"
+                    font.pixelSize: 12
+                    font.letterSpacing: 0
+                    color: Theme.accentMuted
+                }
+
+                Rectangle {
+                    id: wakeRow
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 46
+                    Layout.bottomMargin: 18
+                    radius: 14
+                    color: Qt.alpha(Theme.textPrimary, wakeMa.containsMouse || activeFocus ? 0.09 : 0.05)
+                    border.color: Qt.alpha(Theme.textPrimary, 0.08)
+                    border.width: 1
+                    Behavior on color { ColorAnimation { duration: 160 } }
+
+                    activeFocusOnTab: true
+                    Keys.onPressed: (event) => root.activates(event, () => ClaudeLive.voiceWakeToggle())
+                    FocusRing { radius: wakeRow.radius + gap }
+
+                    Column {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 12
+                        anchors.right: wakePill.left
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 1
+
+                        Text {
+                            width: parent.width
+                            text: "Mot d'éveil « Karénine »"
+                            font.family: "Inter"
+                            font.pixelSize: 12
+                            font.weight: Font.Medium
+                            color: Theme.textPrimary
+                            elide: Text.ElideRight
+                        }
+                        // Si le micro ou les modèles manquent, anna l'éteint
+                        // et dit pourquoi.
+                        Text {
+                            width: parent.width
+                            text: !ClaudeLive.voiceWake && ClaudeLive.voiceError
+                                  ? ClaudeLive.voiceError
+                                  : ClaudeLive.voiceWake ? "à l'écoute" : "désactivé"
+                            font.family: "Inter"
+                            font.pixelSize: 10
+                            color: Theme.textSecondary
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    Rectangle {
+                        id: wakePill
+                        anchors.right: parent.right
+                        anchors.rightMargin: 12
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 44; height: 22; radius: 11
+                        color: ClaudeLive.voiceWake ? Theme.accentColor : Theme.accentDark
+                        Behavior on color { ColorAnimation { duration: 200 } }
+
+                        Rectangle {
+                            width: 16; height: 16; radius: 8
+                            anchors.verticalCenter: parent.verticalCenter
+                            x: ClaudeLive.voiceWake ? 24 : 4
+                            color: Theme.iconColor
+                            Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
+                        }
+                    }
+
+                    MouseArea {
+                        id: wakeMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: ClaudeLive.voiceWakeToggle()
+                    }
+                }
             }
 
             ColumnLayout {

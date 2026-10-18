@@ -23,13 +23,12 @@ pub const SENSITIVE: [&str; 3] = ["fermer_fenetre", "commande", "reconstruire_ni
 const OUTPUT_MAX: usize = 4000;
 
 /// The shell's widgets (services/Widgets.qml), plus « tout ».
-const WIDGETS: [&str; 11] = [
+const WIDGETS: [&str; 10] = [
+    "explorer",
     "stats",
-    "network",
     "telephone",
+    "lecteur",
     "musique",
-    "metronome",
-    "accordeur",
     "son",
     "camera",
     "reglages",
@@ -113,8 +112,8 @@ pub fn tools() -> Value {
         tool("ouvrir_note", "Ouvre une note du coffre dans Obsidian.",
             json!({ "chemin": s("chemin relatif au coffre, tel que chercher_notes le donne") }), &["chemin"]),
         tool("widget",
-            "Ouvre, ferme ou bascule un widget de l'interface : « stats » (processeur, mémoire, \
-             disques), « network » (les appareils du réseau Tailscale, avec leurs stats par ssh), « telephone » (le téléphone relié par KDE Connect : batterie, notifications, le faire sonner), « musique » (lecteur en cours, paroles), « metronome » (métronome), « accordeur » (accordeur), \
+            "Ouvre, ferme ou bascule un widget de l'interface : « explorer » (les dossiers du PC), « stats » (processeur, mémoire et carte graphique, de ce PC ou \
+             d'un serveur du réseau Tailscale par ssh, avec terminal, redémarrage, extinction et réveil), « telephone » (le téléphone relié par KDE Connect : batterie, notifications, le faire sonner), « lecteur » (lecteur en cours, paroles), « musique » (métronome et accordeur), \
              « son » (ouvre les réglages), « camera » (contrôle gestuel), « reglages » \
              (sorties et entrées audio, webcam, luminosité, écran, thème), « sessions » (le dock des sessions Claude et du savoir). « tout » avec \
              « fermer » referme tout.",
