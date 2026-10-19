@@ -114,7 +114,15 @@ pub fn start_voice_capture() -> Result<(Capture, Receiver<Vec<f32>>), String> {
 /// Mono `f32` samples from a PipeWire node, read from a `pw-record` child.
 fn start_node_capture(node: &str, rate: u32) -> Result<(Capture, Receiver<Vec<f32>>), String> {
     let mut child = Command::new("pw-record")
-        .args(["--raw", "--target", node, "--format", "f32", "--channels", "1"])
+        .args([
+            "--raw",
+            "--target",
+            node,
+            "--format",
+            "f32",
+            "--channels",
+            "1",
+        ])
         .args(["--rate", &rate.to_string(), "-"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -131,8 +139,10 @@ fn start_node_capture(node: &str, rate: u32) -> Result<(Capture, Receiver<Vec<f3
         while !stop_thread.load(Ordering::SeqCst) && out.read_exact(&mut buf).is_ok() {
             let _ = ready_tx.send(());
             let chunk = buf
-                .chunks_exact(4)
-                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|b| f32::from_le_bytes(*b))
                 .collect();
             if sample_tx.send(chunk).is_err() {
                 break;

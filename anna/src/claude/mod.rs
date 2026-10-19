@@ -661,8 +661,7 @@ mod tests {
     #[test]
     fn an_unanswered_request_keeps_waiting() {
         let mut i = Inner::default();
-        let (req, _rx) =
-            i.open_request(&ev("PermissionRequest"), None, 100, ("Write", "a.rs", ""));
+        let (req, _rx) = i.open_request(&ev("PermissionRequest"), None, 100, ("Write", "a.rs", ""));
         assert!(i.close_request(req, Outcome::Terminal, 101));
         assert_eq!(state(&i), State::Waiting);
         assert!(

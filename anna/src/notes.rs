@@ -66,7 +66,10 @@ impl Store {
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or_default();
-        Store { dir: dir.to_path_buf(), notes }
+        Store {
+            dir: dir.to_path_buf(),
+            notes,
+        }
     }
 
     fn save(&self) -> Result<(), String> {
@@ -240,7 +243,10 @@ pub fn choose(types: &[&str], uris: impl FnOnce() -> String) -> Clip {
             return Clip::File(file);
         }
     }
-    if types.iter().any(|t| t.starts_with("text/") || *t == "UTF8_STRING" || *t == "STRING") {
+    if types
+        .iter()
+        .any(|t| t.starts_with("text/") || *t == "UTF8_STRING" || *t == "STRING")
+    {
         return Clip::Text;
     }
     Clip::Nothing
@@ -320,8 +326,10 @@ fn copy(store: &mut Store, id: &str) -> Result<(), String> {
     let (args, bytes) = if note.image.is_empty() {
         (vec![], note.text.into_bytes())
     } else {
-        (vec!["--type".to_string(), mime_of(&note.image).to_string()],
-         std::fs::read(&note.image).map_err(|e| e.to_string())?)
+        (
+            vec!["--type".to_string(), mime_of(&note.image).to_string()],
+            std::fs::read(&note.image).map_err(|e| e.to_string())?,
+        )
     };
     let mut child = Command::new("wl-copy")
         .args(&args)
@@ -391,7 +399,11 @@ pub fn summary(notes: &[Note], query: &str) -> String {
         })
         .collect();
     if lines.is_empty() {
-        return if words.is_empty() { "aucune note".into() } else { "aucune note ne correspond".into() };
+        return if words.is_empty() {
+            "aucune note".into()
+        } else {
+            "aucune note ne correspond".into()
+        };
     }
     lines.join("\n")
 }
@@ -416,7 +428,10 @@ fn pictures_dir() -> PathBuf {
         .and_then(|text| {
             text.lines()
                 .find_map(|l| l.trim().strip_prefix("XDG_PICTURES_DIR="))
-                .map(|v| v.trim_matches('"').replace("$HOME", &home.to_string_lossy()))
+                .map(|v| {
+                    v.trim_matches('"')
+                        .replace("$HOME", &home.to_string_lossy())
+                })
         })
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join("Pictures"))
@@ -479,7 +494,9 @@ async fn watch(places: Vec<(PathBuf, &'static str)>, notes: PathBuf) {
 fn fresh_shots(places: &[(PathBuf, &'static str)], start: SystemTime) -> Vec<(PathBuf, u64)> {
     let mut out = Vec::new();
     for (folder, prefix) in places {
-        let Ok(entries) = std::fs::read_dir(folder) else { continue };
+        let Ok(entries) = std::fs::read_dir(folder) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             if !is_shot(&name, prefix) {
@@ -585,14 +602,20 @@ mod tests {
             choose(&["text/plain", "image/jpeg", "image/png"], none),
             Clip::Image("image/png".into(), "png")
         );
-        assert_eq!(choose(&["image/jpeg", "TEXT"], none), Clip::Image("image/jpeg".into(), "jpg"));
         assert_eq!(
-            choose(&["text/uri-list", "text/plain"], || "file:///home/a/Mes%20images/chat.JPG\r\n".into()),
+            choose(&["image/jpeg", "TEXT"], none),
+            Clip::Image("image/jpeg".into(), "jpg")
+        );
+        assert_eq!(
+            choose(&["text/uri-list", "text/plain"], || {
+                "file:///home/a/Mes%20images/chat.JPG\r\n".into()
+            }),
             Clip::File(PathBuf::from("/home/a/Mes images/chat.JPG"))
         );
         // A copied file that is not an image: its path, as text.
         assert_eq!(
-            choose(&["text/uri-list", "text/plain"], || "file:///home/a/x.pdf".into()),
+            choose(&["text/uri-list", "text/plain"], || "file:///home/a/x.pdf"
+                .into()),
             Clip::Text
         );
         assert_eq!(choose(&["text/plain;charset=utf-8"], none), Clip::Text);
@@ -616,7 +639,10 @@ mod tests {
         task.abort();
         let store = Store::open(&notes);
         assert_eq!(store.notes.len(), 1);
-        assert_eq!(std::fs::read(&store.notes[0].image).unwrap(), b"\x89PNG new");
+        assert_eq!(
+            std::fs::read(&store.notes[0].image).unwrap(),
+            b"\x89PNG new"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -632,7 +658,10 @@ mod tests {
         assert!(all.starts_with("- [épinglée] RDV dentiste jeudi"));
         assert!(all.contains("- Courses / pain, lait"));
         assert!(all.contains("[image "));
-        assert_eq!(summary(&s.sorted(), "LAIT courses"), "- Courses / pain, lait");
+        assert_eq!(
+            summary(&s.sorted(), "LAIT courses"),
+            "- Courses / pain, lait"
+        );
         assert_eq!(summary(&s.sorted(), "piano"), "aucune note ne correspond");
         let _ = std::fs::remove_dir_all(&s.dir);
     }

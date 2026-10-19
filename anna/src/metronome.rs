@@ -288,3 +288,99 @@ fn synth_click(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc::channel;
+
+    /// A generator at 1 kHz, so one beat at 60 BPM is 1000 samples. The
+    /// clicks are recognisable constants: 1.0 on the accent, 0.5 otherwise.
+    fn gen(bpm: u32, beats: u32) -> (Gen, Receiver<i32>) {
+        let (tx, rx) = channel();
+        let g = Gen {
+            accent: vec![1.0; 10],
+            normal: vec![0.5; 10],
+            sample_rate: 1000,
+            bpm: Arc::new(AtomicU32::new(bpm)),
+            beats: Arc::new(AtomicU32::new(beats)),
+            running: Arc::new(AtomicBool::new(true)),
+            start_flag: Arc::new(AtomicBool::new(true)),
+            beat_tx: tx,
+            pos: 0,
+            spb: 0,
+            beat_index: 0,
+            click_is_accent: true,
+            click_cursor: 0,
+        };
+        (g, rx)
+    }
+
+    #[test]
+    fn samples_per_beat_follows_the_tempo() {
+        let (g, _rx) = gen(60, 4);
+        assert_eq!(g.samples_per_beat(), 1000);
+        g.bpm.store(120, Ordering::Relaxed);
+        assert_eq!(g.samples_per_beat(), 500);
+        // A zero tempo would divide by zero: it reads as 1 BPM.
+        g.bpm.store(0, Ordering::Relaxed);
+        assert_eq!(g.samples_per_beat(), 60_000);
+    }
+
+    #[test]
+    fn start_fires_beat_zero_with_the_accent() {
+        let (mut g, rx) = gen(60, 4);
+        assert_eq!(g.next_sample(), 1.0);
+        assert_eq!(rx.try_recv(), Ok(0));
+    }
+
+    #[test]
+    fn beats_are_evenly_spaced_and_wrap_on_the_bar() {
+        let (mut g, rx) = gen(60, 3);
+        let samples: Vec<f32> = (0..3000).map(|_| g.next_sample()).collect();
+        assert_eq!(rx.try_iter().collect::<Vec<_>>(), vec![0, 1, 2]);
+        // Each click starts exactly on its beat, then silence until the next.
+        assert_eq!(samples[0], 1.0);
+        assert_eq!(samples[1000], 0.5);
+        assert_eq!(samples[2000], 0.5);
+        assert_eq!(samples[500], 0.0);
+        g.next_sample();
+        assert_eq!(rx.try_recv(), Ok(0), "beat 3 of a 3-beat bar is beat 0");
+    }
+
+    #[test]
+    fn stopped_is_silent_and_sends_nothing() {
+        let (mut g, rx) = gen(60, 4);
+        g.start_flag.store(false, Ordering::Relaxed);
+        g.running.store(false, Ordering::Relaxed);
+        assert!((0..2000).all(|_| g.next_sample() == 0.0));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_tempo_change_waits_for_the_next_beat() {
+        let (mut g, rx) = gen(60, 4);
+        g.next_sample();
+        g.bpm.store(120, Ordering::Relaxed);
+        // The current beat keeps its 1000 samples; the next ones last 500.
+        for _ in 1..1000 {
+            g.next_sample();
+        }
+        assert_eq!(rx.try_iter().count(), 1);
+        g.next_sample();
+        for _ in 1..500 {
+            g.next_sample();
+        }
+        g.next_sample();
+        assert_eq!(rx.try_iter().collect::<Vec<_>>(), vec![1, 2]);
+    }
+
+    #[test]
+    fn click_has_its_length_and_fades_in_and_out() {
+        let c = synth_click(48_000, 1000.0, 0.05, 0.001, 0.01, 0.8);
+        assert_eq!(c.len(), 2400);
+        assert!(c.iter().all(|s| s.abs() <= 0.8));
+        assert_eq!(c[0], 0.0);
+        assert!(c[c.len() - 1].abs() < 0.01);
+    }
+}

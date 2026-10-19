@@ -323,3 +323,103 @@ impl Response {
 fn yes() -> bool {
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    fn parse(line: &str) -> Result<Command, serde_json::Error> {
+        serde_json::from_str(line)
+    }
+
+    fn state() -> PaletteState {
+        PaletteState {
+            accent: "#5277c3".into(),
+            accent_dark: "#3a5a9c".into(),
+            accent_muted: "#8aa0d0".into(),
+            accent_rgb: "82,119,195".into(),
+            accent_ansi: "38;2;82;119;195".into(),
+            mode: "dark".into(),
+            palette: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn commands_sent_by_the_shell_parse() {
+        // Exactly the lines the QML writes on the socket.
+        assert!(matches!(
+            parse(r##"{"cmd":"set_accent","color":"#5277c3"}"##),
+            Ok(Command::SetAccent { color }) if color == "#5277c3"
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"hwstats_watch","interval_ms":500}"#),
+            Ok(Command::HwstatsWatch {
+                interval_ms: Some(500)
+            })
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"metronome"}"#),
+            Ok(Command::Metronome)
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"get_state"}"#),
+            Ok(Command::GetState)
+        ));
+    }
+
+    #[test]
+    fn optional_fields_may_be_omitted() {
+        assert!(matches!(
+            parse(r#"{"cmd":"hwstats_watch"}"#),
+            Ok(Command::HwstatsWatch { interval_ms: None })
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"servers_watch"}"#),
+            Ok(Command::ServersWatch { name: None })
+        ));
+        assert!(matches!(
+            parse(r##"{"cmd":"set_palette_color","key":"base00","color":"#000000"}"##),
+            Ok(Command::SetPaletteColor { mode: None, .. })
+        ));
+    }
+
+    #[test]
+    fn malformed_commands_are_rejected() {
+        assert!(parse(r#"{"cmd":"no_such_command"}"#).is_err());
+        assert!(parse(r##"{"color":"#5277c3"}"##).is_err(), "no cmd");
+        assert!(parse(r#"{"cmd":"set_accent"}"#).is_err(), "missing color");
+        assert!(
+            parse(r##"{"cmd":"SetAccent","color":"#fff"}"##).is_err(),
+            "not snake_case"
+        );
+        assert!(parse("not json").is_err());
+    }
+
+    #[test]
+    fn responses_keep_their_wire_shape() {
+        let ok = serde_json::to_value(Response::ok(state())).unwrap();
+        assert_eq!(ok["ok"], json!(true));
+        assert_eq!(ok["state"]["accent"], json!("#5277c3"));
+
+        let ev = serde_json::to_value(Response::changed(state())).unwrap();
+        assert_eq!(ev["event"], json!("changed"));
+        assert_eq!(ev.get("ok"), None);
+
+        let err = serde_json::to_value(Response::err("bad color")).unwrap();
+        assert_eq!(err, json!({ "ok": false, "error": "bad color" }));
+    }
+
+    #[test]
+    fn palette_state_round_trips() {
+        let mut s = state();
+        s.palette.insert("base00".into(), "#1d2021".into());
+        let text = serde_json::to_string(&s).unwrap();
+        let back: PaletteState = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.palette["base00"], "#1d2021");
+        assert_eq!(
+            serde_json::from_str::<Value>(&text).unwrap()["mode"],
+            "dark"
+        );
+    }
+}

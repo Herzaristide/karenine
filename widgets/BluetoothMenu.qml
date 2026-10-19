@@ -40,7 +40,7 @@ Rectangle {
     // Ouvert : il cherche les appareils.
     property bool open: false
 
-    readonly property BluetoothAdapter adapter: Bluetooth.defaultAdapter
+    readonly property BluetoothAdapter adapter: Bluetooth.defaultAdapter // qmllint disable unresolved-type
     readonly property bool powered: menu.adapter !== null && menu.adapter.enabled
 
     // L'appareil qu'on appaire : une fois appairé, on lui fait confiance et
@@ -52,7 +52,7 @@ Rectangle {
     readonly property var devices: {
         if (!menu.adapter)
             return [];
-        var list = menu.adapter.devices.values.filter(d => d.paired || d.deviceName !== "");
+        var list = menu.adapter.devices.values.filter(d => d.paired || d.deviceName !== ""); // qmllint disable unresolved-type
         function rank(d) { return d.connected ? 0 : d.paired ? 1 : 2; }
         return list.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
     }
@@ -310,8 +310,8 @@ Rectangle {
                 required property BluetoothDevice modelData
                 readonly property BluetoothDevice dev: row.modelData
                 readonly property bool busy: row.dev.pairing
-                                             || row.dev.state === BluetoothDeviceState.Connecting
-                                             || row.dev.state === BluetoothDeviceState.Disconnecting
+                                             || row.dev.state === BluetoothDeviceState.Connecting // qmllint disable unresolved-type
+                                             || row.dev.state === BluetoothDeviceState.Disconnecting // qmllint disable unresolved-type
                 readonly property bool hovered: rowMa.containsMouse || row.activeFocus
                 // Ses profils, s'il en a deux à choisir.
                 readonly property var card: menu.cards[row.dev.address] || null

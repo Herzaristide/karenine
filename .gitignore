@@ -27,3 +27,6 @@ anna/target/
 
 # Claude Code
 .claude/
+
+# Index CodeGraph (local)
+.codegraph/

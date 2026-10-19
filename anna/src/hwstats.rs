@@ -447,3 +447,23 @@ fn run_stdout(cmd: &str, args: &[&str]) -> Option<String> {
     }
     Some(String::from_utf8_lossy(&out.stdout).into_owned())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn leading_digits_are_read_and_the_rest_ignored() {
+        assert_eq!(parse_leading_u64("100G"), 100);
+        assert_eq!(parse_leading_u64("  42 kB\n"), 42);
+        assert_eq!(parse_leading_u64("abc"), 0);
+        assert_eq!(parse_leading_u64(""), 0);
+    }
+
+    #[test]
+    fn ram_brand_skips_missing_parts() {
+        assert_eq!(join_brand("Kingston", "DDR5", "6000"), "Kingston DDR5 6000");
+        assert_eq!(join_brand("Kingston", "", "6000"), "Kingston 6000");
+        assert_eq!(join_brand("", "", ""), "");
+    }
+}

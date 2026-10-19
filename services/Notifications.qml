@@ -188,7 +188,7 @@ Singleton {
                       "-A", "default=" + I18n.tr("common.open"),
                       "-A", "folder=" + I18n.tr("phone.folder"),
                       I18n.trn("phone.received", notice.files.length),
-                      root._escape(notice.names.slice(0, 4).join("\n")
+                      root._escape(notice.names.slice(0, 4).join("\n") // qmllint disable unqualified
                           + (notice.names.length > 4 ? "\n" + I18n.tr("phone.andMore", { n: notice.names.length - 4 }) : ""))]
             stdout: StdioCollector {
                 onStreamFinished: {

@@ -295,7 +295,10 @@ mod tests {
             parses(&["phone", "share", "abc_123", "/tmp/x"]),
             Command::PhoneAction { .. }
         ));
-        assert!(matches!(parses(&["phone", "screen", "Pixel 9a"]), Command::PhoneScreen { .. }));
+        assert!(matches!(
+            parses(&["phone", "screen", "Pixel 9a"]),
+            Command::PhoneScreen { .. }
+        ));
         assert!(matches!(
             parses(&["servers", "watch"]),
             Command::ServersWatch { name: None }

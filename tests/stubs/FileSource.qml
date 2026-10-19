@@ -1,0 +1,3 @@
+StubSource {
+    type: "file"
+}

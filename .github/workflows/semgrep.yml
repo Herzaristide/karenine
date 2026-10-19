@@ -22,7 +22,7 @@ jobs:
     container:
       image: semgrep/semgrep
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Scan
         # Règles génériques (secrets, audit sécurité) sur l'ensemble du dépôt ;

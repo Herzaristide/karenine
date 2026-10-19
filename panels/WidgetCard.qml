@@ -136,7 +136,7 @@ Rectangle {
         y: card.headerH
         width: card.contentWidth
         height: card.contentHeight > 0 ? card.contentHeight
-                                       : (item ? item.implicitHeight : 0)
+                                       : (item ? item.implicitHeight : 0) // qmllint disable missing-property
         active: card.visible
         sourceComponent: card.content
     }

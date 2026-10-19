@@ -35,7 +35,7 @@ greeter/             greetd login screen (greeter.qml): the card + session and p
 anna/                Single Rust daemon — theme, hwstats, network (Tailscale + ssh), tuner, chroma, metronome,
                      webcam gestures, Claude Code sessions (bar, AI dock),
                      pilot (desktop tools served over MCP), voice (whisper.cpp)
-tests/               QML tests (qmltestrunner) — `tests/run.sh`; dictionaries — `tests/i18n-check.sh`
+tests/               QML tests (qmltestrunner) — `tests/run.sh` + doubles in `stubs/`; dictionaries — `tests/i18n-check.sh`; QML ↔ anna contract — `tests/contract-check.sh`
 assets/              nixos.svg, icons/
 ```
 
@@ -125,7 +125,8 @@ anna reads its messages from `~/.config/quickshell/i18n` (or
 
 - `nix flake check`: assembles the layout, runs all the QML through qmllint
   (zero warnings tolerated), runs the QML tests (`tests/run.sh`,
-  qmltestrunner) and checks the dictionaries (`tests/i18n-check.sh`).
+  qmltestrunner), checks the dictionaries (`tests/i18n-check.sh`) and the
+  QML ↔ anna contract (`tests/contract-check.sh`).
 - `cd anna && cargo test`: daemon tests (theme, protocol, client, tuner and
   chromagram DSP, gesture recognition, translations…).
 - `nix fmt`: formats `flake.nix`; `cargo fmt` in `anna/`.

@@ -32,7 +32,7 @@ jobs:
     name: Build anna binary
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # cpal's ALSA backend needs the ALSA dev headers + pkg-config to build.
       - name: Install audio build deps

@@ -21,7 +21,7 @@ jobs:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       SONAR_HOST_URL: https://sonarcloud.io
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # Historique complet : nécessaire à la détection du « new code » et au
           # blame (attribution des problèmes par commit).

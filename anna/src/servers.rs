@@ -300,7 +300,7 @@ pub async fn sample_all(memory: &mut Memory, only: Option<&str>) -> Vec<ServerSt
             let live = memory
                 .gpu
                 .get(&s.name)
-                .map_or(true, |(at, _)| at.elapsed() >= GPU_EVERY);
+                .is_none_or(|(at, _)| at.elapsed() >= GPU_EVERY);
             let names = !memory.gpu_names.contains_key(&s.name);
             let asked = only.is_none_or(|n| n == s.name);
             tokio::spawn(async move {
@@ -584,9 +584,9 @@ fn parse(server: &Server, text: &str, memory: &mut Memory) -> ServerStats {
     if let Some((total, active)) = cpu_totals(part(0)) {
         if let Some(&(pt, pa)) = memory.cpu.get(&server.name) {
             let dt = total.saturating_sub(pt);
-            if dt > 0 {
-                // Rounded, not truncated: an idle server at 0.6 % reads 1 %.
-                s.cpu_usage = ((active.saturating_sub(pa) * 100 + dt / 2) / dt).min(100) as u8;
+            // Rounded, not truncated: an idle server at 0.6 % reads 1 %.
+            if let Some(pct) = (active.saturating_sub(pa) * 100 + dt / 2).checked_div(dt) {
+                s.cpu_usage = pct.min(100) as u8;
             }
         }
         memory.cpu.insert(server.name.clone(), (total, active));
@@ -977,10 +977,16 @@ mod tests {
 
         // Awake, not read this time: the last measures stand.
         let g = gpu("box", "nvstate active", &mut mem).unwrap();
-        assert_eq!((g.name.as_str(), g.usage, g.asleep), ("GeForce RTX 3070", 12, false));
+        assert_eq!(
+            (g.name.as_str(), g.usage, g.asleep),
+            ("GeForce RTX 3070", 12, false)
+        );
 
         // Asleep again: its name is kept, its measures are not.
         let g = gpu("box", "nvstate suspended", &mut mem).unwrap();
-        assert_eq!((g.name.as_str(), g.usage, g.asleep), ("GeForce RTX 3070", -1, true));
+        assert_eq!(
+            (g.name.as_str(), g.usage, g.asleep),
+            ("GeForce RTX 3070", -1, true)
+        );
     }
 }

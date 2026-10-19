@@ -314,9 +314,9 @@ Item {
     // Un menu déplié sous son bouton (widgets/BluetoothMenu.qml) ; un clic
     // à côté, ou la capsule qui se referme, le replie.
     property bool btOpen: false
-    readonly property bool btPowered: Bluetooth.defaultAdapter !== null && Bluetooth.defaultAdapter.enabled
+    readonly property bool btPowered: Bluetooth.defaultAdapter !== null && Bluetooth.defaultAdapter.enabled // qmllint disable unresolved-type
     readonly property bool btConnected: top.btPowered
-                                        && Bluetooth.defaultAdapter.devices.values.some(d => d.connected)
+                                        && Bluetooth.defaultAdapter.devices.values.some(d => d.connected) // qmllint disable unresolved-type
     onVisibleChanged: if (!top.visible) top.btOpen = false
 
     MouseArea {
@@ -428,7 +428,7 @@ Item {
                 // l'adaptateur ; absent sans adaptateur.
                 IconButton {
                     id: btButton
-                    visible: Bluetooth.defaultAdapter !== null
+                    visible: Bluetooth.defaultAdapter !== null // qmllint disable unresolved-type
                     icon: "bluetooth.svg"
                     tint: top.btConnected ? Theme.accentColor
                         : top.btPowered ? Theme.iconColor : Theme.textDim

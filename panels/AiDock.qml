@@ -513,8 +513,8 @@ Scope {
         // La carte, en coordonnées de l'écran : le panneau commence après sa
         // marge.
         var p = card.mapToItem(null, 0, 0);
-        var left = s.x + panel.margins.left + p.x;
-        var top = s.y + panel.margins.top + p.y;
+        var left = s.x + panel.margins.left + p.x; // qmllint disable unresolved-type
+        var top = s.y + panel.margins.top + p.y; // qmllint disable unresolved-type
         var dx = Math.max(left - x, 0, x - (left + card.width));
         var dy = Math.max(top - y, 0, y - (top + card.height));
         var d = Math.sqrt(dx * dx + dy * dy);

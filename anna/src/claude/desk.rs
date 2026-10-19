@@ -222,7 +222,18 @@ fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
 fn launch(args: &[&str]) -> Result<(), String> {
     run(
         "systemd-run",
-        &[&["--user", "--collect", "--quiet", "-p", "ExitType=cgroup", "--"], args].concat(),
+        &[
+            &[
+                "--user",
+                "--collect",
+                "--quiet",
+                "-p",
+                "ExitType=cgroup",
+                "--",
+            ],
+            args,
+        ]
+        .concat(),
     )
     .map(|_| ())
 }
@@ -653,7 +664,9 @@ pub fn run_tool(tool: &str, args: &Value) -> Result<String, String> {
         "chercher_notes" => Ok(search_notes(&s("requete"))),
         "creer_note" => crate::notes::pilot_create(
             &s("texte"),
-            args.get("epingler").and_then(Value::as_bool).unwrap_or(false),
+            args.get("epingler")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         ),
         "lire_notes" => Ok(cut(&crate::notes::pilot_read(&s("recherche")))),
         "ouvrir_note" => {

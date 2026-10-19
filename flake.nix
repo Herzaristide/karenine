@@ -99,6 +99,13 @@
               touch $out
             '';
 
+          # Les commandes que le QML envoie à anna existent dans protocol.rs, et
+          # chaque qmldir pointe vers des fichiers réels.
+          contract = pkgs.runCommand "karenine-contract" { } ''
+            sh ${self}/tests/contract-check.sh
+            touch $out
+          '';
+
           # Tests QML (qmltestrunner, plateforme offscreen) — voir tests/run.sh.
           qmltest =
             pkgs.runCommand "karenine-qmltest"
