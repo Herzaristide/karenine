@@ -31,4 +31,4 @@ jobs:
         # Sauté proprement si le jeton n'est pas configuré (ex : PR de fork),
         # plutôt que d'échouer.
         if: env.SONAR_TOKEN != ''
-        uses: SonarSource/sonarqube-scan-action@v8
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0

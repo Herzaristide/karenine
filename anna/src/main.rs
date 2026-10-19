@@ -79,12 +79,13 @@ async fn main() {
             // Foreground engine, forced on, with diagnostics on stderr.
             let dry = args.iter().any(|a| a == "--dry");
             let dir = std::env::temp_dir().join("anna-gesture-debug");
-            let _ = std::fs::create_dir_all(&dir);
+            let _ = tokio::fs::create_dir_all(&dir).await;
             // Same camera/direction settings as the daemon, without touching its file.
-            let _ = std::fs::copy(
+            let _ = tokio::fs::copy(
                 paths::accent_dir().join("gesture.json"),
                 dir.join("gesture.json"),
-            );
+            )
+            .await;
             let g = gesture::Gesture::start(&dir, true, dry);
             g.set_enabled(true);
             loop {
@@ -167,7 +168,7 @@ async fn run_daemon(args: &[String]) {
         eprintln!("anna: another daemon is already listening on {socket}");
         std::process::exit(1);
     }
-    let _ = std::fs::remove_file(&socket);
+    let _ = tokio::fs::remove_file(&socket).await;
 
     let listener = match UnixListener::bind(&socket) {
         Ok(l) => l,
@@ -769,7 +770,8 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
         }
 
         Command::VoiceSimulate { path, send, hold } => {
-            let result = match std::fs::read(&path)
+            let result = match tokio::fs::read(&path)
+                .await
                 .ok()
                 .and_then(|b| claude::voice::read_wav(&b))
             {

@@ -155,9 +155,10 @@ impl Pilot {
 
     async fn stop(&self) {
         if let Some(p) = self.proc.lock().await.take() {
-            let _ = std::process::Command::new("kill")
+            let _ = tokio::process::Command::new("kill")
                 .args(["-TERM", &p.pid.to_string()])
-                .status();
+                .status()
+                .await;
         }
         self.turns.store(0, Ordering::SeqCst);
     }

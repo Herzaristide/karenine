@@ -10,8 +10,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -20,6 +18,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read # configure-pages lit la configuration du site
     defaults:
       run:
         working-directory: docs
@@ -31,9 +32,8 @@ jobs:
           cache: npm
           cache-dependency-path: docs/package-lock.json
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
-      - run: npm ci
+      # Sans scripts d'installation : aucun paquet n'en a besoin pour le build.
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -42,6 +42,10 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    # Seul le déploiement écrit sur Pages ; le build reste en lecture.
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
