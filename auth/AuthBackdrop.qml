@@ -1,15 +1,13 @@
 pragma ComponentBehavior: Bound
 import QtQuick
-import QtQuick.Shapes
 import "../services"
 
-// Fond commun du lockscreen et du greeter, en trois couches :
+// Fond commun du lockscreen et du greeter, en deux couches :
 //   1. le fond d'écran — une vidéo jouée ici (`videoSource`, cas du lock, que
 //      le compositeur isole de tout le reste), ou ce qu'il y a sous la surface
 //      (`seeThrough`, cas du greeter, où mpvpaper joue dessous) ;
-//   2. un voile sombre, pour que la carte reste lisible sur n'importe quelle
-//      image ;
-//   3. deux halos à la teinte de l'accent derrière la carte.
+//   2. un voile du fond, pour que la carte reste lisible sur n'importe quelle
+//      image.
 // Sans fond d'écran, la couleur de base de la palette.
 Rectangle {
     id: backdrop
@@ -42,52 +40,5 @@ Rectangle {
         anchors.fill: parent
         visible: backdrop.hasWallpaper
         color: Qt.alpha(Theme.bgDeep, 0.45)
-    }
-
-    component Halo: Shape {
-        id: halo
-
-        required property real cx
-        required property real cy
-        required property real radius
-        required property color tint
-
-        anchors.fill: parent
-        preferredRendererType: Shape.CurveRenderer
-
-        ShapePath {
-            strokeWidth: -1
-            fillGradient: RadialGradient {
-                centerX: halo.cx
-                centerY: halo.cy
-                centerRadius: halo.radius
-                focalX: halo.cx
-                focalY: halo.cy
-                GradientStop { position: 0.0; color: Qt.alpha(halo.tint, 0.20) }
-                GradientStop { position: 0.45; color: Qt.alpha(halo.tint, 0.06) }
-                GradientStop { position: 1.0; color: Qt.alpha(halo.tint, 0.0) }
-            }
-            startX: 0; startY: 0
-            PathLine { x: halo.width; y: 0 }
-            PathLine { x: halo.width; y: halo.height }
-            PathLine { x: 0; y: halo.height }
-            PathLine { x: 0; y: 0 }
-        }
-    }
-
-    readonly property real span: Math.max(width, height)
-
-    Halo {
-        cx: backdrop.width * 0.42
-        cy: backdrop.height * 0.38
-        radius: backdrop.span * 0.42
-        tint: Theme.glow(0)
-    }
-
-    Halo {
-        cx: backdrop.width * 0.60
-        cy: backdrop.height * 0.66
-        radius: backdrop.span * 0.36
-        tint: Theme.glow(0.12)
     }
 }

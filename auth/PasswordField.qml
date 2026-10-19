@@ -38,9 +38,9 @@ Rectangle {
     }
 
     implicitHeight: 48
-    radius: 10
+    radius: Theme.radiusSmall
     color: Theme.bgInput
-    border.width: 1.5
+    border.width: 1
     border.color: field.error ? Theme.colorDanger : (input.activeFocus ? Theme.accentColor : Theme.dividerColor)
 
     Behavior on border.color {

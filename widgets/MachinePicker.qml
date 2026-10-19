@@ -70,10 +70,8 @@ Item {
     // ── La pastille ──────────────────────────────────────────────
     Rectangle {
         anchors.fill: parent
-        radius: height / 2
+        radius: Theme.radiusSmall
         color: Qt.alpha(Theme.glow(0), switchMa.containsMouse || picker.open ? 0.24 : 0.16)
-        border.width: 1
-        border.color: Qt.alpha(Theme.glow(0), 0.38)
         Behavior on color { ColorAnimation { duration: 140 } }
 
         Image {
@@ -150,10 +148,10 @@ Item {
         width: picker.menuWidth
         height: Math.min(menuList.contentHeight + 12, picker.overlay.height - y)
         visible: picker.open
-        radius: 16
-        color: Qt.alpha(Theme.bgDeep, 0.96)
+        radius: Theme.radius
+        color: Theme.bgElevated
         border.width: 1
-        border.color: Qt.alpha(Theme.textPrimary, 0.12)
+        border.color: Theme.dividerColor
 
         // Celle-ci d'abord, puis les serveurs.
         readonly property var entries: [{ name: picker.localLabel, local: true, online: true }]
@@ -180,11 +178,9 @@ Item {
 
                 Rectangle {
                     anchors.fill: parent
-                    radius: height / 2
-                    color: entry.here ? Qt.alpha(Theme.glow(0), 0.16)
+                    radius: Theme.radiusSmall
+                    color: entry.here ? Theme.selectedFill
                                       : Qt.alpha(Theme.textPrimary, entryMa.containsMouse && entry.reachable ? 0.07 : 0)
-                    border.width: entry.here ? 1 : 0
-                    border.color: Qt.alpha(Theme.glow(0), 0.38)
                 }
 
                 // En ligne ou non.

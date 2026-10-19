@@ -1,13 +1,12 @@
 import QtQuick
 import "../services"
 
-// Le bouton des widgets, dans le style de la barre de conversation : une
-// pilule translucide posée sur le verre ; « accent » (le bouton principal, ou
-// un état allumé) la teinte comme l'indicateur du micro et la pastille des
-// onglets. Un léger tassement au clic, sans rebond. Au clavier, Tab y
-// arrive, Entrée ou Espace l'actionne. Une icône (`icon`, un SVG blanc de
-// assets/icons) peut précéder le texte, ou le remplacer : le bouton est alors
-// rond.
+// Le bouton des widgets, plat comme la barre de conversation : un aplat
+// discret, sans bordure ; « accent » (le bouton principal, ou un état
+// allumé) lui donne le fond d'accent de l'onglet actif. Un léger tassement
+// au clic, sans rebond. Au clavier, Tab y arrive, Entrée ou Espace
+// l'actionne. Une icône (`icon`, un SVG blanc de assets/icons) peut précéder
+// le texte, ou le remplacer : le bouton est alors carré.
 Rectangle {
     id: btn
 
@@ -28,14 +27,11 @@ Rectangle {
 
     implicitHeight: 34
     implicitWidth: btn.iconOnly ? implicitHeight : content.implicitWidth + 28
-    radius: height / 2
+    radius: Theme.radiusSmall
 
-    color: btn.tinted ? Qt.alpha(btn.tint, btn.hovered ? 0.26 : 0.18)
-                      : Qt.alpha(Theme.textPrimary, btn.hovered ? 0.1 : 0.06)
-    border.width: 1
-    border.color: btn.tinted ? Qt.alpha(btn.tint, 0.42) : Qt.alpha(Theme.textPrimary, 0.1)
+    color: btn.tinted ? Qt.alpha(btn.tint, btn.hovered ? 0.24 : 0.16)
+                      : Qt.alpha(Theme.textPrimary, btn.hovered ? 0.09 : 0.05)
     Behavior on color { ColorAnimation { duration: 160; easing.type: Easing.OutCubic } }
-    Behavior on border.color { ColorAnimation { duration: 160; easing.type: Easing.OutCubic } }
 
     readonly property bool hovered: ma.containsMouse || btn.activeFocus
     scale: ma.pressed ? 0.96 : 1

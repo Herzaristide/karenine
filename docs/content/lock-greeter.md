@@ -18,7 +18,7 @@ backdrop, and differ only in what sits below the field.
 lock.qml             Lock screen entry point (ext-session-lock, PAM)
 greeter.qml          Login screen entry point (greetd)
 auth/                Shared by both
-  AuthBackdrop       Backdrop: wallpaper, dark veil, two accent halos
+  AuthBackdrop       Backdrop: wallpaper, dark veil, veil
   AuthVideo          Looping, muted wallpaper video (lock only)
   AuthCard           The central card: machine, clock, user, input, PAM state
   AuthClock          Large clock + date, in the interface language
@@ -104,7 +104,7 @@ session.
 
 ## Look
 
-Both screens follow the [theme](#theme): the accent tints the halos behind
-the card, and without a wallpaper the backdrop takes the palette's base
+Both screens follow the [theme](#theme): a flat, opaque card with a hairline
+border, the accent on what is active, and without a wallpaper the backdrop takes the palette's base
 color. The clock only ticks per minute — no seconds, no need to wake the
 CPU sixty times a minute.

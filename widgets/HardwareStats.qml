@@ -371,10 +371,8 @@ I18n.tr("stats.load", { n: s.load1.toLocaleString(I18n.locale, "f", 2) })].filte
 
         Layout.fillWidth: true
         Layout.preferredHeight: hwPanel.tileH
-        radius: 20
+        radius: Theme.radius
         color: Qt.alpha(Theme.textPrimary, 0.05)
-        border.width: 1
-        border.color: Qt.alpha(Theme.textPrimary, 0.08)
 
         // La courbe occupe toute la carte, coupée à ses coins arrondis :
         // 100 % touche le haut, 0 % le bas.
@@ -388,7 +386,7 @@ I18n.tr("stats.load", { n: s.load1.toLocaleString(I18n.locale, "f", 2) })].filte
                 anchors.topMargin: 12
                 values: tile.history
                 lineColor: tile.tone
-                fillOpacity: 0.32
+                fillOpacity: 0.12
             }
         }
         Rectangle {

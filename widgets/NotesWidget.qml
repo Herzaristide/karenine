@@ -239,7 +239,7 @@ FocusScope {
         readonly property bool hovered: hover.hovered || card.editing
 
         height: body.height + 12
-        radius: 14
+        radius: Theme.radius
         color: Qt.alpha(Theme.textPrimary, 0.05)
         border.width: 1
         border.color: card.editing ? Qt.alpha(Theme.glow(0), 0.5)
@@ -360,8 +360,8 @@ FocusScope {
         Rectangle {
             anchors.fill: tools
             anchors.margins: -2
-            radius: height / 2
-            color: Qt.alpha(Theme.bgElevated, 0.85)
+            radius: Theme.radiusSmall
+            color: Theme.bgElevated
             opacity: card.hovered ? tools.opacity : 0
             Behavior on opacity { NumberAnimation { duration: 140 } }
         }
@@ -418,7 +418,7 @@ FocusScope {
 
         width: 22
         height: 22
-        radius: 11
+        radius: 6
         color: toolMa.containsMouse ? Qt.alpha(Theme.textPrimary, 0.12) : "transparent"
 
         Image {

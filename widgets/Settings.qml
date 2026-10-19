@@ -161,10 +161,10 @@ Item {
                             // onglets.
                             Layout.fillWidth: true
                             Layout.preferredHeight: 46
-                            radius: 14
-                            color: selected ? Qt.alpha(Theme.glow(0), 0.16)
+                            radius: Theme.radiusSmall
+                            color: selected ? Theme.selectedFill
                                             : Qt.alpha(Theme.textPrimary, rowMa.containsMouse || activeFocus ? 0.09 : 0.05)
-                            border.color: selected ? Qt.alpha(Theme.glow(0), 0.38) : Qt.alpha(Theme.textPrimary, 0.08)
+                            border.color: selected ? "transparent" : Theme.dividerColor
                             border.width: 1
                             Behavior on color { ColorAnimation { duration: 160 } }
 
@@ -244,10 +244,8 @@ Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 46
                     Layout.bottomMargin: 18
-                    radius: 14
+                    radius: Theme.radius
                     color: Qt.alpha(Theme.textPrimary, 0.05)
-                    border.color: Qt.alpha(Theme.textPrimary, 0.08)
-                    border.width: 1
 
                     Column {
                         anchors.left: parent.left
@@ -349,10 +347,8 @@ Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 46
                     Layout.bottomMargin: 18
-                    radius: 14
+                    radius: Theme.radius
                     color: Qt.alpha(Theme.textPrimary, wakeMa.containsMouse || activeFocus ? 0.09 : 0.05)
-                    border.color: Qt.alpha(Theme.textPrimary, 0.08)
-                    border.width: 1
                     Behavior on color { ColorAnimation { duration: 160 } }
 
                     activeFocusOnTab: true
@@ -432,10 +428,8 @@ Item {
                     Layout.preferredHeight: 46
                     Layout.topMargin: -10
                     Layout.bottomMargin: 18
-                    radius: 14
+                    radius: Theme.radius
                     color: Qt.alpha(Theme.textPrimary, activeFocus ? 0.09 : 0.05)
-                    border.color: Qt.alpha(Theme.textPrimary, 0.08)
-                    border.width: 1
 
                     activeFocusOnTab: true
                     Keys.onLeftPressed: voiceLangRow.step(-1)
@@ -509,10 +503,10 @@ Item {
 
                             Layout.fillWidth: true
                             Layout.preferredHeight: 36
-                            radius: 12
-                            color: selected ? Qt.alpha(Theme.glow(0), 0.16)
+                            radius: Theme.radiusSmall
+                            color: selected ? Theme.selectedFill
                                             : Qt.alpha(Theme.textPrimary, langMa.containsMouse || activeFocus ? 0.09 : 0.05)
-                            border.color: selected ? Qt.alpha(Theme.glow(0), 0.38) : Qt.alpha(Theme.textPrimary, 0.08)
+                            border.color: selected ? "transparent" : Theme.dividerColor
                             border.width: 1
                             Behavior on color { ColorAnimation { duration: 160 } }
 
@@ -640,7 +634,7 @@ Item {
                         selectByMouse: true
                         background: Rectangle {
                             color: Theme.bgInput
-                            radius: height / 2
+                            radius: 6
                             border.color: Theme.accentDark
                             border.width: 1
                         }
@@ -893,7 +887,7 @@ Item {
 
                     activeFocusOnTab: true
                     Keys.onPressed: (event) => root.activates(event, rainbowBtn.toggle)
-                    FocusRing { radius: 12 + gap }
+                    FocusRing { radius: Theme.radiusSmall + gap }
 
                     // Rainbow gradient background
                     Canvas {
@@ -924,7 +918,7 @@ Item {
                     // Dimming overlay — lighter when active
                     Rectangle {
                         anchors.fill: parent
-                        radius: 12
+                        radius: Theme.radiusSmall
                         color: Theme.bgDeep
                         opacity: root.rainbowActive ? 0.10 : 0.50
                         Behavior on opacity { NumberAnimation { duration: 250 } }
@@ -933,7 +927,7 @@ Item {
                     // Active border glow
                     Rectangle {
                         anchors.fill: parent
-                        radius: 12
+                        radius: Theme.radiusSmall
                         color: "transparent"
                         border.color: Theme.iconColor
                         border.width: 1
@@ -976,11 +970,11 @@ Item {
 
                     activeFocusOnTab: true
                     Keys.onPressed: (event) => root.activates(event, resetBtn.reset)
-                    FocusRing { radius: 12 + gap }
+                    FocusRing { radius: Theme.radiusSmall + gap }
 
                     Rectangle {
                         anchors.fill: parent
-                        radius: 12
+                        radius: Theme.radiusSmall
                         color: Qt.alpha(Theme.textPrimary, 0.1)
                         border.color: Theme.dividerColor
                         border.width: 1

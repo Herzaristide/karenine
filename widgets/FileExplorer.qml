@@ -652,10 +652,8 @@ Item {
         y: root.switchH + 8
         width: root.placesW
         height: parent.height - y - root.diskSpace
-        radius: 18
+        radius: Theme.radius
         color: Qt.alpha(Theme.textPrimary, 0.05)
-        border.width: 1
-        border.color: Qt.alpha(Theme.textPrimary, 0.08)
 
         // Plus de favoris que de place : la liste défile.
         ListView {
@@ -677,11 +675,9 @@ Item {
 
                 Rectangle {
                     anchors.fill: parent
-                    radius: height / 2
-                    color: placeRow.here ? Qt.alpha(Theme.glow(0), 0.16)
+                    radius: Theme.radiusSmall
+                    color: placeRow.here ? Theme.selectedFill
                                          : Qt.alpha(Theme.textPrimary, placeMa.containsMouse ? 0.07 : 0)
-                    border.width: placeRow.here ? 1 : 0
-                    border.color: Qt.alpha(Theme.glow(0), 0.38)
                     Behavior on color { ColorAnimation { duration: 140 } }
                 }
 
@@ -750,11 +746,11 @@ Item {
 
                 width: (diskBar.width - diskBar.spacing * (root.disks.length - 1)) / root.disks.length
                 height: diskBar.height
-                radius: 16
-                color: disk.here ? Qt.alpha(Theme.glow(0), 0.16)
+                radius: Theme.radiusSmall
+                color: disk.here ? Theme.selectedFill
                                  : Qt.alpha(Theme.textPrimary, diskMa.containsMouse || disk.activeFocus ? 0.09 : 0.05)
                 border.width: 1
-                border.color: disk.here ? Qt.alpha(Theme.glow(0), 0.38) : Qt.alpha(Theme.textPrimary, 0.08)
+                border.color: disk.here ? "transparent" : Theme.dividerColor
                 Behavior on color { ColorAnimation { duration: 140 } }
 
                 // Au clavier aussi : Tab, puis Entrée ou Espace.
@@ -899,7 +895,7 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             width: crumbLabel.implicitWidth + 14
                             height: 24
-                            radius: 12
+                            radius: 6
                             color: Qt.alpha(Theme.textPrimary, crumbMa.containsMouse && !crumb.last ? 0.08 : 0)
                             Behavior on color { ColorAnimation { duration: 140 } }
 
@@ -938,10 +934,8 @@ Item {
                 visible: root.selectedCount > 0
                 width: countLabel.implicitWidth + 36
                 height: 30
-                radius: 15
+                radius: Theme.radiusSmall
                 color: Qt.alpha(Theme.glow(0), clearMa.containsMouse ? 0.26 : 0.18)
-                border.width: 1
-                border.color: Qt.alpha(Theme.glow(0), 0.42)
                 Behavior on color { ColorAnimation { duration: 140 } }
 
                 Text {
@@ -1028,7 +1022,7 @@ Item {
     FocusRing {
         anchors.fill: grid
         watch: grid
-        radius: 18
+        radius: Theme.radius
         gap: 2
     }
 
@@ -1154,15 +1148,14 @@ Item {
             width: grid.cellWidth
             height: grid.cellHeight
 
-            // Sélectionnée : teintée franchement ; retenue au clavier : un fil
-            // autour ; survolée : à peine teintée.
+            // Sélectionnée : teintée franchement ; retenue au clavier : teintée ;
+            // survolée : à peine marquée.
             Rectangle {
                 anchors.fill: parent
                 anchors.margins: 3
-                radius: 14
-                color: Qt.alpha(Theme.glow(0), tile.selected ? 0.22 : tile.current ? 0.12 : 0.08)
-                border.width: tile.current || tile.selected ? 1 : 0
-                border.color: Qt.alpha(Theme.glow(0), tile.selected ? 0.5 : 0.38)
+                radius: Theme.radiusSmall
+                color: tile.selected ? Qt.alpha(Theme.accentColor, 0.22)
+                     : tile.current ? Theme.selectedFill : Theme.hoverOverlay
                 opacity: tile.current || tile.selected || tileMa.containsMouse ? 1 : 0
                 Behavior on opacity { NumberAnimation { duration: 120 } }
                 Behavior on color { ColorAnimation { duration: 120 } }
@@ -1219,7 +1212,7 @@ Item {
                     font.family: "Inter"
                     font.pixelSize: 11
                     font.weight: Font.DemiBold
-                    color: "#ffffff"
+                    color: Theme.selectedTextColor
                 }
             }
 
@@ -1313,8 +1306,8 @@ Item {
         visible: root.connecting !== "" || root.error !== "" || root.notice !== ""
         width: Math.min(statusLabel.implicitWidth + 28, grid.width - 20)
         height: 30
-        radius: 15
-        color: Qt.alpha(Theme.bgDeep, 0.92)
+        radius: Theme.radiusSmall
+        color: Theme.bgElevated
         border.width: 1
         border.color: root.error !== "" ? Qt.alpha(Theme.colorDanger, 0.5) : Qt.alpha(Theme.glow(0), 0.4)
 

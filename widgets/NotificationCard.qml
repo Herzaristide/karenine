@@ -33,7 +33,7 @@ Rectangle {
     readonly property string replyPlaceholder: card.n ? card.n.inlineReplyPlaceholder : ""
 
     implicitHeight: content.implicitHeight + 20
-    radius: 14
+    radius: Theme.radius
     color: Qt.alpha(Theme.textPrimary, hover.hovered ? 0.08 : 0.05)
     border.width: 1
     border.color: card.critical ? Qt.alpha(Theme.colorDanger, 0.6) : Qt.alpha(Theme.textPrimary, 0.08)
@@ -170,7 +170,7 @@ Rectangle {
                 Layout.topMargin: 3
                 visible: card.canReply
                 implicitHeight: 28
-                radius: 14
+                radius: Theme.radiusSmall
                 color: Qt.alpha(Theme.textPrimary, 0.06)
                 border.width: 1
                 border.color: replyInput.activeFocus ? Qt.alpha(Theme.glow(0), 0.5) : Qt.alpha(Theme.textPrimary, 0.1)

@@ -189,10 +189,8 @@ ColumnLayout {
 
     component Card: Rectangle {
         Layout.fillWidth: true
-        radius: 14
+        radius: Theme.radius
         color: Qt.alpha(Theme.textPrimary, 0.05)
-        border.width: 1
-        border.color: Qt.alpha(Theme.textPrimary, 0.08)
     }
 
     // Quatre barres, pleines selon le signal.
@@ -333,7 +331,7 @@ ColumnLayout {
                         id: netRow
                         Layout.fillWidth: true
                         implicitHeight: 32
-                        radius: 10
+                        radius: Theme.radiusSmall
                         readonly property bool hovered: netMa.containsMouse || netRow.activeFocus
                         color: Qt.alpha(Theme.textPrimary, net.modelData.active ? 0.08 : netRow.hovered ? 0.06 : 0)
 

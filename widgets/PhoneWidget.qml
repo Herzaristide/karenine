@@ -168,10 +168,8 @@ Item {
         visible: root.phone !== null
         width: root.width
         height: parent.height
-        radius: 18
+        radius: Theme.radius
         color: Qt.alpha(Theme.textPrimary, 0.05)
-        border.width: 1
-        border.color: Qt.alpha(Theme.textPrimary, 0.08)
 
         ColumnLayout {
             anchors.fill: parent

@@ -10,7 +10,7 @@ import "../services"
 import "../widgets"
 
 // La barre du haut des widgets, la même quel que soit l'onglet. Quatre
-// groupes posés sur le verre, chacun dans sa pilule : l'alimentation à
+// groupes posés sur le fond, chacun sur son aplat : l'alimentation à
 // gauche, les niveaux (luminosité, volume) au milieu, le Bluetooth et la
 // capture, puis la batterie à droite. Le Bluetooth déplie la liste des
 // appareils (widgets/BluetoothMenu.qml).
@@ -75,13 +75,11 @@ Item {
     }
 
     // ── Petits éléments ──────────────────────────────────────────
-    // Une pilule de verre qui porte un groupe.
+    // Un aplat qui porte un groupe : le panneau, un ton au-dessus du fond.
     component Pill: Rectangle {
         Layout.preferredHeight: top.height
-        radius: height / 2
-        color: Qt.alpha(Theme.textPrimary, 0.05)
-        border.width: 1
-        border.color: Qt.alpha(Theme.textPrimary, 0.08)
+        radius: Theme.radiusSmall
+        color: Theme.bgElevated
     }
 
     // Une icône teinte (les SVG sont blancs).
@@ -135,9 +133,9 @@ Item {
         Layout.alignment: Qt.AlignVCenter
         implicitWidth: top.btnSize
         implicitHeight: top.btnSize
-        radius: height / 2
+        radius: Theme.radiusSmall
         color: ib.alerted ? Qt.alpha(ib.alertColor, 0.18)
-                          : Qt.alpha(Theme.textPrimary, ib.hovered ? 0.1 : 0)
+                          : ib.hovered ? Theme.hoverOverlay : "transparent"
         Behavior on color { ColorAnimation { duration: 160; easing.type: Easing.OutCubic } }
         scale: ibMa.pressed ? 0.92 : 1
         Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
@@ -183,8 +181,8 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         height: top.btnSize
         width: top.btnSize
-        radius: height / 2
-        color: Qt.alpha(Theme.textPrimary, pb.hovered ? 0.1 : 0)
+        radius: Theme.radiusSmall
+        color: pb.hovered ? Theme.hoverOverlay : "transparent"
         Behavior on color { ColorAnimation { duration: 180; easing.type: Easing.OutCubic } }
         scale: pbMa.pressed ? 0.92 : 1
         Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
@@ -266,7 +264,7 @@ Item {
             width: 10
             height: 10
             radius: 5
-            color: "#ffffff"
+            color: Theme.textPrimary
             // Visible au survol, pendant le glisser et au clavier seulement :
             // au repos, la barre seule suffit.
             opacity: slMa.containsMouse || sl.dragging || sl.activeFocus ? 1 : 0

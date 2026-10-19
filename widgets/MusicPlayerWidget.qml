@@ -312,39 +312,6 @@ Item {
             Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
             Behavior on scale   { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
 
-            // Outer counter-rotating ring
-            Rectangle {
-                anchors.centerIn: parent
-                width: parent.width + 22; height: parent.height + 22; radius: width / 2
-                color: "transparent"
-                border.width: 1; border.color: Theme.accentColor
-                opacity: root.isPlaying ? 0.45 : 0.0
-                Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
-
-                RotationAnimator on rotation {
-                    running: root.isPlaying && !root.showLyrics
-                    from: 0; to: -360; duration: 14000; loops: Animation.Infinite
-                }
-            }
-
-            // Inner pulsing ring
-            Rectangle {
-                id: innerRing
-                anchors.centerIn: parent
-                width: parent.width + 8; height: parent.height + 8; radius: width / 2
-                color: "transparent"
-                border.width: 2; border.color: Theme.accentColor
-                opacity: root.isPlaying ? 0.30 : 0.0
-                Behavior on opacity { NumberAnimation { duration: 320 } }
-
-                // Animators only: the pulse runs on the render thread.
-                SequentialAnimation {
-                    running: root.isPlaying && !root.showLyrics; loops: Animation.Infinite
-                    ScaleAnimator { target: innerRing; from: 1.0; to: 1.04; duration: 860; easing.type: Easing.InOutSine }
-                    ScaleAnimator { target: innerRing; from: 1.04; to: 1.0; duration: 860; easing.type: Easing.InOutSine }
-                }
-            }
-
             // Disc body (rotates with the art)
             Item {
                 id: vinylDisc
@@ -432,7 +399,7 @@ Item {
                     width: parent.width * (0.28 + index * 0.14); height: width; radius: width / 2
                     color: "transparent"
                     border.width: 0.5
-                    border.color: Qt.rgba(1, 1, 1, 0.04 + index * 0.025)
+                    border.color: Qt.alpha(Theme.textPrimary, 0.04 + index * 0.025)
                     visible: discArt.status !== Image.Ready
                 }
             }
@@ -501,20 +468,6 @@ Item {
                 }
             }
 
-            // Radial vignette over art (clipped to circle naturally)
-            Rectangle {
-                anchors.fill: parent
-                radius: width / 2
-                visible: discArt.status === Image.Ready
-                color: "transparent"
-                gradient: Gradient {
-                    orientation: Gradient.Vertical
-                    GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0.06) }
-                    GradientStop { position: 0.6; color: "transparent"          }
-                    GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0.45) }
-                }
-            }
-
             // Placeholder note icon (no art)
             Text {
                 anchors.centerIn: parent
@@ -529,7 +482,7 @@ Item {
                 width: parent.width * 0.10; height: width; radius: width / 2
                 color: Theme.bgDeep
                 border.width: 2
-                border.color: Qt.rgba(Theme.accentColor.r, Theme.accentColor.g, Theme.accentColor.b, 0.80)
+                border.color: Qt.alpha(Theme.accentColor, 0.8)
                 z: 10
             }
         }
@@ -538,14 +491,14 @@ Item {
         Rectangle {
             anchors.centerIn: parent
             width: 52; height: 52; radius: 26
-            color: Qt.rgba(0, 0, 0, 0.58)
+            color: Qt.alpha(Theme.bgDeep, 0.85)
             opacity: !root.showLyrics && root.hasPlayer && !root.isPlaying && !vinylContainer.dragging ? 0.92 : 0.0
             Behavior on opacity { NumberAnimation { duration: 260 } }
 
             Text {
                 anchors.centerIn: parent
                 text: root.hasPlayer ? "⏸" : "♪"
-                font.pixelSize: 20; color: "white"
+                font.pixelSize: 20; color: Theme.textPrimary
             }
         }
 
@@ -554,7 +507,7 @@ Item {
         Rectangle {
             anchors.centerIn: parent
             width: 52; height: 52; radius: 26
-            color: Qt.rgba(0, 0, 0, 0.58)
+            color: Qt.alpha(Theme.bgDeep, 0.85)
             readonly property bool show:
                 vinylContainer.dragging
                 && Math.abs(vinylContainer.dragDx) > vinylContainer.dragThreshold
@@ -564,7 +517,7 @@ Item {
             Text {
                 anchors.centerIn: parent
                 text: vinylContainer.dragDx > 0 ? "⏮" : "⏭"
-                font.pixelSize: 22; color: "white"
+                font.pixelSize: 22; color: Theme.textPrimary
             }
         }
 
@@ -978,13 +931,11 @@ Item {
             id: bg
             anchors.fill: parent
             radius: width / 2
-            // Le style de la barre : translucide, teinté pour l'action principale.
+            // Plat comme la barre : un aplat discret, l'accent pour l'action principale.
             color: btn.accent
-                   ? Qt.alpha(Theme.glow(0), ma.containsMouse || btn.activeFocus ? 0.3 : 0.2)
-                   : Qt.alpha(Theme.textPrimary, ma.containsMouse || btn.activeFocus ? 0.1 : 0.06)
+                   ? Qt.alpha(Theme.accentColor, ma.containsMouse || btn.activeFocus ? 0.24 : 0.16)
+                   : Qt.alpha(Theme.textPrimary, ma.containsMouse || btn.activeFocus ? 0.09 : 0.05)
             opacity: btn.enabled ? 1.0 : 0.35
-            border.width: 1
-            border.color: btn.accent ? Qt.alpha(Theme.glow(0), 0.42) : Qt.alpha(Theme.textPrimary, 0.1)
 
             scale: ma.pressed ? 0.94 : 1.0
             Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }

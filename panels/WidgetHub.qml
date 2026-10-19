@@ -123,12 +123,7 @@ FocusScope {
         y: hub.pad + hub.topH + hub.gap
         width: hub.width - 2 * (hub.pad + 10)
         height: 1
-        gradient: Gradient {
-            orientation: Gradient.Horizontal
-            GradientStop { position: 0.0; color: "transparent" }
-            GradientStop { position: 0.5; color: Qt.alpha(Theme.textPrimary, 0.1) }
-            GradientStop { position: 1.0; color: "transparent" }
-        }
+        color: Theme.dividerColor
     }
 
     // ── Le widget ────────────────────────────────────────────────
@@ -198,12 +193,7 @@ FocusScope {
                 x: 10
                 width: parent.width - 20
                 height: 1
-                gradient: Gradient {
-                    orientation: Gradient.Horizontal
-                    GradientStop { position: 0.0; color: "transparent" }
-                    GradientStop { position: 0.5; color: Qt.alpha(Theme.textPrimary, 0.1) }
-                    GradientStop { position: 1.0; color: "transparent" }
-                }
+                color: Theme.dividerColor
             }
             Tuner {
                 active: true
@@ -243,10 +233,8 @@ FocusScope {
             width: tabBar.tabW
             x: hub.current * tabBar.tabW
             Behavior on x { NumberAnimation { duration: 420; easing.type: Easing.OutQuint } }
-            radius: height / 2
-            color: Qt.alpha(hub.bar.hue(0), 0.16)
-            border.width: 1
-            border.color: Qt.alpha(hub.bar.hue(0), 0.38)
+            radius: Theme.radiusSmall
+            color: Theme.selectedFill
 
             FocusRing { watch: tabBar; gap: 2 }
         }
@@ -266,8 +254,8 @@ FocusScope {
 
                 Rectangle {
                     anchors.fill: parent
-                    radius: height / 2
-                    color: Qt.alpha(Theme.textPrimary, 0.06)
+                    radius: Theme.radiusSmall
+                    color: Theme.hoverOverlay
                     opacity: tabMa.containsMouse && !tab.active ? 1 : 0
                     Behavior on opacity { NumberAnimation { duration: 140 } }
                 }

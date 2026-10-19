@@ -38,7 +38,7 @@ Rectangle {
     height: headerH + (loader.item ? loader.height : 0) + pad
 
     color: Theme.bgDeep
-    radius: 14
+    radius: Theme.radius
     border.width: 1
     border.color: Theme.dividerColor
 
@@ -101,7 +101,7 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             width: 20
             height: 20
-            radius: 10
+            radius: 6
             color: closeMa.containsMouse || closeBtn.activeFocus ? Theme.hoverOverlay : "transparent"
 
             activeFocusOnTab: true

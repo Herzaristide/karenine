@@ -1,6 +1,5 @@
 pragma ComponentBehavior: Bound
 import QtQuick
-import QtQuick.Effects
 import QtQuick.Layouts
 import Quickshell.Io
 import "../services"
@@ -77,22 +76,10 @@ Item {
         id: plate
 
         anchors.fill: parent
-        radius: 18
-        color: Qt.alpha(Theme.bgDeep, 0.94)
+        radius: Theme.radius
+        color: Theme.bgDeep
         border.width: 1
         border.color: Theme.dividerColor
-        visible: false
-    }
-
-    MultiEffect {
-        anchors.fill: plate
-        source: plate
-        shadowEnabled: true
-        shadowColor: "#000000"
-        shadowOpacity: 0.55
-        shadowBlur: 1.0
-        shadowVerticalOffset: 12
-        autoPaddingEnabled: true
     }
 
     ColumnLayout {
@@ -148,9 +135,7 @@ Item {
                 Layout.preferredWidth: 42
                 Layout.preferredHeight: 42
                 radius: 21
-                color: Qt.alpha(Theme.accentColor, 0.16)
-                border.width: 1
-                border.color: Qt.alpha(Theme.accentColor, 0.45)
+                color: Theme.selectedFill
 
                 Text {
                     anchors.centerIn: parent
