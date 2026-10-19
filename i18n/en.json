@@ -67,6 +67,8 @@
   "bluetooth.off": "Bluetooth is off.",
   "bluetooth.paired": "Paired",
   "bluetooth.pairing": "Pairing…",
+  "bluetooth.profile.call": "Call",
+  "bluetooth.profile.music": "Music",
   "bluetooth.searching": "searching…",
   "bluetooth.title": "Bluetooth",
   "common.cancel": "Cancel",

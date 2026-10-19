@@ -67,6 +67,8 @@
   "bluetooth.off": "Le Bluetooth est éteint.",
   "bluetooth.paired": "Appairé",
   "bluetooth.pairing": "Appairage…",
+  "bluetooth.profile.call": "Appel",
+  "bluetooth.profile.music": "Musique",
   "bluetooth.searching": "recherche…",
   "bluetooth.title": "Bluetooth",
   "common.cancel": "Annuler",
