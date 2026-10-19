@@ -77,7 +77,7 @@ anna, through `anna/src/i18n.rs`:
 
 ```rust
 Err(crate::i18n::tr("phone.plug_usb"))
-crate::i18n::tr_args("worktree.merge_failed", &[("error", &e)])
+crate::i18n::tr_args("voice.no_model", &[("path", &path)])
 ```
 
 anna finds the dictionaries in `KARENINE_I18N`, otherwise in

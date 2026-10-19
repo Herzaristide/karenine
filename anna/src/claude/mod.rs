@@ -12,9 +12,7 @@
 //! Subscribers (`claude_watch`) get the full list on every change.
 //!
 //! Permission requests are Claude Code's own business: its terminal dialog
-//! answers them. Only the pilot asks from the dock (`permission.rs`): while
-//! one of its requests is open, the pilot's session carries a `request` the
-//! dock turns into buttons.
+//! answers them.
 //!
 //! Nothing is persisted: a session reappears with its next event after a
 //! daemon restart. Sessions whose `claude` process is gone are reaped.
@@ -22,22 +20,18 @@
 pub mod desk;
 pub mod focus;
 pub mod hook;
-pub mod knowledge;
 pub mod mcp;
-pub mod permission;
 pub mod pilot;
-pub mod runner;
-pub mod transcript;
+pub mod skills;
 pub mod voice;
 pub mod wake;
 pub mod whisper;
-pub mod worktree;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::broadcast;
 
 /// Sessions without a known process are forgotten after this much silence.
 const STALE_AFTER: u64 = 6 * 3600;
@@ -53,8 +47,6 @@ pub struct HookEvent {
     pub session_id: String,
     #[serde(default)]
     pub cwd: String,
-    #[serde(default)]
-    pub transcript_path: String,
     /// UserPromptSubmit: the prompt (already truncated by the hook).
     #[serde(default)]
     pub prompt: String,
@@ -89,14 +81,6 @@ pub struct Session {
     pub prompt: String,
     /// While waiting: what for.
     pub message: String,
-    /// An open permission request of the pilot, if any.
-    pub request: Option<Request>,
-    /// Started from the dock: it can be sent follow-ups and stopped there.
-    pub managed: bool,
-    /// The repository copy it works in, when it works in one.
-    pub worktree: Option<worktree::Worktree>,
-    /// Its JSONL transcript, once known.
-    pub transcript: String,
     #[serde(skip)]
     pub pid: Option<u32>,
     /// Unix seconds of the last event, for reaping pid-less sessions.
@@ -107,60 +91,10 @@ pub struct Session {
     seq: u64,
 }
 
-/// A permission request of the pilot, waiting for an answer from the dock.
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct Request {
-    /// Handle for `claude_decide`.
-    pub req: u64,
-    /// The tool Claude wants to run: "Bash", "Write", "mcp__…".
-    pub tool: String,
-    /// What it would do: the command, the file, the URL…
-    pub summary: String,
-    /// What "always" would allow from now on, empty when Claude Code offers
-    /// no such rule.
-    pub always: String,
-}
-
-/// How a permission request ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Outcome {
-    Allow,
-    Always,
-    Deny,
-    /// Nobody answered (no dock, or not in time).
-    Terminal,
-}
-
-impl Outcome {
-    pub fn parse(s: &str) -> Option<Self> {
-        Some(match s {
-            "allow" => Self::Allow,
-            "always" => Self::Always,
-            "deny" => Self::Deny,
-            "terminal" => Self::Terminal,
-            _ => return None,
-        })
-    }
-
-    /// The inverse of `parse`, for the tests.
-    #[cfg(test)]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Allow => "allow",
-            Self::Always => "always",
-            Self::Deny => "deny",
-            Self::Terminal => "terminal",
-        }
-    }
-}
-
 #[derive(Default)]
 struct Inner {
     sessions: HashMap<String, Session>,
     next_seq: u64,
-    /// Open permission requests: where each one's answer goes.
-    pending: HashMap<u64, oneshot::Sender<Outcome>>,
-    next_req: u64,
 }
 
 pub struct Sessions {
@@ -175,12 +109,8 @@ fn now() -> u64 {
         .unwrap_or(0)
 }
 
-/// The project a session belongs to: its repository for a worktree, its
-/// directory otherwise.
+/// The project a session belongs to: its directory.
 fn project_of(cwd: &str) -> String {
-    if let Some(wt) = worktree::parse(cwd) {
-        return wt.repo_name();
-    }
     std::path::Path::new(cwd)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -211,8 +141,7 @@ fn notification_is_idle(ev: &HookEvent) -> bool {
 
 impl Inner {
     /// The session an event belongs to, created on first sight and refreshed
-    /// with what the event knows (pid, cwd, transcript). Also says whether it
-    /// is new.
+    /// with what the event knows (pid, cwd). Also says whether it is new.
     fn upsert(&mut self, ev: &HookEvent, pid: Option<u32>, t: u64) -> (&mut Session, bool) {
         let seq = self.next_seq;
         let s = self
@@ -227,10 +156,6 @@ impl Inner {
                 turn_started: 0,
                 prompt: String::new(),
                 message: String::new(),
-                request: None,
-                managed: false,
-                worktree: worktree::parse(&ev.cwd),
-                transcript: String::new(),
                 pid: None,
                 last_event: t,
                 seq,
@@ -247,10 +172,6 @@ impl Inner {
         if !ev.cwd.is_empty() && ev.cwd != s.cwd {
             s.cwd = ev.cwd.clone();
             s.project = project_of(&ev.cwd);
-            s.worktree = worktree::parse(&ev.cwd);
-        }
-        if !ev.transcript_path.is_empty() {
-            s.transcript = ev.transcript_path.clone();
         }
         (s, is_new)
     }
@@ -306,95 +227,6 @@ impl Inner {
             s.since = t;
         }
         changed
-    }
-
-    /// A session the dock just started: shown at once, working on `prompt`,
-    /// before its own hooks have said anything.
-    fn adopt(&mut self, id: &str, cwd: &str, pid: u32, prompt: &str, transcript: &str, t: u64) {
-        let ev = HookEvent {
-            hook_event_name: "SessionStart".into(),
-            session_id: id.into(),
-            cwd: cwd.into(),
-            transcript_path: transcript.into(),
-            ..Default::default()
-        };
-        let (s, _) = self.upsert(&ev, (pid > 0).then_some(pid), t);
-        s.managed = true;
-        s.state = State::Working;
-        s.since = t;
-        s.turn_started = t;
-        s.message.clear();
-        s.prompt = excerpt(prompt, PROMPT_EXCERPT);
-    }
-
-    /// Its process ended: the session can no longer be sent to.
-    fn release(&mut self, id: &str) -> bool {
-        match self.sessions.get_mut(id) {
-            Some(s) if s.managed => {
-                s.managed = false;
-                true
-            }
-            _ => false,
-        }
-    }
-
-    /// Open a permission request on the event's session: it turns waiting,
-    /// and carries the request until `close_request`. Returns its handle and
-    /// the receiver the answer will arrive on.
-    fn open_request(
-        &mut self,
-        ev: &HookEvent,
-        pid: Option<u32>,
-        t: u64,
-        (tool, summary, always): (&str, &str, &str),
-    ) -> (u64, oneshot::Receiver<Outcome>) {
-        let req = self.next_req;
-        self.next_req += 1;
-        let (tx, rx) = oneshot::channel();
-        self.pending.insert(req, tx);
-
-        let (s, _) = self.upsert(ev, pid, t);
-        if s.state != State::Waiting {
-            s.since = t;
-        }
-        s.state = State::Waiting;
-        s.message = excerpt(&format!("{tool} : {summary}"), PROMPT_EXCERPT);
-        s.request = Some(Request {
-            req,
-            tool: tool.into(),
-            summary: summary.into(),
-            always: always.into(),
-        });
-        (req, rx)
-    }
-
-    /// Hand an answer to whoever waits on request `req`. False if the
-    /// request is unknown or already closed.
-    fn decide(&mut self, req: u64, outcome: Outcome) -> bool {
-        self.pending
-            .remove(&req)
-            .is_some_and(|tx| tx.send(outcome).is_ok())
-    }
-
-    /// The request is over, however it ended: take it off its session.
-    /// Answered, the turn resumes; unanswered, the session keeps waiting.
-    /// Returns whether anything changed.
-    fn close_request(&mut self, req: u64, outcome: Outcome, t: u64) -> bool {
-        self.pending.remove(&req);
-        let Some(s) = self
-            .sessions
-            .values_mut()
-            .find(|s| s.request.as_ref().is_some_and(|r| r.req == req))
-        else {
-            return false;
-        };
-        s.request = None;
-        if outcome != Outcome::Terminal {
-            s.state = State::Working;
-            s.message.clear();
-            s.since = t;
-        }
-        true
     }
 
     /// Drop sessions whose process is gone, or silent for too long when the
@@ -458,44 +290,6 @@ impl Sessions {
         self.lock().sessions.get(id).and_then(|s| s.pid)
     }
 
-    pub fn adopt(&self, id: &str, cwd: &str, pid: u32, prompt: &str, transcript: &str) {
-        self.lock().adopt(id, cwd, pid, prompt, transcript, now());
-        self.publish();
-    }
-
-    pub fn release(&self, id: &str) {
-        if self.lock().release(id) {
-            self.publish();
-        }
-    }
-
-    /// Whether anything (the shell) is watching: without it, a permission
-    /// request has nobody to answer it.
-    pub fn watched(&self) -> bool {
-        self.tx.receiver_count() > 0
-    }
-
-    pub fn open_request(
-        &self,
-        ev: &HookEvent,
-        pid: Option<u32>,
-        what: (&str, &str, &str),
-    ) -> (u64, oneshot::Receiver<Outcome>) {
-        let (req, rx) = self.lock().open_request(ev, pid, now(), what);
-        self.publish();
-        (req, rx)
-    }
-
-    pub fn decide(&self, req: u64, outcome: Outcome) -> bool {
-        self.lock().decide(req, outcome)
-    }
-
-    pub fn close_request(&self, req: u64, outcome: Outcome) {
-        if self.lock().close_request(req, outcome, now()) {
-            self.publish();
-        }
-    }
-
     /// The line pushed to watchers: the whole list.
     pub fn snapshot_line(&self) -> String {
         serde_json::json!({ "sessions": self.list() }).to_string()
@@ -535,10 +329,10 @@ mod tests {
         assert_eq!(i.sessions["abc"].project, "karenine");
 
         let mut p = ev("UserPromptSubmit");
-        p.prompt = "corrige\nle   dock".into();
+        p.prompt = "corrige\nla   barre".into();
         i.apply(&p, None, 110);
         assert_eq!(state(&i), State::Working);
-        assert_eq!(i.sessions["abc"].prompt, "corrige le dock");
+        assert_eq!(i.sessions["abc"].prompt, "corrige la barre");
         assert_eq!(
             i.sessions["abc"].pid,
             Some(42),
@@ -632,86 +426,5 @@ mod tests {
     fn excerpt_cuts_on_char_boundary() {
         assert_eq!(excerpt("é".repeat(10).as_str(), 5), "éééé…");
         assert_eq!(excerpt("court", 10), "court");
-    }
-
-    #[test]
-    fn an_answered_request_resumes_the_turn() {
-        let mut i = Inner::default();
-        i.apply(&ev("UserPromptSubmit"), Some(9), 100);
-
-        let (req, mut rx) = i.open_request(
-            &ev("PermissionRequest"),
-            None,
-            101,
-            ("Bash", "npm test", ""),
-        );
-        assert_eq!(state(&i), State::Waiting);
-        let r = i.sessions["abc"].request.clone().expect("request is shown");
-        assert_eq!((r.req, r.tool.as_str()), (req, "Bash"));
-
-        assert!(i.decide(req, Outcome::Allow));
-        assert_eq!(rx.try_recv().unwrap(), Outcome::Allow);
-        assert!(!i.decide(req, Outcome::Deny), "a request is answered once");
-
-        assert!(i.close_request(req, Outcome::Allow, 102));
-        assert_eq!(state(&i), State::Working);
-        assert!(i.sessions["abc"].request.is_none());
-    }
-
-    #[test]
-    fn an_unanswered_request_keeps_waiting() {
-        let mut i = Inner::default();
-        let (req, _rx) = i.open_request(&ev("PermissionRequest"), None, 100, ("Write", "a.rs", ""));
-        assert!(i.close_request(req, Outcome::Terminal, 101));
-        assert_eq!(state(&i), State::Waiting);
-        assert!(
-            i.sessions["abc"].request.is_none(),
-            "the dock can no longer answer it"
-        );
-        assert!(!i.decide(req, Outcome::Allow));
-    }
-
-    #[test]
-    fn dock_sessions_show_up_before_their_hooks() {
-        let mut i = Inner::default();
-        let cwd = "/home/u/ciph3r/karenine/.claude/worktrees/fix-dock-a1b2";
-        i.adopt("new", cwd, 77, "corrige le dock", "/t.jsonl", 100);
-        let s = &i.sessions["new"];
-        assert!(s.managed);
-        assert_eq!((s.state, s.pid), (State::Working, Some(77)));
-        assert_eq!(
-            s.project, "karenine",
-            "a worktree session belongs to its repo"
-        );
-        assert_eq!(
-            s.worktree.as_ref().unwrap().branch,
-            "worktree-fix-dock-a1b2"
-        );
-        assert_eq!(s.transcript, "/t.jsonl");
-
-        // Its own hooks then land on the same session.
-        let mut e = ev("UserPromptSubmit");
-        e.session_id = "new".into();
-        e.cwd = cwd.into();
-        i.apply(&e, Some(77), 101);
-        assert_eq!(i.sessions.len(), 1);
-        assert!(i.sessions["new"].managed);
-
-        assert!(i.release("new"));
-        assert!(!i.sessions["new"].managed);
-        assert!(!i.release("new"));
-    }
-
-    #[test]
-    fn outcomes_round_trip() {
-        for o in [
-            Outcome::Allow,
-            Outcome::Always,
-            Outcome::Deny,
-            Outcome::Terminal,
-        ] {
-            assert_eq!(Outcome::parse(o.as_str()), Some(o));
-        }
-        assert_eq!(Outcome::parse("yes"), None);
     }
 }

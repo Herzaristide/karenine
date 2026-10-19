@@ -4,8 +4,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Hyprland
 
-// Choix des écrans : celui qui porte l'interface (barre, panneaux, réglages)
-// et celui du dock, qui suit le focus.
+// Choix de l'écran qui porte l'interface (barre, panneaux, réglages).
 //
 // Un écran est désigné par son modèle, pas par son connecteur : le même
 // moniteur s'appelle DP-4 sur une machine et DP-3 sur l'autre, alors que son
@@ -69,12 +68,6 @@ Singleton {
         if (!s && Quickshell.screens.length > 0)
             s = Quickshell.screens[0];
         return s;
-    }
-
-    // L'écran qui a le focus côté Hyprland, repli sur celui de l'interface.
-    readonly property var focused: {
-        var m = Hyprland.focusedMonitor;
-        return (m ? display._byName(m.name) : null) || display.primary;
     }
 
     // ── Les workspaces principaux suivent l'écran de l'interface ─────────

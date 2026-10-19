@@ -8,7 +8,7 @@ import "../services"
 
 // La barre de conversation : tout ce qui reste de la barre du haut. Une
 // pastille en bas au centre, le flocon NixOS à gauche, le champ à droite ;
-// ce qu'on y écrit va au pilote (ClaudeLive.pilotAsk), et sa réponse
+// ce qu'on y écrit va au pilote (Pilot.pilotAsk), et sa réponse
 // s'affiche juste au-dessus.
 //
 //          ╭──────────────────────────────────────────╮
@@ -30,9 +30,9 @@ import "../services"
 // widgets, un onglet à la fois (panels/WidgetHub.qml).
 //
 // La même barre cherche : dès la première lettre, les suggestions
-// (applications, fichiers, réglages, web — le service Search, celui de
-// l'ancien dock) s'empilent juste au-dessus, sur une carte du même verre que
-// la capsule, la meilleure contre la barre. Écrire referme les widgets.
+// (applications, fichiers, réglages, web — le service Search) s'empilent
+// juste au-dessus, sur une carte du même verre que la capsule, la meilleure
+// contre la barre. Écrire referme les widgets.
 // Entrée part toujours au pilote ; ↑ entre dans la liste, et Entrée ou un
 // clic ouvre alors la suggestion retenue.
 //
@@ -89,7 +89,7 @@ PanelWindow { // qmllint disable uncreatable-type
     // suivante (la voix qui se tait, le pilote qui prend la main).
     readonly property bool wanted: !bar.dismissed
                                    && (bar.voiceOn || bar.focusRequested || input.activeFocus
-                                       || input.text.length > 0 || ClaudeLive.pilotBusy || answer.shown
+                                       || input.text.length > 0 || Pilot.pilotBusy || answer.shown
                                        || Widgets.hubOpen)
     property bool shown: false
     // ── Les widgets ──────────────────────────────────────────────
@@ -182,7 +182,7 @@ PanelWindow { // qmllint disable uncreatable-type
     readonly property int leaveSlack: 60
     readonly property bool pointerInside: pillHover.hovered || resultsHover.hovered
     readonly property bool typing: bar.shown && !bar.dismissed && !bar.voiceOn
-                                   && !ClaudeLive.pilotBusy
+                                   && !Pilot.pilotBusy
                                    && (bar.focusRequested || input.activeFocus || input.text.length > 0)
     // La plus courte distance du curseur à la barre depuis l'ouverture ;
     // -1 : pas encore mesurée.
@@ -287,8 +287,8 @@ PanelWindow { // qmllint disable uncreatable-type
 
     // Le niveau de la voix, lissé : le halo, le flocon et l'onde le suivent
     // sans à-coups.
-    property real level: ClaudeLive.voicePhase === "listening"
-                         ? Math.min(1, ClaudeLive.voiceLevel * 1.5) : 0
+    property real level: Pilot.voicePhase === "listening"
+                         ? Math.min(1, Pilot.voiceLevel * 1.5) : 0
     Behavior on level { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
 
     onFocusRequestedChanged: {
@@ -314,7 +314,7 @@ PanelWindow { // qmllint disable uncreatable-type
         if (text.length === 0)
             return;
         bar.launch(text);
-        ClaudeLive.pilotAsk(text, false);
+        Pilot.pilotAsk(text, false);
         // La réponse s'affiche au-dessus de la capsule fermée.
         Widgets.hubOpen = false;
         input.text = "";
@@ -608,7 +608,7 @@ PanelWindow { // qmllint disable uncreatable-type
     // Les éléments depuis la dernière demande : { heard, actions, reply,
     // failed }.
     readonly property var turn: {
-        var items = ClaudeLive.pilotItems;
+        var items = Pilot.pilotItems;
         var start = items.length - 1;
         while (start >= 0 && items[start].kind !== "user")
             start--;
@@ -624,19 +624,19 @@ PanelWindow { // qmllint disable uncreatable-type
         };
     }
 
-    readonly property bool voiceOn: ClaudeLive.voicePhase !== "idle"
+    readonly property bool voiceOn: Pilot.voicePhase !== "idle"
 
     // Le pilote a fini sur une question (« quelle fenêtre ? ») : la réponse
     // reste affichée jusqu'à ce qu'on y réponde.
-    readonly property bool asking: !ClaudeLive.pilotBusy && bar.turn !== null
+    readonly property bool asking: !Pilot.pilotBusy && bar.turn !== null
                                    && !bar.turn.failed && bar.turn.reply.trim().endsWith("?")
 
     Connections {
-        target: ClaudeLive
+        target: Pilot
         // Une demande partie d'ailleurs (la voix, `anna`) : sa réponse
         // s'affiche ici aussi.
         function onPilotBusyChanged() {
-            if (ClaudeLive.pilotBusy) {
+            if (Pilot.pilotBusy) {
                 bar.dismissed = false;
                 answer.show();
             }
@@ -647,9 +647,9 @@ PanelWindow { // qmllint disable uncreatable-type
         }
         // Rien entendu, modèle absent… : dit une fois, brièvement.
         function onVoiceErrorChanged() {
-            if (ClaudeLive.voiceError.length === 0)
+            if (Pilot.voiceError.length === 0)
                 return;
-            answer.notice = "🎙 " + ClaudeLive.voiceError;
+            answer.notice = "🎙 " + Pilot.voiceError;
             answer.show();
             answer.hideLater(0);
         }
@@ -716,7 +716,7 @@ PanelWindow { // qmllint disable uncreatable-type
             onHoveredChanged: {
                 if (hovered)
                     hideTimer.stop();
-                else if (answer.shown && !ClaudeLive.pilotBusy)
+                else if (answer.shown && !Pilot.pilotBusy)
                     hideTimer.restart();
             }
         }
@@ -901,7 +901,7 @@ PanelWindow { // qmllint disable uncreatable-type
 
                 // Le pilote réfléchit : trois points qui respirent.
                 Row {
-                    visible: answer.notice.length === 0 && ClaudeLive.pilotBusy
+                    visible: answer.notice.length === 0 && Pilot.pilotBusy
                     height: 14
                     spacing: 5
                     Repeater {
@@ -915,7 +915,7 @@ PanelWindow { // qmllint disable uncreatable-type
                             radius: 3.5
                             color: bar.hue(dot.index * 0.14)
                             SequentialAnimation on opacity {
-                                running: ClaudeLive.pilotBusy && bar.shown
+                                running: Pilot.pilotBusy && bar.shown
                                 loops: Animation.Infinite
                                 PauseAnimation { duration: dot.index * 160 }
                                 NumberAnimation { to: 0.25; duration: 420; easing.type: Easing.InOutSine }
@@ -1152,7 +1152,7 @@ PanelWindow { // qmllint disable uncreatable-type
     // Une capsule de verre, à la façon de macOS, toujours à sa pleine largeur :
     // seules son arrivée et son départ s'animent. L'écoute et la réflexion
     // l'entourent d'un halo irisé qui tourne lentement.
-    readonly property bool glowing: bar.voiceOn || ClaudeLive.pilotBusy
+    readonly property bool glowing: bar.voiceOn || Pilot.pilotBusy
     readonly property string uiFont: "Inter"
 
     // Les teintes du halo, autour de la couleur d'accent.
@@ -1498,7 +1498,7 @@ PanelWindow { // qmllint disable uncreatable-type
             // Transcription ou pilote au travail : il tourne doucement. Pas
             // barre cachée : personne ne le voit.
             readonly property bool turning: bar.shown
-                                            && (ClaudeLive.voicePhase === "transcribing" || ClaudeLive.pilotBusy)
+                                            && (Pilot.voicePhase === "transcribing" || Pilot.pilotBusy)
             // Revient droit une fois le travail fini.
             onTurningChanged: if (!turning) settle.restart()
 
@@ -1642,7 +1642,7 @@ PanelWindow { // qmllint disable uncreatable-type
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     // Parler au pilote, ou couper l'écoute en cours.
-                    onClicked: ClaudeLive.voiceToggle(true)
+                    onClicked: Pilot.voiceToggle(true)
                 }
             }
 
@@ -1687,7 +1687,7 @@ PanelWindow { // qmllint disable uncreatable-type
                 anchors.centerIn: parent
                 spacing: 3
                 readonly property bool on: bar.voiceOn
-                readonly property bool transcribing: ClaudeLive.voicePhase === "transcribing"
+                readonly property bool transcribing: Pilot.voicePhase === "transcribing"
                 property real phase: 0
                 opacity: on ? 1 : 0
                 scale: on ? 1 : 0.7
@@ -1828,7 +1828,7 @@ PanelWindow { // qmllint disable uncreatable-type
                 Behavior on opacity { NumberAnimation { duration: 160 } }
                 Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
                 text: bar.asking && answer.shown ? I18n.tr("bar.yourAnswer")
-                    : ClaudeLive.voiceWake ? I18n.tr("bar.placeholderWake")
+                    : Pilot.voiceWake ? I18n.tr("bar.placeholderWake")
                     : I18n.tr("bar.placeholder")
                 font.family: bar.uiFont
                 font.pixelSize: 15
@@ -1863,12 +1863,12 @@ PanelWindow { // qmllint disable uncreatable-type
                 Behavior on opacity { NumberAnimation { duration: 200 } }
                 Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
                 elide: Text.ElideLeft
-                text: ClaudeLive.voiceText.length > 0 ? ClaudeLive.voiceText
-                    : ClaudeLive.voicePhase === "listening" ? I18n.tr("voice.listening") : I18n.tr("voice.transcribing")
+                text: Pilot.voiceText.length > 0 ? Pilot.voiceText
+                    : Pilot.voicePhase === "listening" ? I18n.tr("voice.listening") : I18n.tr("voice.transcribing")
                 font.family: bar.uiFont
                 font.pixelSize: 15
                 font.weight: Font.Medium
-                color: ClaudeLive.voicePartial || ClaudeLive.voicePhase === "transcribing"
+                color: Pilot.voicePartial || Pilot.voicePhase === "transcribing"
                        ? Theme.textSecondary : Theme.textPrimary
                 Behavior on color { ColorAnimation { duration: 200 } }
             }

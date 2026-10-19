@@ -36,7 +36,7 @@ NixOS configuration that consumes this repository as a *flake input*.
   notes, web (see [Search](#search)).
 - **Lock screen and greeter** sharing one card (see [Lock & login
   screens](#lock-greeter)).
-- **AI**: Claude Code sessions and the desktop pilot (see [AI cluster](#ai)).
+- **AI**: the desktop pilot and its voice (see [AI cluster](#ai)).
 - **Music tools**: tuner, metronome, chromagram (see [Music
   tools](#audio-tools)).
 - **Dynamic theme** driven by the `anna` daemon (see [Theme](#theme)).

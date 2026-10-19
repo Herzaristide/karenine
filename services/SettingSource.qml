@@ -16,8 +16,8 @@ QtObject {
     signal produced(int seq, var items)
 
     // `adjust` marque les réglages qui portent une valeur réglable sur place :
-    // sur ceux-là, les flèches haut/bas du dock modifient au lieu de naviguer.
-    // C'est la source qui le déclare, le dock n'a pas à connaître les réglages
+    // sur ceux-là, les flèches haut/bas de la barre modifient au lieu de naviguer.
+    // C'est la source qui le déclare, la barre n'a pas à connaître les réglages
     // un par un.
     readonly property var entries: [
         {

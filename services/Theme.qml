@@ -62,9 +62,8 @@ QtObject {
     readonly property color accentDark:  _state.accent_dark  || Qt.darker(accentColor, 1.8)
     readonly property color accentMuted: _state.accent_muted || accentColor
 
-    // L'accent vif de la barre de conversation, du dock IA et de la barre des
-    // sessions : la teinte de l'accent, saturée. `shift` la fait tourner (le
-    // halo irisé de la barre).
+    // L'accent vif de la barre de conversation : la teinte de l'accent,
+    // saturée. `shift` la fait tourner (le halo irisé de la barre).
     function glow(shift) {
         var h = accentColor.hslHue >= 0 ? accentColor.hslHue : 0.6;
         return Qt.hsla((h + (shift || 0) + 2) % 1, 0.9, 0.64, 1);

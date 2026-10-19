@@ -36,7 +36,6 @@ fn trim(v: &Value) -> Option<HookEvent> {
         hook_event_name: s("hook_event_name"),
         session_id: s("session_id"),
         cwd: s("cwd"),
-        transcript_path: s("transcript_path"),
         prompt: excerpt(&s("prompt"), PROMPT_MAX),
         message: s("message"),
         notification_type: s("notification_type"),

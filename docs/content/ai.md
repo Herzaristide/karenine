@@ -1,131 +1,37 @@
 ---
 title: AI cluster
 group: Features
-summary: The AI dock (Claude Code sessions started, followed and reviewed from the interface), live sessions in the bar, the pilot's confirmations.
+summary: The pilot (desktop actions asked from the conversation bar), the voice that speaks to it, the Claude Code sessions anna follows.
 links: [panels, backend, widgets, languages]
 ---
 
 # AI cluster
 
-## The AI dock
-
-![The AI dock, expanded on a pilot conversation](screenshots/ai-dock.webp)
-
-`panels/AiDock.qml` is the interface's gateway to Claude. It sits against
-the left edge of the screen and opens with Super+P; the pilot's
-confirmations are answered there. It is the “sessions” widget, which the pilot (`widget` tool) or the FIFO
-(`widget:sessions`, `savoir`) also open. Everyday use goes through the
-conversation bar (`panels/ConversationBar.qml`, see [Panels](#panels)), whose
-glass, tint (`Theme.glow`), Inter font and input capsule the dock reuses.
-
-The text is not fixed: laid on blurred glass (`blur` layer rule on
-“quickshell-aidock” in the Hyprland config), it is **expanded** (the whole
-conversation, its work, the other views) or **collapsed** (the header, the
-bottom of the conversation, the pilot's request and the field, to answer
-or approve and nothing more), and can **disappear** entirely (×). It only
-takes the keyboard exclusively for the time of a request, gives it back as
-soon as the mouse leaves or moves away, and folds by itself when it loses
-focus. Esc folds it, then makes it disappear; ⌃/⌄ switches between the two
-sizes.
-
-```
-╭──────────────────────────────────────────────────────────╮
-│ ● karenine·fix-dock                            working    │  the session watched
-│ + new  ⟲ history  ◈ knowledge                             │
-├──────────────────────────────────────────────────────────┤
-│  the chosen session's conversation                       │
-│  worktree-… · 2 files +14 −3   Zed Terminal Commit …      │  its work
-│ ( › write to Claude                                 (↑) ) │
-╰──────────────────────────────────────────────────────────╯
-```
-
-- **+ new**: choose where Claude works — research (the Obsidian vault,
-  “researcher” style) or a repository — then write the request. In a
-  repository, the session runs by default in an **isolated copy**
-  (`claude --worktree`: `<repo>/.claude/worktrees/<name>`, branch
-  `worktree-<name>`): the working code does not move until you merge.
-- **A session**: its conversation updates as it goes; you answer it in the
-  bottom field. A session opened in a terminal is read here but continued
-  there (Terminal button), so that two processes never write into the same
-  conversation.
-- **Its work** (isolated copy): changed files and lines, commits to merge,
-  then **Commit**, **Merge** (into the repository's current branch, refused
-  if there are uncommitted changes on either side, aborted on conflict),
-  **Discard** (two clicks), **Zed**, **Terminal** (the session is resumed
-  there with `claude --resume`), **Stop**.
-- **⟲ history**: the old conversations (`ClaudeSessions` index); picking one
-  re-reads it, writing to it resumes it.
-
-Keyboard: ⏎ sends, ⇧⏎ goes to a new line, Alt+←/→ changes session, Alt+N
-opens a new session, Esc folds then hides the text.
-
-Sessions started from here run in anna (`anna/src/claude/runner.rs`), not in
-the QML: closing the dock or reloading the shell does not interrupt them.
-They do die with anna (restart, rebuild) — their transcript stays, and
-writing to them resumes them. Without a terminal, they have no permission
-dialog: for now they only do what the Claude Code rules already allow,
-anything else is refused.
-
-| File | Role |
-| --- | --- |
-| `panels/AiDock.qml` | The AI dock. |
-| `services/ClaudeLive.qml` | Live sessions, followed conversation, commands to anna. |
-| `anna/src/claude/runner.rs` | Starts, resumes, restarts and stops the dock's sessions; opens Zed or a terminal. |
-| `anna/src/claude/transcript.rs` | Reads a session's JSONL and follows its growth. |
-| `anna/src/claude/worktree.rs` | Review, commit, merge and removal of isolated copies. |
-
-## Knowledge
-
-“◈ knowledge”, in the dock (or `echo savoir > /tmp/qs-panel.fifo`), shows the
-Obsidian vault `~/v4ult`: research notes, project notes, skills, lab, and the
-session journal written by the `claude-journal` hook.
-
-- **Filters**: all, to review, research, projects, skills, lab, journal, with
-  their count. What you type in the bottom field narrows the list; Enter
-  opens the first note.
-- **Preview** on the right (Markdown, without the front matter), with
-  **Reviewed** for a note Claude filed (`statut: relu`, `revu: <today's
-  date>`, written in place), **Session** to reopen the conversation it comes
-  from (`session` field), and **Obsidian** to open it there.
-- **◈ Capitalize**, in the work bar of a session started from the dock, once
-  its turn is over: sends it `/capitaliser`, which files away in the vault
-  what it learned.
-
-anna re-reads the vault every time the view opens
-(`anna/src/claude/knowledge.rs`) and uses it to keep the skills active: each
-`Skills/<name>/SKILL.md` is linked into `~/.claude/skills/`, and a link whose
-note disappeared is removed. Nothing else in that folder is touched. The
-pilot searches the same notes with `chercher_notes`.
-
-The quick notes of the “Notes” tab (Keep-like, `notes.rs`) are a separate
-store: the pilot writes one with `creer_note` (text, optionally pinned)
-and reads them with `lire_notes` (optionally filtered by words).
-
 ## The pilot
 
-The dock opens on the **pilot**: a Claude session (Haiku by default) that
-anna keeps ready, to which you say what you want in a few words.
+What you type in the conversation bar (`panels/ConversationBar.qml`, see
+[Panels](#panels)) goes to the **pilot**: a Claude session (Haiku by
+default) that anna keeps ready, to which you say what you want in a few
+words.
 
 - **It acts on the desktop** with its tools (`anna/src/claude/desk.rs`):
   windows and workspaces, sound, brightness, media playback, applications,
   URLs, projects (Zed, terminal), screenshots, accent color, vault notes,
-  desktop state, clipboard.
-- **It hands deep work** — code, research — to a full session
-  (`lancer_session`), in an isolated copy for a repository. It shows up at
-  the top of the dock and in the bar.
-- **It asks before the irreversible**: closing a window, running a shell
-  command, rebuilding NixOS wait for an answer in the dock (Allow / Deny),
-  which opens by itself, on behalf of a “pilot” session for the time of the
-  question. Without an answer within 2 minutes, the action is not run.
+  quick notes, widgets, desktop state, clipboard, and as a last resort a
+  shell command. It never rebuilds NixOS.
+- **It only acts**: it never starts a Claude Code session. A code or
+  research task, it suggests opening the project (Zed or a terminal) and
+  leaves it to you.
+- **Nothing waits for a confirmation**: closing a window or running a shell
+  command runs as soon as the pilot calls it. Its prompt asks it to use them
+  only when the request is clear.
 - **It answers in the voice language** (see [Languages](#languages)): the
   language is part of the context of every request, so changing it applies
   from the next request on, without restarting the pilot. With “Automatic
   detection”, it answers in the language of the request.
 
-An action confirmed in one sentence closes the dock; the confirmation stays
-in the conversation bar. A longer answer, a question back or an error
-stay displayed. “attach the clipboard” adds its text to the request;
-“forget” starts again from a blank conversation.
+The answer shows above the bar: a one-sentence confirmation fades away, a
+longer answer, a question back or an error stay displayed.
 
 Mechanics: `claude -p` in stream-json, with its own system prompt
 (`--system-prompt`), without Claude Code's built-in tools (`--tools ""`),
@@ -149,24 +55,15 @@ model; `~/.config/anna/pilote.md`, if it exists, is appended to the prompt
 
 ## Voice
 
-Two ways of speaking, and in both the text is written **while** you speak:
+**Super+V** (or `anna voice`, `echo voix > /tmp/qs-panel.fifo`): the
+sentence is written **while** you speak, live in the conversation bar's
+field (the snowflake lights up), then goes to the pilot as if it had been
+typed. The answer shows above the bar, under the understood sentence to
+check it. The word “Karénine” and a click on the snowflake do the same;
+`anna voice dictate` only shows the transcript, without sending it.
 
-- **Super+V** (or `anna voice`, `echo voix > /tmp/qs-panel.fifo`): the
-  sentence is written live in the conversation bar's field (the snowflake
-  lights up), then goes to the pilot as if it had been typed. The answer
-  shows above the bar, under the understood sentence to check it. The word
-  “Karénine” and a click on the snowflake do the same.
-- **Holding Space in the dock**: a dictation, as in Claude Code. Keep Space
-  pressed and speak: the text is written live in the field (after what was
-  already there). As long as the key is held, pauses do not cut. On release,
-  the final transcript arrives (about 0.2 s) and **stays in the field**: you
-  re-read, correct, then Enter sends. A normally typed space stays a space:
-  dictation starts when Space is held 0.35 s without another key, and the
-  space written on the press is then removed. The 🎙 starts the same
-  dictation with the mouse; it stops at the end of the sentence.
-
-With Super+V, the end of the sentence stops listening (a second press or a
-click on the chip too). The chip shows “listening…” as long as nothing is
+The end of the sentence stops listening (a second press or a click on the
+chip too). The chip shows “listening…” as long as nothing is
 understood, then the text as it comes.
 
 Everything is local: capture by anna (`cpal`), transcription by whisper.cpp
@@ -208,17 +105,16 @@ whole recording, replaces the provisional text.
 - If the server does not start, `whisper-cli` transcribes the recording at
   the end, without live text.
 
-To try without speaking: `anna voice simulate file.wav [--send|--hold]`
-runs a recording through exactly the same chain as the microphone, in real
-time (without `--send`, nothing goes to the pilot; with `--hold`, like
-holding Space: listening lasts until `anna voice release`).
+To try without speaking: `anna voice simulate file.wav [--send]` runs a
+recording through exactly the same chain as the microphone, in real time
+(without `--send`, nothing goes to the pilot).
 
 ### The wake word “Karénine”
 
 Saying “Karénine” starts listening, like Super+V: “Karénine, turn the sound
-down”. Turn it on or off with “○ Karénine” in the dock, or `anna voice wake
+down”. Turn it on or off under “Voice” in the settings, or `anna voice wake
 [on|off]`; the choice survives restarts. When on, the microphone stays
-open: that is why the switch is in view.
+open.
 
 - Every 80 ms, three small ONNX models (openWakeWord, on the processor,
   about 4 % of a core): a spectrogram, an “embedding” shared by all wake
@@ -265,7 +161,7 @@ réalisés par…”, “Thanks for watching”), markers like `[BLANK_AUDIO]`,
 `(musique)` or `*Bip*`. All of that is discarded.
 
 Whisper's initial prompt lists the project names and a few terms (Zed,
-dock, Obsidian…), in the voice language: without it, “karenine” becomes
+Obsidian, NixOS…), in the voice language: without it, “karenine” becomes
 “Carnine”.
 
 The model: `ANNA_WHISPER_MODEL`, otherwise
@@ -280,25 +176,30 @@ private Anthropic service.
 | `anna/src/claude/voice.rs` | Listening, end of sentence, live text, sending to the pilot. |
 | `anna/src/claude/whisper.rs` | The whisper.cpp server: card choice, language, start, stop. |
 
-## Live sessions
+## Claude Code sessions
 
-All the machine's Claude Code sessions — started in a terminal or headless
-— report to anna through their hooks (`anna hook`, declared in Claude Code's
+The machine's Claude Code sessions are started by hand, in a terminal. They
+report to anna through their hooks (`anna hook`, declared in Claude Code's
 configuration for SessionStart, UserPromptSubmit, PostToolUse, Notification,
-Stop and SessionEnd). The `anna/src/claude/` module keeps their state;
-`services/ClaudeLive.qml` follows it through `claude_watch`. Nothing pops up:
-a waiting session shows in the dock and the bar, nowhere else.
+Stop and SessionEnd), and anna keeps their state (working / waiting / idle):
+the pilot sees it in its context and through its `sessions` tool, and
+`anna claude [list|watch|focus <id>]` reads it from the command line.
+Nothing in the interface shows them.
 
 Permission requests stay with Claude Code: its own dialog asks, in the
 terminal. `anna hook` ignores a PermissionRequest that would still be
 declared, so an old configuration does not hold Claude back.
 
+anna also keeps the vault's skills active: each `Skills/<name>/SKILL.md` of
+`~/v4ult` is linked into `~/.claude/skills/` at start-up, and a link whose
+note disappeared is removed. Nothing else in that folder is touched.
+
 | File | Role |
 | --- | --- |
 | `anna/src/claude/mod.rs` | The sessions' state: working / waiting / idle. |
 | `anna/src/claude/hook.rs` | `anna hook`: forwards an event reduced to the bare minimum. |
-| `anna/src/claude/permission.rs` | The pilot's confirmations, held until the dock answers. |
 | `anna/src/claude/focus.rs` | Finds a session's window in the process tree. |
+| `anna/src/claude/skills.rs` | Links the vault's skills for Claude Code. |
 
 ## Relations
 

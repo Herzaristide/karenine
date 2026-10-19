@@ -16,13 +16,12 @@ greeter.qml          Login screen, run by greetd
 services/            Cross-cutting singletons and search sources
   Theme, I18n, Widgets, Display, Tuning, DragState
   Audio, Brightness, Battery, Notifications (notification server)
-  Anna, ClaudeLive, ClaudeSessions, Gesture, CursorProbe, DefaultApps
+  Anna, Pilot, Gesture, CursorProbe, DefaultApps
   Search, Fuzzy, AppSource, FileSource, SettingSource, WallpaperSource,
   NoteSource, WebSource
-  claude-index.sh   (see “Scripts” below)
 panels/              Top-level chrome (Wayland windows)
   ConversationBar, WidgetHub, HubTopBar, FloatingWidgets, WidgetCard,
-  AiDock, PolkitPrompt
+  PolkitPrompt
 widgets/             Panel contents
   FileExplorer, HardwareStats, MachinePicker, PhoneWidget, NotificationCenter,
   NotificationCard, NotesWidget, MusicPlayerWidget, Metronome, Tuner,
@@ -58,13 +57,12 @@ the [Search](#search) page):
 | `Battery.qml` | UPower over D-Bus, no polling. On battery, warns once at a low level and once at a critical one (desktop notification); plugging in re-arms them. Created at startup, so it watches even with nothing open. |
 | `Notifications.qml` | The desktop notification server (notify-send, the browser, grimblast, the phone through kdeconnectd…). |
 | `Anna.qml` | Where to reach the anna socket (`$XDG_RUNTIME_DIR`), in one place. |
-| `ClaudeLive.qml` | The live Claude Code sessions as anna follows them (working / waiting / idle), and the AI dock's door to anna: start, write to, stop a session, review its work (see [AI cluster](#ai)). |
-| `ClaudeSessions.qml` | The index of the Claude transcripts on disk (the dock's history). |
+| `Pilot.qml` | The pilot and the voice as anna runs them: what the conversation bar sends and shows (see [AI cluster](#ai)). |
 | `Gesture.qml` | The gesture control state, from anna. |
 | `CursorProbe.qml` | The cursor position, asked on Hyprland's request socket (the answer of `hyprctl -j cursorpos`, without a process): a layer surface only sees the cursor when it hovers it. |
 | `DefaultApps.qml` | The editor, file manager and terminal used to open a file, resolved from the system's settings (`xdg-mime`, `$TERMINAL`…), never hard-coded. |
 | `Tuning.qml` | The tuner's reference A, persisted in `tuner.json`. |
-| `DragState.qml` | A drag in progress: it necessarily takes the cursor out of the dock, which would close it and destroy the source card mid-gesture — this flag holds the closing back while dragging. |
+| `DragState.qml` | A drag in progress (from the explorer): it necessarily takes the cursor out of the conversation bar, which would close it and destroy the source tile mid-gesture — this flag holds the closing back while dragging. |
 
 ## QML conventions
 
@@ -79,20 +77,9 @@ the [Search](#search) page):
 
 Work that is plainly shell work lives in `.sh` files next to the QML that
 runs them, not in an escaped JavaScript string — an awk program in quotes
-inside a QML string is neither readable nor testable. The current one feeds
-the [AI dock](#ai)'s history:
-
-| Script | Role |
-| --- | --- |
-| `services/claude-index.sh` | The index of the machine's Claude conversations, one TSV line per session. |
-
-The indexer only reads both ends of each JSONL and runs in four processes
-whatever the number of sessions — the naive version, a handful of
-`grep`/`jq` per file, took 3 s where this one takes 50 ms. The cost is the
-forks, not the disk.
-
-The QML finds it through `Qt.resolvedUrl`, so it follows the installation
-like the rest of the layout.
+inside a QML string is neither readable nor testable. The QML finds such a
+script through `Qt.resolvedUrl`, so it follows the installation like the
+rest of the layout.
 
 ## Relocatable by design
 

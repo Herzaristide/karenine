@@ -125,83 +125,6 @@ pub enum Command {
     ClaudeFocus {
         id: String,
     },
-    /// Answer an open permission request of the pilot, from the dock
-    /// (see claude/permission.rs). `decision` is
-    /// "allow", "always", "deny" or "terminal". `{"ok":true}`, or
-    /// `{"ok":false}` when the request is already over.
-    ClaudeDecide {
-        request: u64,
-        decision: String,
-    },
-
-    // ── AI dock: sessions run by anna (claude/runner.rs) ─────────────────
-    /// Start a session in `cwd` — in its own worktree when `worktree` — or
-    /// `resume` one there; `prompt` is its first message.
-    /// `{"ok":true,"id":"…"}` or `{"ok":false,"error":"…"}`.
-    ClaudeStart {
-        cwd: String,
-        prompt: String,
-        #[serde(default)]
-        worktree: bool,
-        #[serde(default)]
-        resume: Option<String>,
-    },
-    /// Send a message to a session: written to it if anna runs it, otherwise
-    /// it is resumed in `cwd` with that message.
-    ClaudeSend {
-        id: String,
-        text: String,
-        #[serde(default)]
-        cwd: String,
-    },
-    /// Stop a session anna runs.
-    ClaudeStop {
-        id: String,
-    },
-    /// Keep connection open; daemon pushes `{"reset":[messages]}` with the
-    /// end of the transcript, then `{"append":[messages]}` as it grows.
-    /// A message is `{"role":"user"|"assistant"|"tool","text":"…"}`.
-    ClaudeTranscript {
-        path: String,
-    },
-    /// Where a new session can start: `[{name, path, kind}, …]`.
-    ClaudeProjects,
-    /// What a worktree session changed (claude/worktree.rs).
-    ClaudeReview {
-        cwd: String,
-    },
-    /// Act on a worktree session's work: `action` is "commit" (with
-    /// `message`), "merge" or "discard". Refused while session `id` runs.
-    ClaudeWorktree {
-        cwd: String,
-        action: String,
-        #[serde(default)]
-        message: String,
-        #[serde(default)]
-        id: String,
-    },
-    /// Open a session in "zed" or in a "terminal" (`claude --resume`).
-    ClaudeOpen {
-        cwd: String,
-        app: String,
-        #[serde(default)]
-        id: String,
-    },
-
-    // ── Knowledge: the Obsidian vault (claude/knowledge.rs) ───────────────
-    /// Every note, newest first: `[{path, title, kind, sujets, statut, date,
-    /// revu, projet, session, excerpt, mtime}, …]`. Also (re)links the
-    /// vault's skills into ~/.claude/skills.
-    KnowledgeList,
-    /// A note's body (front matter stripped): `{"ok":true,"text":"…"}`.
-    KnowledgeRead {
-        path: String,
-    },
-    /// Mark a note as read: `statut: relu`, `revu: <today>`.
-    KnowledgeReviewed {
-        path: String,
-    },
-
     // ── Pilot (claude/pilot.rs, claude/desk.rs) ───────────────────────────
     /// Send a request to the pilot; `clipboard` joins the clipboard's text.
     /// `{"ok":true}` once sent — the answer arrives on `pilot_watch`.
@@ -219,16 +142,11 @@ pub enum Command {
     // ── Voice (claude/voice.rs) ───────────────────────────────────────────
     /// Start listening, or end the recording now if already listening.
     /// `send` (default true): hand the transcript to the pilot; false only
-    /// shows it (the dock puts it in its input field).
+    /// shows it (`anna voice dictate`).
     VoiceToggle {
         #[serde(default = "yes")]
         send: bool,
     },
-    /// Push-to-talk: record until `voice_release`, silences included; the
-    /// transcript is only shown (the dock's held Space).
-    VoiceHold,
-    /// End a push-to-talk recording.
-    VoiceRelease,
     /// The wake word « Karénine » (claude/wake.rs): `on` turns it on or
     /// off, absent toggles it. Remembered across restarts.
     VoiceWake {
@@ -246,9 +164,6 @@ pub enum Command {
         path: String,
         #[serde(default)]
         send: bool,
-        /// Played as push-to-talk: ends on `voice_release`.
-        #[serde(default)]
-        hold: bool,
     },
     /// Transcribe a WAV file (16 kHz mono): `{"ok":true,"text":"…"}`.
     VoiceTranscribe {

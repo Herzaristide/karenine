@@ -192,16 +192,12 @@ async fn run_daemon(args: &[String]) {
 
     // Live Claude Code sessions, fed by `anna hook`.
     let claude = claude::Sessions::new();
-    // Sessions started from the AI dock.
-    let runner = claude::runner::Runner::new(Arc::clone(&claude));
-    // The pilot: the dock's requests for the desktop.
+    // The pilot: the conversation bar's requests for the desktop.
     let pilot = claude::pilot::Pilot::new(Arc::clone(&claude));
     // Speaking to the pilot (whisper.cpp, local).
     let voice = claude::voice::Voice::new(Arc::clone(&pilot));
     // The vault's skills, linked where Claude Code looks for them.
-    tokio::task::spawn_blocking(
-        || claude::knowledge::link_skills(&claude::knowledge::skills_dir()),
-    );
+    tokio::task::spawn_blocking(|| claude::skills::link_skills(&claude::skills::skills_dir()));
 
     // Every screenshot also lands in the « Notes » tab.
     tokio::spawn(notes::watch_screenshots());
@@ -215,7 +211,6 @@ async fn run_daemon(args: &[String]) {
         tx,
         gesture,
         claude,
-        runner,
         pilot,
         voice,
         opts,
@@ -246,7 +241,6 @@ struct Ctx {
     tx: broadcast::Sender<String>,
     gesture: Arc<gesture::Gesture>,
     claude: Arc<claude::Sessions>,
-    runner: Arc<claude::runner::Runner>,
     pilot: Arc<claude::pilot::Pilot>,
     voice: Arc<claude::voice::Voice>,
     opts: AppCtlOptions,
@@ -576,130 +570,6 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             let _ = write_line(&mut writer, &reply.to_string()).await;
         }
 
-        Command::ClaudeDecide { request, decision } => {
-            let ok =
-                claude::Outcome::parse(&decision).is_some_and(|o| ctx.claude.decide(request, o));
-            let reply = serde_json::json!({ "ok": ok });
-            let _ = write_line(&mut writer, &reply.to_string()).await;
-        }
-
-        // ── AI dock ──────────────────────────────────────────────────────
-        Command::ClaudeStart {
-            cwd,
-            prompt,
-            worktree,
-            resume,
-        } => {
-            let spec = claude::runner::Start {
-                cwd,
-                prompt,
-                worktree,
-                resume,
-            };
-            let reply = match ctx.runner.start(spec).await {
-                Ok(id) => serde_json::json!({ "ok": true, "id": id }),
-                Err(e) => serde_json::json!({ "ok": false, "error": e }),
-            };
-            let _ = write_line(&mut writer, &reply.to_string()).await;
-        }
-
-        Command::ClaudeSend { id, text, cwd } => {
-            let result = if ctx.runner.running(&id) {
-                ctx.runner.send(&id, &text).await.map(|()| id)
-            } else {
-                let spec = claude::runner::Start {
-                    cwd,
-                    prompt: text,
-                    worktree: false,
-                    resume: Some(id),
-                };
-                ctx.runner.start(spec).await
-            };
-            write_result(&mut writer, result.map(|_| ())).await;
-        }
-
-        Command::ClaudeStop { id } => {
-            write_result(&mut writer, ctx.runner.stop(&id)).await;
-        }
-
-        Command::ClaudeTranscript { path } => {
-            follow_transcript(&mut writer, &mut lines, path).await;
-        }
-
-        Command::ClaudeProjects => {
-            let list = tokio::task::spawn_blocking(claude::runner::projects)
-                .await
-                .unwrap_or_default();
-            let json = serde_json::to_string(&list).unwrap_or_default();
-            let _ = write_line(&mut writer, &json).await;
-        }
-
-        Command::ClaudeReview { cwd } => {
-            let reply = match tokio::task::spawn_blocking(move || claude::worktree::review(&cwd))
-                .await
-                .unwrap_or_else(|e| Err(e.to_string()))
-            {
-                Ok(r) => serde_json::json!({ "ok": true, "review": r }),
-                Err(e) => serde_json::json!({ "ok": false, "error": e }),
-            };
-            let _ = write_line(&mut writer, &reply.to_string()).await;
-        }
-
-        Command::ClaudeWorktree {
-            cwd,
-            action,
-            message,
-            id,
-        } => {
-            let result = if action != "commit" && ctx.runner.still_running(&id).await {
-                Err(i18n::tr("session.still_running"))
-            } else {
-                tokio::task::spawn_blocking(move || match action.as_str() {
-                    "commit" => claude::worktree::commit(&cwd, &message),
-                    "merge" => claude::worktree::merge(&cwd),
-                    "discard" => claude::worktree::discard(&cwd),
-                    other => Err(format!("action inconnue : {other}")),
-                })
-                .await
-                .unwrap_or_else(|e| Err(e.to_string()))
-            };
-            write_result(&mut writer, result).await;
-        }
-
-        Command::ClaudeOpen { cwd, app, id } => {
-            write_result(&mut writer, ctx.runner.open(&cwd, &app, &id).await).await;
-        }
-
-        // ── Knowledge ────────────────────────────────────────────────────
-        Command::KnowledgeList => {
-            let notes = tokio::task::spawn_blocking(|| {
-                claude::knowledge::link_skills(&claude::knowledge::skills_dir());
-                claude::knowledge::index()
-            })
-            .await
-            .unwrap_or_default();
-            let json = serde_json::to_string(&notes).unwrap_or_default();
-            let _ = write_line(&mut writer, &json).await;
-        }
-
-        Command::KnowledgeRead { path } => {
-            let reply =
-                match tokio::task::spawn_blocking(move || claude::knowledge::read(&path)).await {
-                    Ok(Ok(text)) => serde_json::json!({ "ok": true, "text": text }),
-                    Ok(Err(e)) => serde_json::json!({ "ok": false, "error": e }),
-                    Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }),
-                };
-            let _ = write_line(&mut writer, &reply.to_string()).await;
-        }
-
-        Command::KnowledgeReviewed { path } => {
-            let result =
-                tokio::task::spawn_blocking(move || claude::knowledge::mark_reviewed(&path))
-                    .await
-                    .unwrap_or_else(|e| Err(e.to_string()));
-            write_result(&mut writer, result).await;
-        }
-
         // ── Pilot ────────────────────────────────────────────────────────
         Command::PilotAsk { text, clipboard } => {
             write_result(&mut writer, ctx.pilot.ask(&text, clipboard).await).await;
@@ -753,30 +623,20 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             }
         }
 
-        Command::VoiceHold => {
-            ctx.voice.hold();
-            write_result(&mut writer, Ok(())).await;
-        }
-
         Command::VoiceWake { on } => {
             let on = on.unwrap_or(!ctx.voice.wake_on());
             ctx.voice.set_wake(on);
             write_result(&mut writer, Ok(())).await;
         }
 
-        Command::VoiceRelease => {
-            ctx.voice.release();
-            write_result(&mut writer, Ok(())).await;
-        }
-
-        Command::VoiceSimulate { path, send, hold } => {
+        Command::VoiceSimulate { path, send } => {
             let result = match tokio::fs::read(&path)
                 .await
                 .ok()
                 .and_then(|b| claude::voice::read_wav(&b))
             {
                 Some((samples, rate)) => {
-                    ctx.voice.simulate(samples, rate, send, hold);
+                    ctx.voice.simulate(samples, rate, send);
                     Ok(())
                 }
                 None => Err(format!("WAV 16 bits illisible : {path}")),
@@ -814,16 +674,10 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
 }
 
 /// One desk tool for the pilot (claude/desk.rs). The tools that touch the
-/// daemon's own state run here; the rest run on a blocking thread. The
-/// sensitive ones wait for the user's yes first.
+/// daemon's own state run here; the rest run on a blocking thread.
 async fn run_desk(ctx: &Arc<Ctx>, tool: &str, args: &serde_json::Value) -> Result<String, String> {
-    use claude::{desk, permission};
+    use claude::desk;
 
-    if desk::SENSITIVE.contains(&tool)
-        && !permission::confirm(&ctx.claude, tool, &desk::describe(tool, args)).await
-    {
-        return Err("l'utilisateur a refusé (ou n'a pas répondu)".into());
-    }
     let s = |k: &str| {
         args.get(k)
             .and_then(|v| v.as_str())
@@ -862,31 +716,6 @@ async fn run_desk(ctx: &Arc<Ctx>, tool: &str, args: &serde_json::Value) -> Resul
                 .unwrap_or_default();
             Ok(format!("{desk_state}\nsessions :\n{}", sessions_text()))
         }
-        "lancer_session" => {
-            let name = s("projet");
-            let project = claude::runner::projects()
-                .into_iter()
-                .find(|p| p.name.eq_ignore_ascii_case(&name))
-                .ok_or_else(|| desk::project_dir(&name).unwrap_err())?;
-            let isolate = args
-                .get("copie_isolee")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true)
-                && project.kind == "projet";
-            let spec = claude::runner::Start {
-                cwd: project.path.clone(),
-                prompt: s("demande"),
-                worktree: isolate,
-                resume: None,
-            };
-            ctx.runner.start(spec).await.map(|_| {
-                format!(
-                    "session lancée sur {}{} ; elle apparaît dans le dock des sessions",
-                    project.name,
-                    if isolate { " (copie isolée)" } else { "" }
-                )
-            })
-        }
         "couleur_accent" => {
             let color = s("couleur");
             let result = ctx
@@ -915,66 +744,6 @@ async fn write_result(writer: &mut tokio::net::unix::OwnedWriteHalf, result: Res
         Err(e) => serde_json::json!({ "ok": false, "error": e }),
     };
     let _ = write_line(writer, &reply.to_string()).await;
-}
-
-/// Follow one session's transcript for the AI dock: the end of it, then
-/// what gets appended, until the client hangs up. A session the dock just
-/// started has no file yet: it is waited for.
-async fn follow_transcript(
-    writer: &mut tokio::net::unix::OwnedWriteHalf,
-    client: &mut tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
-    path: String,
-) {
-    use claude::transcript;
-
-    // Only Claude Code's own transcripts. Compared by path components, `..`
-    // refused: `projects/../../x.jsonl` starts with the right text but leads
-    // elsewhere.
-    let projects = paths::home_dir().join(".claude/projects");
-    let asked = std::path::Path::new(&path);
-    let inside = asked.starts_with(&projects)
-        && !asked
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir));
-    if !inside || !path.ends_with(".jsonl") {
-        let _ = write_response(writer, &Response::err("not a Claude transcript")).await;
-        return;
-    }
-
-    let mut offset: Option<u64> = None;
-    let mut tick = tokio::time::interval(transcript::POLL);
-    loop {
-        tokio::select! {
-            line = client.next_line() => {
-                if !matches!(line, Ok(Some(_))) {
-                    return; // the dock looks elsewhere now
-                }
-            }
-            _ = tick.tick() => {
-                let p = path.clone();
-                let from = offset;
-                let read = tokio::task::spawn_blocking(move || match from {
-                    None => transcript::read_tail(&p),
-                    Some(o) => transcript::read_from(&p, o),
-                })
-                .await;
-                let Ok(Ok((msgs, next))) = read else {
-                    // Not there yet — or rewritten: start over.
-                    offset = None;
-                    continue;
-                };
-                let key = if offset.is_none() { "reset" } else { "append" };
-                offset = Some(next);
-                if key == "append" && msgs.is_empty() {
-                    continue;
-                }
-                let json = serde_json::json!({ key: msgs }).to_string();
-                if write_line(writer, &json).await.is_err() {
-                    return;
-                }
-            }
-        }
-    }
 }
 
 // ── Audio service plumbing ────────────────────────────────────────────────────

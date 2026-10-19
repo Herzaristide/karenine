@@ -21,21 +21,20 @@ ShellRoot {
     readonly property var resident: [Notifications, Battery]
 
     // Les anciens numéros de widget (widget:N) des raccourcis existants.
-    readonly property var legacyWidgets: ({ 0: "stats", 1: "sessions", 3: "musique", 4: "lecteur" })
+    readonly property var legacyWidgets: ({ 0: "stats", 3: "musique", 4: "lecteur" })
 
     // ── IPC externe via FIFO /tmp/qs-panel.fifo ──────────────────────────
     //   echo "widget:NOM[:ACTION]" > /tmp/qs-panel.fifo → ouvre / ferme / bascule
     //        un widget flottant (cf. services/Widgets.qml ; c'est ce qu'écrit anna)
     //   echo "dock"     > /tmp/qs-panel.fifo   → fait monter (ou renvoie) la barre de conversation
-    //   echo "savoir"   > /tmp/qs-panel.fifo   → ouvre le dock IA sur le savoir
     //   echo "voix"     > /tmp/qs-panel.fifo   → parle au pilote (comme `anna voice`)
     //   echo "controls" > /tmp/qs-panel.fifo   → bascule les réglages (sortie, entrée, webcam)
     //   echo "camera"   > /tmp/qs-panel.fifo   → bascule le widget caméra/gestes
     //   echo "close"    > /tmp/qs-panel.fifo   → ferme tout
     //   NOM : explorer, stats, notifications, notes, lecteur, musique, son, camera,
-    //         reglages, sessions, tout
+    //         reglages, tout
     //   ACTION : ouvrir, fermer, basculer (le défaut)
-    //   « widget:N » reste compris : 0=stats 1=sessions 3=musique 4=lecteur
+    //   « widget:N » reste compris : 0=stats 3=musique 4=lecteur
     Process {
         id: ipcListener
         command: [
@@ -57,10 +56,7 @@ ShellRoot {
                 } else if (msg === "dock") {
                     root.barToggled();
                 } else if (msg === "voix") {
-                    ClaudeLive.voiceToggle();
-                } else if (msg === "savoir") {
-                    Widgets.apply("sessions", "ouvrir");
-                    aiDock.openKnowledge();
+                    Pilot.voiceToggle();
                 } else if (msg === "controls") {
                     Widgets.apply("son", "basculer");
                 } else if (msg === "camera") {
@@ -120,17 +116,6 @@ ShellRoot {
             property var modelData
             screen: modelData
         }
-    }
-
-    // Le panneau des sessions, contre le bord gauche : lancer, suivre et
-    // reprendre les sessions Claude, revoir leur travail, le savoir. C'est le
-    // widget « sessions » : Super+P
-    // (widget:sessions:basculer sur la FIFO) ou anna l'ouvrent.
-    AiDock {
-        id: aiDock
-        screen: Display.primary
-        open: Widgets.opened.sessions === true
-        onCloseRequested: Widgets.apply("sessions", "fermer")
     }
 
     // L'agent polkit : les demandes de mot de passe des actions système,

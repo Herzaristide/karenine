@@ -49,9 +49,6 @@ pkgs.rustPlatform.buildRustPackage {
     #     → theme live-reload signals
     #   lspci (pciutils), df (coreutils)
     #     → hwstats collection
-    #   git
-    #     → reviewing / merging the worktrees of AI dock sessions
-    #       (claude/worktree.rs)
     #   pw-record (pipewire)
     #     → the echo-cancelled mic of the wake word and dictation (audio.rs)
     #   ssh (openssh)
@@ -91,7 +88,6 @@ pkgs.rustPlatform.buildRustPackage {
             gtk3
             pciutils
             coreutils
-            git
             wireplumber
             pipewire
             brightnessctl

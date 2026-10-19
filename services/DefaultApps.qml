@@ -3,7 +3,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 
-// Résout les trois outils que le dock utilise pour ouvrir un fichier — éditeur,
+// Résout les trois outils que la barre utilise pour ouvrir un fichier — éditeur,
 // explorateur, terminal — à partir des réglages du système, jamais en dur. Si
 // tu changes de défaut, la carte suit : icône comprise.
 //

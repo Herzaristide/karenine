@@ -15,11 +15,11 @@ import Quickshell
 // le flocon agrandit vers le haut (panels/WidgetHub.qml) : un onglet chacun,
 // un seul affiché à la fois. « explorer » parcourt les dossiers du PC
 // (widgets/FileExplorer.qml). « camera » reste une carte flottante
-// (FloatingWidgets), « sessions » le dock IA.
+// (FloatingWidgets).
 Singleton {
     id: widgets
 
-    readonly property var names: ["explorer", "stats", "notifications", "notes", "lecteur", "musique", "son", "camera", "reglages", "sessions"]
+    readonly property var names: ["explorer", "stats", "notifications", "notes", "lecteur", "musique", "son", "camera", "reglages"]
 
     // Les onglets des widgets, dans l'ordre de la barre d'onglets.
     readonly property var hubTabs: ["explorer", "stats", "notifications", "notes", "lecteur", "musique", "reglages"]
@@ -63,7 +63,7 @@ Singleton {
         camera: I18n.tr("widget.camera")
     })
 
-    // { nom: true } pour chaque carte flottante ou le dock ouvert. Réaffecté
+    // { nom: true } pour chaque carte flottante ouverte. Réaffecté
     // en entier à chaque changement pour que les liaisons suivent.
     property var opened: ({})
     // { nom: { x, y } } : la dernière place de chaque carte, gardée tant que

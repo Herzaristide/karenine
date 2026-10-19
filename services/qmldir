@@ -12,8 +12,7 @@ SettingSource 1.0 SettingSource.qml
 WallpaperSource 1.0 WallpaperSource.qml
 NoteSource 1.0 NoteSource.qml
 CursorProbe 1.0 CursorProbe.qml
-singleton ClaudeSessions 1.0 ClaudeSessions.qml
-singleton ClaudeLive 1.0 ClaudeLive.qml
+singleton Pilot 1.0 Pilot.qml
 singleton DefaultApps 1.0 DefaultApps.qml
 singleton DragState 1.0 DragState.qml
 singleton Display 1.0 Display.qml

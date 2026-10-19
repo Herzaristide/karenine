@@ -128,8 +128,7 @@ Item {
                 }
 
                 // ── ÉCRAN section ──────────────────────────────────
-                // Où s'affichent la barre et les panneaux. Le dock n'est pas
-                // concerné : il suit l'écran qui a le focus.
+                // Où s'affichent la barre et les panneaux.
                 Text {
                     Layout.bottomMargin: 10
                     text: I18n.tr("settings.screen")
@@ -357,7 +356,7 @@ Item {
                     Behavior on color { ColorAnimation { duration: 160 } }
 
                     activeFocusOnTab: true
-                    Keys.onPressed: (event) => root.activates(event, () => ClaudeLive.voiceWakeToggle())
+                    Keys.onPressed: (event) => root.activates(event, () => Pilot.voiceWakeToggle())
                     FocusRing { radius: wakeRow.radius + gap }
 
                     Column {
@@ -381,9 +380,9 @@ Item {
                         // et dit pourquoi.
                         Text {
                             width: parent.width
-                            text: !ClaudeLive.voiceWake && ClaudeLive.voiceError
-                                  ? ClaudeLive.voiceError
-                                  : ClaudeLive.voiceWake ? I18n.tr("settings.voice.listening") : I18n.tr("common.off")
+                            text: !Pilot.voiceWake && Pilot.voiceError
+                                  ? Pilot.voiceError
+                                  : Pilot.voiceWake ? I18n.tr("settings.voice.listening") : I18n.tr("common.off")
                             font.family: "Inter"
                             font.pixelSize: 10
                             color: Theme.textSecondary
@@ -397,13 +396,13 @@ Item {
                         anchors.rightMargin: 12
                         anchors.verticalCenter: parent.verticalCenter
                         width: 44; height: 22; radius: 11
-                        color: ClaudeLive.voiceWake ? Theme.accentColor : Theme.accentDark
+                        color: Pilot.voiceWake ? Theme.accentColor : Theme.accentDark
                         Behavior on color { ColorAnimation { duration: 200 } }
 
                         Rectangle {
                             width: 16; height: 16; radius: 8
                             anchors.verticalCenter: parent.verticalCenter
-                            x: ClaudeLive.voiceWake ? 24 : 4
+                            x: Pilot.voiceWake ? 24 : 4
                             color: Theme.iconColor
                             Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                         }
@@ -414,7 +413,7 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: ClaudeLive.voiceWakeToggle()
+                        onClicked: Pilot.voiceWakeToggle()
                     }
                 }
 

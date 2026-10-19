@@ -60,8 +60,8 @@ second `quickshell -p` instance, which breaks the IPC FIFO:
   the tempo changes.
 - **Notifications**: `notify-send test` lands in the Notifications tab.
 - **Lock**: `loginctl lock-session`, unlock with the password.
-- **AI dock**: a Claude session starts, its permission request can be
-  answered.
+- **Pilot**: a request typed in the bar (or said after “Karénine”) acts on
+  the desktop, and its answer shows above the bar.
 
 ## Format
 

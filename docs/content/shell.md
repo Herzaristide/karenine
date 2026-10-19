@@ -8,7 +8,7 @@ links: [architecture, panels, widgets, configuration]
 # The shell & IPC
 
 `shell.qml` is the **Quickshell entry point**: it mounts the conversation
-bar, the floating widgets and the AI dock. Which widgets
+bar, the floating widgets and the polkit prompt. Which widgets
 are open, and where, lives in the `services/Widgets.qml` singleton.
 
 ## External control (IPC through a FIFO)
@@ -40,9 +40,8 @@ The widgets:
 | `son` | Volume, audio outputs and inputs |
 | `camera` | Gesture control |
 | `reglages` | Settings window |
-| `sessions` | AI dock (Claude sessions, knowledge) |
 
-The old `widget:N` are still understood (0 = stats, 1 = sessions,
+The old `widget:N` are still understood (0 = stats,
 3 = musique, 4 = lecteur), as well as `controls` (son) and `camera`.
 
 In practice, these messages are typically sent by Hyprland keybinds in the

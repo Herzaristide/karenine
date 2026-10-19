@@ -43,27 +43,6 @@ fn build_command(args: &[String]) -> Option<(serde_json::Value, bool)> {
             None | Some("list") => (json!({"cmd": "claude_list"}), false),
             Some("watch") => (json!({"cmd": "claude_watch"}), true),
             Some("focus") => (json!({"cmd": "claude_focus", "id": arg(3)?}), false),
-            Some("projects") => (json!({"cmd": "claude_projects"}), false),
-            Some("notes") => (json!({"cmd": "knowledge_list"}), false),
-            Some("transcript") => (json!({"cmd": "claude_transcript", "path": arg(3)?}), true),
-            Some("review") => (json!({"cmd": "claude_review", "cwd": arg(3)?}), false),
-            Some("start") => (
-                json!({
-                    "cmd": "claude_start",
-                    "cwd": arg(3)?,
-                    "prompt": arg(4)?,
-                    "worktree": arg(5) == Some("--worktree"),
-                }),
-                false,
-            ),
-            Some("decide") => (
-                json!({
-                    "cmd": "claude_decide",
-                    "request": arg(3)?.parse::<u64>().ok()?,
-                    "decision": arg(4)?,
-                }),
-                false,
-            ),
             _ => return None,
         },
         "servers" => match arg(2) {
@@ -88,11 +67,9 @@ fn build_command(args: &[String]) -> Option<(serde_json::Value, bool)> {
             // Dictation only: the transcript is shown, not sent.
             Some("dictate") => (json!({"cmd": "voice_toggle", "send": false}), false),
             Some("simulate") => (
-                json!({"cmd": "voice_simulate", "path": arg(3)?, "send": arg(4) == Some("--send"), "hold": arg(4) == Some("--hold")}),
+                json!({"cmd": "voice_simulate", "path": arg(3)?, "send": arg(4) == Some("--send")}),
                 false,
             ),
-            Some("hold") => (json!({"cmd": "voice_hold"}), false),
-            Some("release") => (json!({"cmd": "voice_release"}), false),
             Some("wake") => (
                 match arg(3) {
                     Some("on") => json!({"cmd": "voice_wake", "on": true}),
@@ -165,14 +142,9 @@ fn usage() -> ! {
            gesture debug [--dry]                   Foreground engine with diagnostics\n\
            claude [list|watch]                     Live Claude Code sessions\n\
            claude focus <session-id>               Focus the window hosting a session\n\
-           claude decide <request> allow|always|deny|terminal\n\
-           claude projects | review <cwd>          AI dock: projects / worktree changes\n\
-           claude start <cwd> <prompt> [--worktree]  Start a session run by anna\n\
-           claude transcript <file.jsonl>           Follow a session transcript\n\
            pilot <demande…> | watch | reset       Ask the pilot / follow it / forget it\n\
            voice [toggle] | watch                  Speak to the pilot (start / end listening)\n\
            voice dictate                          Same, but only show the transcript\n\
-           voice hold | release                   Push-to-talk: record until release\n\
            voice wake [on|off]                    Wake word « Karénine » (toggle)\n\
            voice transcribe <file.wav>            Transcribe a 16 kHz mono WAV\n\
            servers [list] | watch [name]          Tailnet devices / their stats (ssh)\n\
@@ -255,14 +227,6 @@ mod tests {
             parses(&["claude", "focus", "abc"]),
             Command::ClaudeFocus { .. }
         ));
-        assert!(matches!(
-            parses(&["claude", "decide", "3", "always"]),
-            Command::ClaudeDecide { request: 3, .. }
-        ));
-        assert!(matches!(
-            parses(&["claude", "projects"]),
-            Command::ClaudeProjects
-        ));
         match parses(&["pilot", "baisse", "le", "son"]) {
             Command::PilotAsk { text, clipboard } => {
                 assert_eq!((text.as_str(), clipboard), ("baisse le son", false))
@@ -273,22 +237,6 @@ mod tests {
         assert!(matches!(
             serde_json::from_value::<Command>(json!({"cmd": "desk", "tool": "volume"})).unwrap(),
             Command::Desk { .. }
-        ));
-        assert!(matches!(
-            parses(&["claude", "start", "/p", "salut", "--worktree"]),
-            Command::ClaudeStart {
-                worktree: true,
-                resume: None,
-                ..
-            }
-        ));
-        assert!(matches!(
-            parses(&["claude", "review", "/p"]),
-            Command::ClaudeReview { .. }
-        ));
-        assert!(matches!(
-            parses(&["claude", "transcript", "/x.jsonl"]),
-            Command::ClaudeTranscript { .. }
         ));
         assert!(matches!(parses(&["phone"]), Command::PhoneWatch));
         assert!(matches!(
@@ -352,7 +300,6 @@ mod tests {
         assert!(build_command(&argv(&["gesture", "camera"])).is_none());
         assert!(build_command(&argv(&["gesture", "fly"])).is_none());
         assert!(build_command(&argv(&["claude", "focus"])).is_none());
-        assert!(build_command(&argv(&["claude", "decide", "x", "allow"])).is_none());
         assert!(build_command(&argv(&["frobnicate"])).is_none());
     }
 }

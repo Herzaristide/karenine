@@ -1,19 +1,19 @@
-//! The pilot: a Claude session anna keeps warm, to which the AI dock sends
-//! what the user asks of the desktop — "turn the sound down", "open Zed on
-//! karenine", "fix the dock in karenine".
+//! The pilot: a Claude session anna keeps warm, to which the conversation
+//! bar sends what the user asks of the desktop — "turn the sound down",
+//! "open Zed on karenine".
 //!
 //! It acts through the desk tools only (`anna mcp`, see desk.rs): Claude
 //! Code's own tools are off, and so are the user's settings — no hooks, no
 //! journal, no other MCP server — which keeps it quick to start and its
-//! reach exactly what desk.rs allows. Code and research go to full sessions
-//! (`lancer_session`), never to the pilot itself.
+//! reach exactly what desk.rs allows. It never starts a Claude Code session:
+//! code and research stay with the user.
 //!
 //! Each request carries a short context block (time, active window,
 //! sessions), built here at send time. The process lives across requests so
 //! a request costs no start-up; it is restarted after a while (idle or many
 //! turns) to keep its context small. Nothing is written to disk.
 //!
-//! What the dock shows — the user's requests, the tool calls, the answers —
+//! What the bar shows — the user's requests, the tool calls, the answers —
 //! is kept here as a short log, pushed to `pilot_watch` subscribers whole on
 //! every change.
 
@@ -31,22 +31,22 @@ use tokio::sync::{broadcast, Mutex as AsyncMutex};
 /// Restart after this many requests, or this long without one.
 const MAX_TURNS: u32 = 30;
 const MAX_IDLE: Duration = Duration::from_secs(20 * 60);
-/// Entries kept in the log the dock shows.
+/// Entries kept in the log the bar shows.
 const LOG_MAX: usize = 60;
 
 const PROMPT: &str = r#"Tu es le pilote du bureau de l'utilisateur : un assistant intégré à son interface (Hyprland sur NixOS). Il te parle depuis la barre de conversation en bas de l'écran (au clavier, ou à la voix en disant « Karénine »), souvent en quelques mots. Ta réponse s'affiche juste au-dessus de la barre.
 
 Ce que tu fais :
-- Tu agis sur le bureau avec tes outils : fenêtres et workspaces, son, luminosité, lecture média, applications, URL, projets, captures, couleur d'accent, notes du coffre Obsidian, et les widgets flottants de l'interface (`widget` : stats, lecteur, musique (métronome et accordeur), son, caméra, réglages, sessions).
-- Tu confies le travail de fond à une session Claude Code complète avec `lancer_session` : toute tâche de code (corriger, ajouter, expliquer du code d'un projet) ou de recherche approfondie. Tu ne fais jamais ce travail toi-même. Formule la demande pour cette session de façon complète et autonome. Projets : ceux de ~/ciph3r, « nixos » pour la configuration du système, « recherche » pour une recherche (le coffre de notes).
+- Tu agis sur le bureau avec tes outils : fenêtres et workspaces, son, luminosité, lecture média, applications, URL, projets, captures, couleur d'accent, notes du coffre Obsidian, et les widgets flottants de l'interface (`widget` : stats, lecteur, musique (métronome et accordeur), son, caméra, réglages).
+- Tu ne fais pas de travail de code ni de recherche approfondie, et tu ne lances pas de session Claude Code : pour ça, propose d'ouvrir le projet (`ouvrir_projet`, dans Zed ou un terminal) et laisse l'utilisateur s'en charger.
 - Tu réponds directement aux questions courtes. Pour une question sur ce que l'utilisateur a déjà noté ou décidé, cherche d'abord dans ses notes (`chercher_notes`).
 
 Comment :
-- Agis d'abord, puis confirme en une phrase courte (« Volume à 30 %. », « Session lancée sur karenine. »). Pas de préambule, pas de « bien sûr ».
+- Agis d'abord, puis confirme en une phrase courte (« Volume à 30 %. », « Zed ouvert sur karenine. »). Pas de préambule, pas de « bien sûr ».
 - Une réponse à une question : six lignes au plus, en markdown si utile.
 - Ne change pas la fenêtre ou le workspace affichés sauf si on te le demande : l'utilisateur est peut-être en train de travailler.
 - Si la demande est ambiguë (quelle fenêtre ? quel projet ?), pose une seule question courte au lieu de deviner. `etat_bureau` te montre ce qui est ouvert.
-- Fermer une fenêtre, lancer une commande shell, reconstruire NixOS : l'utilisateur confirme lui-même dans une bulle ; s'il refuse, n'insiste pas.
+- Fermer une fenêtre et lancer une commande shell s'exécutent sans confirmation : ne le fais que si la demande est claire. Tu ne reconstruis jamais le système NixOS : c'est à l'utilisateur de le faire.
 - `commande` est un dernier recours, quand aucun autre outil ne convient.
 
 Chaque demande commence par un bloc [contexte] (heure, fenêtre active, sessions en cours) : sers-t'en, ne le recopie pas."#;
@@ -85,7 +85,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// One line saying what a tool call does, for the dock's thread.
+/// One line saying what a tool call does, for the bar.
 fn action_line(name: &str, input: &Value) -> String {
     let tool = name.rsplit("__").next().unwrap_or(name);
     let args: Vec<String> = input
@@ -438,7 +438,7 @@ fn context_block(sessions: &[super::Session], clipboard: bool) -> String {
             .collect();
         out.push(format!("sessions Claude : {}", list.join(", ")));
     }
-    let projects: Vec<String> = super::runner::projects()
+    let projects: Vec<String> = super::desk::projects()
         .into_iter()
         .map(|p| p.name)
         .collect();
@@ -497,8 +497,8 @@ mod tests {
             "etat_bureau"
         );
         assert_eq!(
-            action_line("mcp__anna__lancer_session", &json!({"projet": "karenine"})),
-            "lancer_session · karenine"
+            action_line("mcp__anna__ouvrir_projet", &json!({"projet": "karenine"})),
+            "ouvrir_projet · karenine"
         );
     }
 }

@@ -26,23 +26,10 @@ Click the snowflake and the bar grows into a capsule of widgets.
 
 ## An AI that actually drives the desktop
 
-<table>
-<tr>
-<td width="45%"><img src="docs/public/screenshots/ai-dock.webp" alt="The AI dock talking to the pilot"></td>
-<td>
-
 The **pilot** is Claude with hands: sound, windows, apps, URLs, projects,
 screenshots, accent color, vault notes — the desktop is exposed to it as MCP
-tools. “Open YouTube Music in Chrome” just happens.
-
-The **AI dock** (Super+P) goes further: start Claude Code sessions, follow
-them live from the bar, read their conversation, review their diff and
-commit — without leaving the shell. Anything sensitive the pilot wants to do
-waits for your confirmation there.
-
-</td>
-</tr>
-</table>
+tools. “Open YouTube Music in Chrome” just happens. It only acts: code and
+research stay with you, in your own Claude Code sessions.
 
 ## Everything else, one tab away
 
@@ -108,7 +95,6 @@ if it is missing from `$PATH`.
 | Tool | Used by | Without it |
 | --- | --- | --- |
 | `fd` | `services/FileSource.qml` | file search returns nothing |
-| `jq` | `services/claude-index.sh` | Claude Desktop conversations are not indexed |
 | `wpctl` (wireplumber) | `widgets/DeviceSettings.qml` | the choice of output, input and webcam is empty |
 | `brightnessctl` | `services/Brightness.qml` | the brightness setting does not appear |
 | `udevadm` (systemd) | `services/Brightness.qml` | brightness no longer follows changes made elsewhere |

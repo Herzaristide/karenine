@@ -25,7 +25,7 @@ one line per message.
 | chroma | `chroma_watch` | 12-class chromagram — `{"chroma":[…],"top":[…]}`. |
 | metronome | `metronome` | Sample-accurate click session, `{"beat":<n>}`. BPM bounded to 20–300, beats per bar to 1–16. |
 | gestures | `gesture_get` / `gesture_set` / `gesture_toggle` / `gesture_watch` / `gesture_cameras` / `gesture_set_camera` | Webcam control (pointer, window grabbing, workspace switching). **Off by default**. |
-| claude | `claude_watch` / `claude_transcript` / … | The live Claude Code sessions (followed through Claude Code's hooks), the pilot, the voice (wake word, whisper), the knowledge base and the isolated worktrees of managed sessions. Detailed in [AI cluster](#ai). |
+| claude | `claude_watch` / `pilot_ask` / `voice_toggle` / … | The live Claude Code sessions (followed through Claude Code's hooks), the pilot and the voice (wake word, whisper). Detailed in [AI cluster](#ai). |
 | notes | CLI `anna notes list\|add\|paste\|edit\|pin\|copy\|delete` | The “Notes” tab. Works on the files directly, without the daemon: `$XDG_DATA_HOME/anna/notes/notes.json` (rewritten whole through a temporary file, so a crash never leaves half of it) and one file per pasted image. The clipboard is read with `wl-paste` (an image, then an image file copied from a file manager, then text). The daemon also turns every screenshot into an image note. |
 
 ## Modules
@@ -44,7 +44,7 @@ one line per message.
 | `audio.rs`, `tuner.rs`, `chroma.rs`, `metronome.rs` | Native audio (below). The voice reads the echo-cancelled mic through `pw-record` instead, which cpal cannot select. |
 | `notes.rs` | The notes (table above). |
 | `i18n.rs` | anna's on-screen messages, read from the shell's dictionaries (below). |
-| `claude/` | Sessions, pilot, voice, wake word, whisper, knowledge, worktrees — see [AI cluster](#ai). |
+| `claude/` | Sessions, pilot, voice, wake word, whisper, skills — see [AI cluster](#ai). |
 | `gesture/` | Webcam capture, hand recognition and its output (pointer, windows, workspaces). |
 
 ## Languages
