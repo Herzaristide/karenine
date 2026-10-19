@@ -16,7 +16,8 @@ import "../widgets"
 PanelWindow { // qmllint disable uncreatable-type
     id: layer
 
-    WlrLayershell.layer: WlrLayer.Top
+    // Overlay : visibles même devant une fenêtre en plein écran.
+    WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.namespace: "quickshell-widgets"
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
 

@@ -52,7 +52,9 @@ PanelWindow { // qmllint disable uncreatable-type
     // Distance au bord de l'écran.
     readonly property int gap: 120
 
-    WlrLayershell.layer: WlrLayer.Top
+    // Overlay, pas Top : une fenêtre en plein écran passe devant la couche
+    // Top dans Hyprland, et la barre n'apparaîtrait plus quand on l'appelle.
+    WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.namespace: "quickshell-conversation"
     // Exclusive le temps d'une demande au clavier : une surface layer ne
     // reçoit les frappes qu'une fois cliquée sinon.
