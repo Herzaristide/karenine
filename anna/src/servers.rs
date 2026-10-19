@@ -143,8 +143,9 @@ pub async fn load() -> Vec<Server> {
     let Ok(Ok(out)) = tokio::time::timeout(Duration::from_secs(4), child).await else {
         return vec![];
     };
-    let ssh_config =
-        std::fs::read_to_string(crate::paths::home_dir().join(".ssh/config")).unwrap_or_default();
+    let ssh_config = tokio::fs::read_to_string(crate::paths::home_dir().join(".ssh/config"))
+        .await
+        .unwrap_or_default();
     parse_status(
         &String::from_utf8_lossy(&out.stdout),
         &parse_ssh_config(&ssh_config),
