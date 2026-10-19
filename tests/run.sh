@@ -18,7 +18,7 @@ trap 'rm -rf "$work"' EXIT
 
 mkdir "$work/pure"
 # Les vrais fichiers testés.
-for s in Fuzzy DragState Search; do
+for s in Fuzzy DragState Search Chalk; do
     cp "$root/services/$s.qml" "$work/pure/"
     echo "singleton $s 1.0 $s.qml" >> "$work/pure/qmldir"
 done

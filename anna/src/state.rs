@@ -181,13 +181,13 @@ impl AppState {
         let logo_path = std::env::var("FASTFETCH_LOGO")
             .unwrap_or_else(|_| "/etc/nixos/src/nixos_logo.txt".into());
 
-        // Icons theme — read icons_theme.txt, fall back to Arcanum-Accent
+        // Icons theme — read icons_theme.txt, fall back to the generated Reversal-Accent
         let icons_theme = fs::read_to_string(accent_dir.join("icons_theme.txt"))
             .unwrap_or_default()
             .trim()
             .to_string();
         let icons_theme = if icons_theme.is_empty() {
-            "Arcanum-Accent".into()
+            crate::icons::THEME_NAME.into()
         } else {
             icons_theme
         };
@@ -332,7 +332,7 @@ mod tests {
         assert_eq!(s.accent.to_hex(), DEFAULT_ACCENT);
         assert_eq!(s.mode, "dark");
         assert_eq!(s.palette_dark, fallback_palette_dark());
-        assert_eq!(s.icons_theme, "Arcanum-Accent");
+        assert_eq!(s.icons_theme, crate::icons::THEME_NAME);
         fs::remove_dir_all(dir).unwrap();
     }
 

@@ -44,6 +44,7 @@ mod color;
 mod gesture;
 mod hwstats;
 mod i18n;
+mod icons;
 mod metronome;
 mod msi;
 mod notes;

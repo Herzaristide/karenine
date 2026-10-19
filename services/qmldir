@@ -21,3 +21,5 @@ singleton Widgets 1.0 Widgets.qml
 singleton Tuning 1.0 Tuning.qml
 singleton I18n 1.0 I18n.qml
 singleton Notifications 1.0 Notifications.qml
+singleton Board 1.0 Board.qml
+singleton Chalk 1.0 Chalk.qml

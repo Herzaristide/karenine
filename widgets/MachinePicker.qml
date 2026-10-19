@@ -81,8 +81,8 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             width: 18
             height: 18
-            source: Quickshell.iconPath(picker.current !== "" ? "network-server" : "computer", true)
-                    || Quickshell.iconPath("folder", true)
+            source: Theme.icon(picker.current !== "" ? "network-server" : "computer", true)
+                    || Theme.icon("folder", true)
             sourceSize.width: 36
             sourceSize.height: 36
             asynchronous: true

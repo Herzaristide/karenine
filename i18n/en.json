@@ -6,6 +6,8 @@
   "anna.failed": "failed",
   "anna.noAnswer": "anna is not answering.",
   "anna.not_detected": "Not detected",
+  "anna.notes.bad_position": "Not a place on the board.",
+  "anna.notes.bad_stroke": "Unreadable chalk stroke.",
   "anna.notes.clipboard_empty": "The clipboard is empty.",
   "anna.notes.empty": "Empty note.",
   "anna.notes.unknown": "Note not found.",

@@ -45,7 +45,8 @@ pkgs.rustPlatform.buildRustPackage {
     cp -r ${./templates}/. "$out/share/anna/templates/"
 
     # Wrap host-agnostic subprocess tools into PATH:
-    #   hyprctl (hyprland), dbus-send (dbus), gtk-update-icon-cache (gtk3)
+    #   hyprctl (hyprland), dbus-send (dbus), gtk-update-icon-cache (gtk3),
+    #   dconf
     #     → theme live-reload signals
     #   lspci (pciutils), df (coreutils)
     #     → hwstats collection
@@ -66,6 +67,8 @@ pkgs.rustPlatform.buildRustPackage {
     #       claude/whisper.rs): Vulkan runs on the discrete GPU whatever its
     #       vendor (NVIDIA here, AMD on gary), and on the CPU without one. The
     #       model file is provided by the NixOS configuration.
+    # The icon theme recoloured to the accent (src/icons.rs): Reversal, read in
+    # place from the store through ANNA_ICON_SOURCE.
     # The wake word « Karénine » (claude/wake.rs): openWakeWord's two shared
     # models, and the word's own model trained in lab/wakeword-karenine. ONNX
     # Runtime is loaded at run time (ort's load-dynamic).
@@ -79,6 +82,7 @@ pkgs.rustPlatform.buildRustPackage {
     wrapProgram "$out/bin/anna" \
       --set-default ORT_DYLIB_PATH ${pkgs.onnxruntime}/lib/libonnxruntime.so \
       --set-default ANNA_WAKE_MODELS "$out/share/anna/wake" \
+      --set-default ANNA_ICON_SOURCE ${pkgs.reversal-icon-theme}/share/icons \
       --prefix PATH : ${
         lib.makeBinPath (
           with pkgs;
@@ -86,6 +90,7 @@ pkgs.rustPlatform.buildRustPackage {
             hyprland
             dbus
             gtk3
+            dconf
             pciutils
             coreutils
             wireplumber

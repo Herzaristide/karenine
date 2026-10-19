@@ -56,18 +56,18 @@ impl Color {
         Self::from_hsl(h, new_s, new_l)
     }
 
-    /// Bright accent for the Arcanum icon theme: same hue, S=100%, L=70%.
-    /// Replaces #ff6666 (the bright red highlight) when recoloring icons.
-    pub fn arcanum_bright(&self) -> Self {
-        let (h, _, _) = self.to_hsl();
-        Self::from_hsl(h, 1.0, 0.70)
-    }
-
-    /// Dark accent for the Arcanum icon theme: same hue, S=75%, L=20%.
-    /// Replaces #5a0d0d (the dark red shadow) when recoloring icons.
-    pub fn arcanum_dark(&self) -> Self {
-        let (h, _, _) = self.to_hsl();
-        Self::from_hsl(h, 0.75, 0.20)
+    /// "Mono" recolouring toward `accent`, used on icons: the accent hue, the
+    /// lightness kept (so relief and gradients survive), the saturation scaled
+    /// to the accent's by how saturated the original was. Near-white and
+    /// near-black are left alone.
+    pub fn mono_toward(&self, accent: &Color) -> Self {
+        let (_, s, l) = self.to_hsl();
+        if !(0.04..=0.96).contains(&l) {
+            return self.clone();
+        }
+        let (ah, a_sat, _) = accent.to_hsl();
+        let s = (a_sat * (0.35 + 0.65 * (s / 0.5).min(1.0))).min(1.0);
+        Self::from_hsl(ah, s, l)
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────
@@ -191,11 +191,14 @@ mod tests {
     fn variants_keep_the_hue() {
         let c = Color::from_hex("#5277c3").unwrap();
         let hue = c.to_hsl().0;
-        for v in [c.muted(), c.arcanum_bright(), c.arcanum_dark()] {
+        let red = Color::from_hex("#f05050").unwrap();
+        for v in [c.muted(), red.mono_toward(&c)] {
             assert!((v.to_hsl().0 - hue).abs() < 2.0, "{}", v.to_hex());
         }
-        let (_, s, l) = c.arcanum_bright().to_hsl();
-        assert!((s - 1.0).abs() < 0.02 && (l - 0.70).abs() < 0.01);
+        // mono keeps the lightness and leaves white alone.
+        assert!((red.mono_toward(&c).to_hsl().2 - red.to_hsl().2).abs() < 0.01);
+        let white = Color::from_hex("#ffffff").unwrap();
+        assert_eq!(white.mono_toward(&c), white);
         assert!(c.muted().to_hsl().2 <= 0.75 + 0.01);
     }
 

@@ -4,3 +4,4 @@ WidgetCard 1.0 WidgetCard.qml
 WidgetHub 1.0 WidgetHub.qml
 HubTopBar 1.0 HubTopBar.qml
 PolkitPrompt 1.0 PolkitPrompt.qml
+Blackboard 1.0 Blackboard.qml

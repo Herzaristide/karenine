@@ -53,6 +53,44 @@ QtObject {
         } catch (e) { /* keep current _state if JSON is incomplete */ }
     }
 
+    // ── Les icônes ─────────────────────────────────────────────────────────
+    // anna recolore le thème d'icônes à l'accent (anna/src/icons.rs), mais Qt
+    // garde en cache, pour toute la vie du processus, chaque icône du thème
+    // déjà chargée : Quickshell.iconPath resterait sur l'ancien accent. anna
+    // publie donc la liste des icônes recolorées (nom → fichier) ; celles-là
+    // sont lues directement sur le disque, l'URL changeant avec l'accent
+    // (?rev=). Les autres, et tout le reste sans anna (greeter), passent par
+    // le thème comme avant.
+    property var _icons: ({ "rev": "", "root": "", "icons": {} })
+
+    property FileView _iconsFile: FileView {
+        path: Quickshell.env("XDG_RUNTIME_DIR") + "/anna-icons.json"
+        watchChanges: true
+        printErrors: false
+        onLoaded:      themeRoot._parseIcons()
+        onFileChanged: reload()
+    }
+
+    function _parseIcons() {
+        try {
+            var parsed = JSON.parse(_iconsFile.text())
+            if (parsed && parsed.icons && parsed.root)
+                themeRoot._icons = parsed
+        } catch (e) { /* fichier en cours d'écriture : on garde la liste */ }
+    }
+
+    // Même contrat que Quickshell.iconPath(name, check) : avec check, une
+    // icône introuvable donne "".
+    function icon(name, check) {
+        var icons = themeRoot._icons.icons
+        if (name && Object.prototype.hasOwnProperty.call(icons, name)) {
+            var path = themeRoot._icons.root + "/" + icons[name]
+            return "file://" + path.split("/").map(encodeURIComponent).join("/")
+                + "?rev=" + themeRoot._icons.rev
+        }
+        return Quickshell.iconPath(name, check)
+    }
+
     // ── Convenience accessors ──────────────────────────────────────────────
     readonly property bool   darkMode: _state.mode !== "light"
     readonly property string accentHex: _state.accent || "#d4a35f"

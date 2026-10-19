@@ -6,6 +6,8 @@
   "anna.failed": "échec",
   "anna.noAnswer": "anna ne répond pas.",
   "anna.not_detected": "Non détecté",
+  "anna.notes.bad_position": "Ce n'est pas une place du tableau.",
+  "anna.notes.bad_stroke": "Trait de craie illisible.",
   "anna.notes.clipboard_empty": "Le presse-papiers est vide.",
   "anna.notes.empty": "Note vide.",
   "anna.notes.unknown": "Note introuvable.",

@@ -565,32 +565,32 @@ PanelWindow { // qmllint disable uncreatable-type
         var p = item.payload || {};
         switch (item.type) {
         case "app":
-            return p.entry && p.entry.icon ? Quickshell.iconPath(p.entry.icon, true) : "";
+            return p.entry && p.entry.icon ? Theme.icon(p.entry.icon, true) : "";
         case "file":
             if (p.isDir)
-                return Quickshell.iconPath("folder", true);
+                return Theme.icon("folder", true);
             // Une image se montre elle-même.
             if (bar.imageSuffixes.indexOf((p.suffix || "").toLowerCase()) !== -1)
                 return "file://" + p.path.split("/").map(encodeURIComponent).join("/");
-            return Quickshell.iconPath("text-x-generic", true);
+            return Theme.icon("text-x-generic", true);
         case "web":
             return DefaultApps.browser ? DefaultApps.browser.icon : "";
         case "wallpaper":
-            return Quickshell.iconPath("preferences-desktop-wallpaper", true);
+            return Theme.icon("preferences-desktop-wallpaper", true);
         case "note":
             if (p.create)
-                return Quickshell.iconPath("document-new", true);
+                return Theme.icon("document-new", true);
             // Une note image se montre elle-même.
             if (p.note && p.note.image)
                 return "file://" + p.note.image.split("/").map(encodeURIComponent).join("/");
-            return Quickshell.iconPath("text-x-generic", true);
+            return Theme.icon("text-x-generic", true);
         case "setting":
             switch (p.key) {
-            case "volume":     return Quickshell.iconPath("audio-volume-high", true);
-            case "theme":      return Quickshell.iconPath("preferences-desktop-theme", true);
-            case "accent":     return Quickshell.iconPath("preferences-desktop-color", true);
-            case "screenshot": return Quickshell.iconPath("applets-screenshooter", true);
-            case "language":   return Quickshell.iconPath("preferences-desktop-locale", true);
+            case "volume":     return Theme.icon("audio-volume-high", true);
+            case "theme":      return Theme.icon("preferences-desktop-theme", true);
+            case "accent":     return Theme.icon("preferences-desktop-color", true);
+            case "screenshot": return Theme.icon("applets-screenshooter", true);
+            case "language":   return Theme.icon("preferences-desktop-locale", true);
             }
         }
         return "";

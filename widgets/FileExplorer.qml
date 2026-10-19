@@ -305,13 +305,13 @@ Item {
     // Une image se montre elle-même ; le reste prend l'icône du thème.
     function iconFor(p, isDir, suffix) {
         if (isDir)
-            return Quickshell.iconPath("folder", true);
+            return Theme.icon("folder", true);
         var s = (suffix || "").toLowerCase();
         // À distance, pas de miniature : chaque image traverserait le réseau.
         if (!root.remote && root.imageSuffixes.indexOf(s) !== -1)
             return root.urlOf(p);
-        return Quickshell.iconPath(root.suffixIcons[s] || "text-x-generic", true)
-            || Quickshell.iconPath("text-x-generic", true);
+        return Theme.icon(root.suffixIcons[s] || "text-x-generic", true)
+            || Theme.icon("text-x-generic", true);
     }
 
     // ── Les favoris ──────────────────────────────────────────────
@@ -688,8 +688,8 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     width: 18
                     height: 18
-                    source: Quickshell.iconPath(placeRow.modelData.icon, true)
-                            || Quickshell.iconPath("folder", true)
+                    source: Theme.icon(placeRow.modelData.icon, true)
+                            || Theme.icon("folder", true)
                     sourceSize.width: 36
                     sourceSize.height: 36
                     asynchronous: true
@@ -769,7 +769,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     width: 20
                     height: 20
-                    source: Quickshell.iconPath("drive-harddisk", true)
+                    source: Theme.icon("drive-harddisk", true)
                     sourceSize.width: 40
                     sourceSize.height: 40
                     asynchronous: true

@@ -228,7 +228,7 @@ Singleton {
                 return icon;
             // Adwaita n'a souvent que la variante symbolique
             // (dialog-information-symbolic).
-            var path = Quickshell.iconPath(icon, true) || Quickshell.iconPath(icon + "-symbolic", true);
+            var path = Theme.icon(icon, true) || Theme.icon(icon + "-symbolic", true);
             if (path)
                 return path;
         }
