@@ -9,6 +9,8 @@ links: [panels, backend, widgets, languages]
 
 ## The AI dock
 
+![The AI dock, expanded on a pilot conversation](screenshots/ai-dock.webp)
+
 `panels/AiDock.qml` is the interface's gateway to Claude. It sits against
 the left edge of the screen and opens with Super+P; the pilot's
 confirmations are answered there. It is the “sessions” widget, which the pilot (`widget` tool) or the FIFO

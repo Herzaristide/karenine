@@ -9,12 +9,15 @@ links: [widgets, backend, shell]
 
 karenine ships a small suite for music practice, each tool being a
 [widget](#widgets) backed by a native audio service of the
-[`anna`](#backend) daemon.
+[`anna`](#backend) daemon. The metronome and the tuner share the “Music”
+tab:
+
+![The Music tab: metronome above, tuner below](screenshots/music.webp)
 
 ## Tuner
 
-- Widget: `widgets/Tuner.qml` (**Pitch** panel, widget no. 3 through the
-  [IPC](#shell)).
+- Widget: `widgets/Tuner.qml` (the “Music” tab, `widget:musique` or
+  `widget:accordeur` through the [IPC](#shell)).
 - Backend: `anna`'s `tuner` service (`tuner_watch`) — pitch detection by FFT
   autocorrelation, one `{"pitch":<hz>}` line per frame.
 

@@ -1,7 +1,7 @@
 ---
 title: Backend
 group: Structure
-summary: The anna Rust daemon — theme, hardware stats and audio (tuner, chromagram, metronome).
+summary: The anna Rust daemon — theme, hardware stats, servers, phone, notes, AI and audio (tuner, chromagram, metronome).
 links: [widgets, audio-tools, ai, architecture, languages]
 ---
 
@@ -25,6 +25,27 @@ one line per message.
 | chroma | `chroma_watch` | 12-class chromagram — `{"chroma":[…],"top":[…]}`. |
 | metronome | `metronome` | Sample-accurate click session, `{"beat":<n>}`. BPM bounded to 20–300, beats per bar to 1–16. |
 | gestures | `gesture_get` / `gesture_set` / `gesture_toggle` / `gesture_watch` / `gesture_cameras` / `gesture_set_camera` | Webcam control (pointer, window grabbing, workspace switching). **Off by default**. |
+| claude | `claude_watch` / `claude_transcript` / … | The live Claude Code sessions (followed through Claude Code's hooks), the pilot, the voice (wake word, whisper), the knowledge base and the isolated worktrees of managed sessions. Detailed in [AI cluster](#ai). |
+| notes | CLI `anna notes list\|add\|paste\|edit\|pin\|copy\|delete` | The “Notes” tab. Works on the files directly, without the daemon: `$XDG_DATA_HOME/anna/notes/notes.json` (rewritten whole through a temporary file, so a crash never leaves half of it) and one file per pasted image. The clipboard is read with `wl-paste` (an image, then an image file copied from a file manager, then text). The daemon also turns every screenshot into an image note. |
+
+## Modules
+
+| File | Role |
+| --- | --- |
+| `main.rs` | Entry point: the daemon, the socket server and the CLI subcommands. |
+| `protocol.rs` | Every command, as a JSON object with a `"cmd"` field (e.g. `{"cmd":"set_accent","color":"#5277c3"}`). |
+| `client.rs` | The CLI side: sends a command to the socket and prints the answer. |
+| `paths.rs` | The filesystem locations shared by the daemon, the CLI and the helpers (socket, state, data), so they always agree. The QML side reads the socket path from `services/Anna.qml`. |
+| `state.rs`, `color.rs` | The theme state: accent, light/dark mode, base16 palettes (embedded fallbacks), hex/HSL math and derived variants. |
+| `templates.rs` | Renders the color templates: fragments under `~/.config/accent/fragments/`, imported by the declarative Nix configs; full files only where the app has no include (`kdeglobals`, Konsole's color scheme). |
+| `appctl.rs` | Live reload after a color change: `hyprctl reload`, KDE D-Bus signals; Alacritty/WezTerm watch their file; the others pick it up on next launch. A failing step never blocks the others. |
+| `msi.rs` | Mirrors the accent on the MSI keyboard (`$MSI_RGB_SET`), with a 200 ms debounce and a 2 s cooldown so bursts never wedge the controller; caches the last color for the boot and resume hooks. |
+| `hwstats.rs`, `servers.rs`, `phone.rs` | Hardware stats, tailnet servers, KDE Connect phones (table above). |
+| `audio.rs`, `tuner.rs`, `chroma.rs`, `metronome.rs` | Native audio (below). The voice reads the echo-cancelled mic through `pw-record` instead, which cpal cannot select. |
+| `notes.rs` | The notes (table above). |
+| `i18n.rs` | anna's on-screen messages, read from the shell's dictionaries (below). |
+| `claude/` | Sessions, pilot, voice, wake word, whisper, knowledge, worktrees — see [AI cluster](#ai). |
+| `gesture/` | Webcam capture, hand recognition and its output (pointer, windows, workspaces). |
 
 ## Languages
 
