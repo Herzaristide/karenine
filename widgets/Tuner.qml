@@ -78,134 +78,124 @@ Item {
     // Re-map the currently held pitch when the reference changes.
     onRefFreqChanged: if (freq > 0) setFreq(freq)
 
-    // ── UI : horizontale, dans le style de la barre de conversation ──────
-    //    A4        −50 ┊ · · · · ┃ · · · · ┊ +50
-    //   440,0 Hz         ▮ (l'aiguille)
-    //   +3 ¢              A4 = 440 Hz
+    // ── UI : allumer, la note, puis la jauge des cents ────────────────────
+    //   (♪)   A4    ┊ · · · · ┃ · · · · ┊
+    //        +3 ¢   440,0 Hz       A4 = 440
+    // Coupé (Tuning.on), le micro reste fermé et la jauge s'efface.
     RowLayout {
         anchors.fill: parent
-        anchors.leftMargin: 16
-        anchors.rightMargin: 16
-        spacing: 28
+        spacing: 14
 
-        // La note, en grand.
-        ColumnLayout {
+        GlassButton {
             Layout.alignment: Qt.AlignVCenter
-            Layout.preferredWidth: 140
-            spacing: 2
+            implicitWidth: 32
+            implicitHeight: 32
+            accent: Tuning.on
+            icon: Qt.resolvedUrl("../assets/icons/music-note.svg")
+            onClicked: Tuning.setOn(!Tuning.on)
+        }
+
+        // La note, en grand, et son écart.
+        ColumnLayout {
+            opacity: Tuning.on ? 1 : 0.35
+            Behavior on opacity { NumberAnimation { duration: 180 } }
+            Layout.alignment: Qt.AlignVCenter
+            Layout.preferredWidth: 64
+            spacing: 0
 
             Text {
                 Layout.alignment: Qt.AlignHCenter
                 text: tuner.freq > 0 ? tuner.noteName + tuner.octave : "—"
                 font.family: "Inter"
-                font.pixelSize: 60
-                font.weight: Font.DemiBold
-                color: tuner.inTune ? Theme.colorSuccess : Theme.textPrimary
+                font.pixelSize: 34
+                font.weight: tuner.freq > 0 ? Font.DemiBold : Font.Light
+                color: tuner.freq <= 0 ? Theme.textDim : tuner.inTune ? Theme.colorSuccess : Theme.textPrimary
                 Behavior on color { ColorAnimation { duration: 160 } }
             }
             Text {
                 Layout.alignment: Qt.AlignHCenter
-                text: tuner.freq > 0
-                      ? tuner.freq.toFixed(1) + " Hz  ·  " + (tuner.cents > 0 ? "+" : "") + tuner.cents + " ¢"
-                      : I18n.tr("tuner.play")
+                text: tuner.freq > 0 ? (tuner.cents > 0 ? "+" : "") + tuner.cents + " ¢" : " "
                 font.family: "Inter"
-                font.pixelSize: 12
-                color: Theme.textSecondary
+                font.pixelSize: 11
+                font.weight: Font.Medium
+                font.features: { "tnum": 1 }
+                color: tuner.inTune ? Theme.colorSuccess : Theme.textSecondary
             }
         }
 
-        // La jauge des cents, puis la référence.
-        ColumnLayout {
+        // La jauge des cents (±50), la zone juste teintée au milieu.
+        Item {
+            id: meter
+            opacity: Tuning.on ? 1 : 0.5
+            Behavior on opacity { NumberAnimation { duration: 180 } }
             Layout.fillWidth: true
-            Layout.alignment: Qt.AlignVCenter
-            spacing: 14
+            Layout.fillHeight: true
 
-            Item {
-                id: meter
-                Layout.fillWidth: true
-                Layout.preferredHeight: 54
+            readonly property real mid: 22
 
-                // La zone juste (±5 ¢), teintée.
+            Rectangle {
+                anchors.horizontalCenter: parent.horizontalCenter
+                y: meter.mid - height / 2
+                width: meter.width * 0.1
+                height: 22
+                radius: 7
+                color: Qt.alpha(Theme.colorSuccess, tuner.inTune ? 0.24 : 0.09)
+                Behavior on color { ColorAnimation { duration: 160 } }
+            }
+            Rectangle {
+                id: track
+                y: meter.mid - height / 2
+                width: parent.width
+                height: 4
+                radius: 2
+                color: Qt.alpha(Theme.textPrimary, 0.1)
+            }
+            // Les graduations, tous les 10 ¢.
+            Repeater {
+                model: 11
                 Rectangle {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.verticalCenter: track.verticalCenter
-                    width: meter.width * 0.1
-                    height: 26
-                    radius: 8
-                    color: Qt.alpha(Theme.colorSuccess, tuner.inTune ? 0.24 : 0.1)
-                    Behavior on color { ColorAnimation { duration: 160 } }
-                }
-
-                Rectangle {
-                    id: track
-                    y: 14
-                    width: parent.width
-                    height: 6
-                    radius: 3
-                    color: Qt.alpha(Theme.textPrimary, 0.1)
-                }
-
-                // Les graduations, tous les 10 ¢.
-                Repeater {
-                    model: 11
-                    Rectangle {
-                        required property int index
-                        x: index / 10 * (meter.width - width)
-                        anchors.verticalCenter: track.verticalCenter
-                        width: 2
-                        height: index === 5 ? 20 : 10
-                        radius: 1
-                        color: Qt.alpha(Theme.textPrimary, index === 5 ? 0.45 : 0.18)
-                    }
-                }
-
-                // L'aiguille.
-                Rectangle {
-                    visible: tuner.freq > 0
-                    width: 8
-                    height: 28
-                    radius: 4
-                    anchors.verticalCenter: track.verticalCenter
-                    color: tuner.inTune ? Theme.colorSuccess : Theme.glow(0)
-                    x: (meter.width - width) / 2
-                       + Math.max(-50, Math.min(50, tuner.cents)) / 50 * (meter.width - width) / 2
-                    Behavior on x { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-                    Behavior on color { ColorAnimation { duration: 160 } }
-                }
-
-                Text {
-                    anchors.left: parent.left
-                    anchors.bottom: parent.bottom
-                    text: "−50"
-                    font.family: "Inter"
-                    font.pixelSize: 10
-                    color: Theme.textDim
-                }
-                Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.bottom: parent.bottom
-                    text: I18n.tr("tuner.inTune")
-                    font.family: "Inter"
-                    font.pixelSize: 10
-                    color: tuner.inTune ? Theme.colorSuccess : Theme.textDim
-                }
-                Text {
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    text: "+50"
-                    font.family: "Inter"
-                    font.pixelSize: 10
-                    color: Theme.textDim
+                    required property int index
+                    x: index / 10 * (meter.width - width)
+                    y: meter.mid - height / 2
+                    width: 2
+                    height: index === 5 ? 16 : 8
+                    radius: 1
+                    color: Qt.alpha(Theme.textPrimary, index === 5 ? 0.4 : 0.16)
                 }
             }
+            // L'aiguille.
+            Rectangle {
+                visible: tuner.freq > 0
+                width: 6
+                height: 24
+                radius: 3
+                y: meter.mid - height / 2
+                color: tuner.inTune ? Theme.colorSuccess : Theme.glow(0)
+                x: (meter.width - width) / 2
+                   + Math.max(-50, Math.min(50, tuner.cents)) / 50 * (meter.width - width) / 2
+                Behavior on x { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                Behavior on color { ColorAnimation { duration: 160 } }
+            }
 
-            // La référence (A4) : elle se règle dans les réglages.
+            // Sous la jauge : la fréquence entendue, et la référence (elle
+            // se règle dans les réglages).
             Text {
-                Layout.alignment: Qt.AlignHCenter
+                anchors.left: parent.left
+                y: meter.mid + 16
+                text: !Tuning.on ? I18n.tr("tuner.off")
+                      : tuner.freq > 0 ? tuner.freq.toFixed(1) + " Hz" : I18n.tr("tuner.play")
+                font.family: "Inter"
+                font.pixelSize: 10
+                font.features: { "tnum": 1 }
+                color: Theme.textDim
+            }
+            Text {
+                anchors.right: parent.right
+                y: meter.mid + 16
                 text: "A4 = " + tuner.refFreq.toFixed(0) + " Hz"
                 font.family: "Inter"
-                font.pixelSize: 12
-                color: Theme.textSecondary
+                font.pixelSize: 10
+                color: Theme.textDim
             }
         }
     }

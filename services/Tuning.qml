@@ -13,6 +13,9 @@ Singleton {
 
     // En Hz.
     readonly property real refFreq: prefs.refFreq // qmllint disable unqualified
+    // L'accordeur écoute (le micro s'ouvre quand l'onglet Musique se montre),
+    // ou il est coupé ; gardé d'une session à l'autre.
+    readonly property bool on: prefs.on // qmllint disable unqualified
 
     FileView {
         path: Quickshell.dataPath("tuner.json")
@@ -24,7 +27,12 @@ Singleton {
         JsonAdapter { // qmllint disable unresolved-type
             id: prefs
             property real refFreq: 440
+            property bool on: true
         }
+    }
+
+    function setOn(v) {
+        prefs.on = !!v; // qmllint disable unqualified
     }
 
     function setRefFreq(v) {

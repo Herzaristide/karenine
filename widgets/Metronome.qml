@@ -92,38 +92,41 @@ Item {
     onBpmChanged:               metroCmd({ action: "bpm",   value: bpm })
     onBeatsPerBarChanged:       metroCmd({ action: "beats", value: beatsPerBar })
 
-    // ── UI : horizontale, dans le style de la barre de conversation ──────
-    //   ( − )   120   ( + )   ● ● ● ●        ( ▶ Lancer ) ( 4/4 )
-    //           bpm                          (  Tap tempo   )
-    RowLayout {
+    // ── UI : en colonne, à droite du panneau Musique ──────────────────────
+    //   ( − ) 120 ( + )
+    //         bpm
+    //      ● ● ● ●
+    //    (4/4) (Tap)
+    //   (  ▶ Lancer  )
+    implicitWidth: column.implicitWidth
+
+    ColumnLayout {
+        id: column
         anchors.fill: parent
-        anchors.leftMargin: 12
-        anchors.rightMargin: 12
-        spacing: 24
+        spacing: 8
 
         // Le tempo : en grand, éditable, entre ses deux boutons.
         RowLayout {
-            Layout.alignment: Qt.AlignVCenter
-            spacing: 14
+            Layout.alignment: Qt.AlignHCenter
+            spacing: 4
 
             GlassButton {
-                implicitWidth: 38
-                implicitHeight: 38
-                fontSize: 16
+                implicitWidth: 28
+                implicitHeight: 28
+                fontSize: 15
                 text: "−"
                 onClicked: metroPanel.bpm = metroPanel.clampBpm(metroPanel.bpm - 1)
             }
-
             ColumnLayout {
-                spacing: 0
+                spacing: -4
                 TextInput {
                     id: bpmInput
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: 128
+                    Layout.preferredWidth: 76
                     text: metroPanel.bpm.toString()
                     font.family: "Inter"
-                    font.pixelSize: 56
+                    font.pixelSize: 34
                     font.weight: Font.DemiBold
+                    font.features: { "tnum": 1 }
                     color: Theme.textPrimary
                     horizontalAlignment: TextInput.AlignHCenter
                     selectByMouse: true
@@ -137,7 +140,7 @@ Item {
                         metroPanel.bpm = metroPanel.clampBpm(metroPanel.bpm + d)
                         text = metroPanel.bpm.toString()
                     }
-                    FocusRing { radius: 14; gap: 2 }
+                    FocusRing { radius: 10; gap: 2 }
                     onEditingFinished: {
                         var v = parseInt(text)
                         if (!isNaN(v)) metroPanel.bpm = metroPanel.clampBpm(v)
@@ -150,40 +153,41 @@ Item {
                                 bpmInput.text = metroPanel.bpm.toString()
                         }
                     }
+                    // La molette règle le tempo, comme un bouton rotatif.
+                    WheelHandler {
+                        onWheel: (event) => bpmInput.nudge(event.angleDelta.y > 0 ? 1 : -1)
+                    }
                 }
                 Text {
                     Layout.alignment: Qt.AlignHCenter
                     text: "bpm"
                     font.family: "Inter"
-                    font.pixelSize: 11
+                    font.pixelSize: 10
                     color: Theme.textDim
                 }
             }
-
             GlassButton {
-                implicitWidth: 38
-                implicitHeight: 38
-                fontSize: 16
+                implicitWidth: 28
+                implicitHeight: 28
+                fontSize: 15
                 text: "+"
                 onClicked: metroPanel.bpm = metroPanel.clampBpm(metroPanel.bpm + 1)
             }
         }
 
         // Les temps de la mesure : le premier en vert, les autres à l'accent.
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.alignment: Qt.AlignVCenter
-            spacing: 12
-
-            Item { Layout.fillWidth: true }
+        Row {
+            Layout.alignment: Qt.AlignHCenter
+            Layout.topMargin: 2
+            spacing: 9
             Repeater {
                 model: metroPanel.beatsPerBar
                 Rectangle {
                     id: beatDot
                     required property int index
-                    width: 16
-                    height: 16
-                    radius: 8
+                    width: 12
+                    height: 12
+                    radius: 6
                     property bool isActive: metroPanel.metroRunning && metroPanel.beatIndex === index
                     color: isActive
                            ? (index === 0 ? Theme.colorSuccess : Theme.glow(0))
@@ -193,49 +197,50 @@ Item {
                     Behavior on color { ColorAnimation { duration: 80 } }
                     SequentialAnimation on scale {
                         running: beatDot.isActive
-                        NumberAnimation { to: 1.22; duration: 60; easing.type: Easing.OutCubic }
+                        NumberAnimation { to: 1.25; duration: 60; easing.type: Easing.OutCubic }
                         NumberAnimation { to: 1.0;  duration: 220; easing.type: Easing.OutQuint }
                     }
                 }
             }
-            Item { Layout.fillWidth: true }
         }
 
-        // Lancer, la mesure, et le tap tempo en dessous.
-        ColumnLayout {
-            Layout.alignment: Qt.AlignVCenter
-            spacing: 8
-
-            RowLayout {
-                spacing: 8
-                GlassButton {
-                    implicitWidth: 112
-                    implicitHeight: 38
-                    accent: true
-                    fontSize: 13
-                    icon: Qt.resolvedUrl("../assets/icons/" + (metroPanel.metroRunning ? "stop.svg" : "play.svg"))
-                    text: metroPanel.metroRunning ? I18n.tr("common.stop") : I18n.tr("metronome.start")
-                    onClicked: metroPanel.metroRunning = !metroPanel.metroRunning
-                }
-                // 2 → 3 → 4 → 5 → 6 → 2
-                GlassButton {
-                    implicitWidth: 56
-                    implicitHeight: 38
-                    fontSize: 13
-                    text: metroPanel.beatsPerBar + "/4"
-                    onClicked: {
-                        var n = metroPanel.beatsPerBar + 1
-                        if (n > 6) n = 2
-                        metroPanel.beatsPerBar = n
-                        metroPanel.beatIndex = -1
-                    }
+        // La mesure et le tap tempo.
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 6
+            // 2 → 3 → 4 → 5 → 6 → 2
+            GlassButton {
+                Layout.fillWidth: true
+                implicitHeight: 26
+                fontSize: 11
+                text: metroPanel.beatsPerBar + "/4"
+                onClicked: {
+                    var n = metroPanel.beatsPerBar + 1
+                    if (n > 6) n = 2
+                    metroPanel.beatsPerBar = n
+                    metroPanel.beatIndex = -1
                 }
             }
             GlassButton {
                 Layout.fillWidth: true
-                text: I18n.tr("metronome.tap")
+                implicitHeight: 26
+                fontSize: 11
+                text: I18n.tr("metronome.tapShort")
                 onClicked: metroPanel.tapTempo()
             }
+        }
+
+        Item { Layout.fillHeight: true }
+
+        // Lancer, arrêter.
+        GlassButton {
+            Layout.fillWidth: true
+            implicitHeight: 32
+            accent: metroPanel.metroRunning
+            fontSize: 12
+            icon: Qt.resolvedUrl("../assets/icons/" + (metroPanel.metroRunning ? "stop.svg" : "play.svg"))
+            text: metroPanel.metroRunning ? I18n.tr("common.stop") : I18n.tr("metronome.start")
+            onClicked: metroPanel.metroRunning = !metroPanel.metroRunning
         }
     }
 }

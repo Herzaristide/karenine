@@ -36,6 +36,7 @@
 //!   - gesture  : webcam control (gesture_get/set/toggle/watch)
 //!   - pilot    : the desk pilot, its voice and speech (pilot_*/voice_*/speech_*)
 //!   - record   : microphone and screen recordings (record_toggle/stop/get/watch)
+//!     and the sound takes (record_peaks/play/pause)
 
 mod appctl;
 mod audio;
@@ -510,12 +511,34 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
         }
 
         Command::RecordGet => {
+            // The takes as the folder holds them now, like the watch.
+            ctx.recorder.refresh_takes();
             let status = ctx.recorder.subscribe().borrow().clone();
             let json = serde_json::json!({ "record": status }).to_string();
             let _ = write_line(&mut writer, &json).await;
         }
 
+        Command::RecordPeaks { path } => {
+            let reply = match ctx.recorder.peaks(&path).await {
+                Ok(peaks) => serde_json::json!({ "peaks": peaks }),
+                Err(e) => serde_json::json!({ "ok": false, "error": e }),
+            };
+            let _ = write_line(&mut writer, &reply.to_string()).await;
+        }
+
+        Command::RecordPlay { path, from } => {
+            write_result(&mut writer, ctx.recorder.play(&path, from)).await;
+        }
+
+        Command::RecordPause => {
+            ctx.recorder.pause();
+            write_result(&mut writer, Ok(())).await;
+        }
+
         Command::RecordWatch => {
+            // The takes as the folder holds them now: files may have been
+            // moved or deleted by hand since.
+            ctx.recorder.refresh_takes();
             let mut rx = ctx.recorder.subscribe();
             loop {
                 let status = rx.borrow_and_update().clone();

@@ -7,12 +7,12 @@ import "../widgets"
 // Les widgets, dans la capsule de la barre de conversation : le flocon
 // l'agrandit vers le haut, et la place gagnée au-dessus du champ les montre.
 // En haut, une barre qui ne change pas d'un onglet à l'autre (HubTopBar :
-// l'alimentation, la capture, la luminosité, le volume) ; puis un widget à
+// l'alimentation, le Bluetooth, la capture) ; puis un widget à
 // la fois, en largeur ; la barre d'onglets, juste au-dessus du champ, passe
 // de l'un à l'autre.
 //
 //   ╭────────────────────────────────────────────────╮
-//   │ (🔒)(☾)(⇥)(↻)(⏻)  (📷) (☀) ━●─ (🔊) ━━━●─ 64 % │  la barre du haut
+//   │ (🔒)(☾)(⇥)(↻)(⏻)             (ᛒ)(📷)(●)  [87] │  la barre du haut
 //   │ ────────────────────────────────────────────── │
 //   │                                                │
 //   │      le widget de l'onglet, à l'horizontale     │  fondu croisé et léger
@@ -76,7 +76,7 @@ FocusScope {
     readonly property int pad: 14
     readonly property int tabsH: 40
     readonly property int gap: 12
-    // La barre du haut (alimentation, volume), la même pour tous les onglets.
+    // La barre du haut (alimentation, capture), la même pour tous les onglets.
     readonly property int topH: 38
 
     // La hauteur de chaque widget, à l'horizontale.
@@ -89,8 +89,8 @@ FocusScope {
         // Le champ, puis le mur de cartes, qui défile.
         notes: 340,
         lecteur: 210,
-        // Le métronome, le fil, l'accordeur, le fil, l'enregistrement.
-        musique: 150 + 1 + 150 + 1 + 44,
+        // L'accordeur et le métronome, puis s'enregistrer (MusicPanel).
+        musique: 196,
         reglages: 330
     })
     readonly property int contentH: hub.heights[Widgets.hubTab] || 200
@@ -178,44 +178,8 @@ FocusScope {
     Component { id: notificationsPage; NotificationCenter {} }
     Component { id: notesPage; NotesWidget {} }
     Component { id: playerPage; MusicPlayerWidget {} }
-    // Le métronome, l'accordeur, puis l'enregistrement du son, un fil entre
-    // chacun.
-    Component {
-        id: musicPage
-        Item {
-            Metronome {
-                id: metronome
-                active: true
-                width: parent.width
-                height: 150
-            }
-            Rectangle {
-                anchors.top: metronome.bottom
-                x: 10
-                width: parent.width - 20
-                height: 1
-                color: Theme.dividerColor
-            }
-            Tuner {
-                active: true
-                y: 151
-                width: parent.width
-                height: 150
-            }
-            Rectangle {
-                y: 301
-                x: 10
-                width: parent.width - 20
-                height: 1
-                color: Theme.dividerColor
-            }
-            AudioRecorder {
-                y: 302
-                width: parent.width
-                height: 44
-            }
-        }
-    }
+    // L'accordeur, le métronome et l'enregistrement, d'un seul tenant.
+    Component { id: musicPage; MusicPanel {} }
     Component { id: settingsPage; Settings { showInternalHeader: false } }
 
     // ── La barre d'onglets ───────────────────────────────────────
