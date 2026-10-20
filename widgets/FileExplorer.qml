@@ -285,33 +285,40 @@ Item {
 
     // ── Les icônes ───────────────────────────────────────────────
     readonly property var imageSuffixes: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]
+    // Les icônes de assets/icons (Phosphor), par extension.
     readonly property var suffixIcons: ({
-        pdf: "application-pdf",
-        mp3: "audio-x-generic", flac: "audio-x-generic", wav: "audio-x-generic",
-        ogg: "audio-x-generic", opus: "audio-x-generic", m4a: "audio-x-generic",
-        mp4: "video-x-generic", mkv: "video-x-generic", webm: "video-x-generic",
-        mov: "video-x-generic", avi: "video-x-generic",
-        zip: "package-x-generic", tar: "package-x-generic", gz: "package-x-generic",
-        xz: "package-x-generic", zst: "package-x-generic", "7z": "package-x-generic",
-        rar: "package-x-generic",
-        qml: "text-x-script", js: "text-x-script", ts: "text-x-script",
-        rs: "text-x-script", py: "text-x-script", sh: "text-x-script",
-        nix: "text-x-script", c: "text-x-script", cpp: "text-x-script",
-        h: "text-x-script", go: "text-x-script", json: "text-x-script",
-        toml: "text-x-script", yaml: "text-x-script", yml: "text-x-script",
-        html: "text-html", md: "text-x-generic", txt: "text-x-generic"
+        pdf: "file-pdf",
+        mp3: "file-audio", flac: "file-audio", wav: "file-audio",
+        ogg: "file-audio", opus: "file-audio", m4a: "file-audio",
+        mp4: "file-video", mkv: "file-video", webm: "file-video",
+        mov: "file-video", avi: "file-video",
+        zip: "file-archive", tar: "file-archive", gz: "file-archive",
+        xz: "file-archive", zst: "file-archive", "7z": "file-archive",
+        rar: "file-archive",
+        png: "file-image", jpg: "file-image", jpeg: "file-image", gif: "file-image",
+        webp: "file-image", bmp: "file-image", svg: "file-image",
+        qml: "file-code", js: "file-code", ts: "file-code",
+        rs: "file-code", py: "file-code", sh: "file-code",
+        nix: "file-code", c: "file-code", cpp: "file-code",
+        h: "file-code", go: "file-code", json: "file-code",
+        toml: "file-code", yaml: "file-code", yml: "file-code",
+        html: "file-html", md: "file-text", txt: "file-text"
     })
 
-    // Une image se montre elle-même ; le reste prend l'icône du thème.
+    function glyph(name) {
+        return "../assets/icons/" + name + ".svg";
+    }
+
+    // Une image se montre elle-même (une URL file://) ; le reste prend une
+    // icône de assets/icons, que la tuile teinte.
     function iconFor(p, isDir, suffix) {
         if (isDir)
-            return Quickshell.iconPath("folder", true);
+            return root.glyph("folder");
         var s = (suffix || "").toLowerCase();
         // À distance, pas de miniature : chaque image traverserait le réseau.
         if (!root.remote && root.imageSuffixes.indexOf(s) !== -1)
             return root.urlOf(p);
-        return Quickshell.iconPath(root.suffixIcons[s] || "text-x-generic", true)
-            || Quickshell.iconPath("text-x-generic", true);
+        return root.glyph(root.suffixIcons[s] || "file");
     }
 
     // ── Les favoris ──────────────────────────────────────────────
@@ -322,16 +329,16 @@ Item {
     // pour la racine : il engloberait tout le reste, donc resterait allumé ;
     // le disque « / » de la bande du bas, le chemin et ↑ y mènent.
     readonly property var extraPlaces: !root.remote
-        ? [{ label: "nixos", icon: "nix-snowflake", path: "/etc/nixos" }]
-        : (root.machine.nixos ? [{ label: "nixos", icon: "nix-snowflake", path: root.rootDir + "/etc/nixos" }] : [])
-    // Les icônes du thème pour les dossiers XDG, en français ou en anglais.
+        ? [{ label: "nixos", icon: "../assets/nixos.svg", path: "/etc/nixos" }]
+        : (root.machine.nixos ? [{ label: "nixos", icon: "../assets/nixos.svg", path: root.rootDir + "/etc/nixos" }] : [])
+    // Les icônes des dossiers XDG, en français ou en anglais.
     readonly property var placeIcons: ({
-        Bureau: "user-desktop", Desktop: "user-desktop",
-        Documents: "folder-documents",
-        "Téléchargements": "folder-download", Downloads: "folder-download",
-        Images: "folder-pictures", Pictures: "folder-pictures",
-        Musique: "folder-music", Music: "folder-music",
-        "Vidéos": "folder-videos", Videos: "folder-videos"
+        Bureau: "place-desktop", Desktop: "place-desktop",
+        Documents: "documents",
+        "Téléchargements": "downloads", Downloads: "downloads",
+        Images: "pictures", Pictures: "pictures",
+        Musique: "music", Music: "music",
+        "Vidéos": "videos", Videos: "videos"
     })
     property var places: root.extraPlaces
 
@@ -339,7 +346,7 @@ Item {
         var out = [];
         for (var i = 0; i < homeDirs.count; i++) {
             var name = homeDirs.get(i, "fileName");
-            out.push({ label: name, icon: root.placeIcons[name] || "folder",
+            out.push({ label: name, icon: root.glyph(root.placeIcons[name] || "folder"),
                        path: homeDirs.get(i, "filePath") });
         }
         root.places = out.concat(root.extraPlaces);
@@ -652,10 +659,8 @@ Item {
         y: root.switchH + 8
         width: root.placesW
         height: parent.height - y - root.diskSpace
-        radius: 18
+        radius: Theme.radius
         color: Qt.alpha(Theme.textPrimary, 0.05)
-        border.width: 1
-        border.color: Qt.alpha(Theme.textPrimary, 0.08)
 
         // Plus de favoris que de place : la liste défile.
         ListView {
@@ -677,26 +682,20 @@ Item {
 
                 Rectangle {
                     anchors.fill: parent
-                    radius: height / 2
-                    color: placeRow.here ? Qt.alpha(Theme.glow(0), 0.16)
+                    radius: Theme.radiusSmall
+                    color: placeRow.here ? Theme.selectedFill
                                          : Qt.alpha(Theme.textPrimary, placeMa.containsMouse ? 0.07 : 0)
-                    border.width: placeRow.here ? 1 : 0
-                    border.color: Qt.alpha(Theme.glow(0), 0.38)
                     Behavior on color { ColorAnimation { duration: 140 } }
                 }
 
-                Image {
+                NixIcon {
                     id: placeIcon
                     anchors.left: parent.left
                     anchors.leftMargin: 10
                     anchors.verticalCenter: parent.verticalCenter
-                    width: 18
-                    height: 18
-                    source: Quickshell.iconPath(placeRow.modelData.icon, true)
-                            || Quickshell.iconPath("folder", true)
-                    sourceSize.width: 36
-                    sourceSize.height: 36
-                    asynchronous: true
+                    iconSize: 18
+                    source: placeRow.modelData.icon
+                    color: Theme.accentColor
                 }
 
                 Text {
@@ -750,11 +749,11 @@ Item {
 
                 width: (diskBar.width - diskBar.spacing * (root.disks.length - 1)) / root.disks.length
                 height: diskBar.height
-                radius: 16
-                color: disk.here ? Qt.alpha(Theme.glow(0), 0.16)
+                radius: Theme.radiusSmall
+                color: disk.here ? Theme.selectedFill
                                  : Qt.alpha(Theme.textPrimary, diskMa.containsMouse || disk.activeFocus ? 0.09 : 0.05)
                 border.width: 1
-                border.color: disk.here ? Qt.alpha(Theme.glow(0), 0.38) : Qt.alpha(Theme.textPrimary, 0.08)
+                border.color: disk.here ? "transparent" : Theme.dividerColor
                 Behavior on color { ColorAnimation { duration: 140 } }
 
                 // Au clavier aussi : Tab, puis Entrée ou Espace.
@@ -766,17 +765,15 @@ Item {
                     }
                 }
 
-                Image {
+                // À l'accent, comme les dossiers des lieux.
+                NixIcon {
                     id: diskIcon
                     anchors.left: parent.left
                     anchors.leftMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
-                    width: 20
-                    height: 20
-                    source: Quickshell.iconPath("drive-harddisk", true)
-                    sourceSize.width: 40
-                    sourceSize.height: 40
-                    asynchronous: true
+                    iconSize: 20
+                    source: "../assets/icons/disk.svg"
+                    color: Theme.accentColor
                 }
 
                 Column {
@@ -899,7 +896,7 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             width: crumbLabel.implicitWidth + 14
                             height: 24
-                            radius: 12
+                            radius: 6
                             color: Qt.alpha(Theme.textPrimary, crumbMa.containsMouse && !crumb.last ? 0.08 : 0)
                             Behavior on color { ColorAnimation { duration: 140 } }
 
@@ -938,10 +935,8 @@ Item {
                 visible: root.selectedCount > 0
                 width: countLabel.implicitWidth + 36
                 height: 30
-                radius: 15
+                radius: Theme.radiusSmall
                 color: Qt.alpha(Theme.glow(0), clearMa.containsMouse ? 0.26 : 0.18)
-                border.width: 1
-                border.color: Qt.alpha(Theme.glow(0), 0.42)
                 Behavior on color { ColorAnimation { duration: 140 } }
 
                 Text {
@@ -955,13 +950,12 @@ Item {
                     font.weight: Font.Medium
                     color: Theme.textPrimary
                 }
-                Text {
+                NixIcon {
                     anchors.right: parent.right
                     anchors.rightMargin: 11
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "✕"
-                    font.family: "Inter"
-                    font.pixelSize: 10
+                    iconSize: 10
+                    source: "../assets/icons/close.svg"
                     color: Theme.textSecondary
                 }
                 MouseArea {
@@ -1028,7 +1022,7 @@ Item {
     FocusRing {
         anchors.fill: grid
         watch: grid
-        radius: 18
+        radius: Theme.radius
         gap: 2
     }
 
@@ -1154,34 +1148,47 @@ Item {
             width: grid.cellWidth
             height: grid.cellHeight
 
-            // Sélectionnée : teintée franchement ; retenue au clavier : un fil
-            // autour ; survolée : à peine teintée.
+            // Sélectionnée : teintée franchement ; retenue au clavier : teintée ;
+            // survolée : à peine marquée.
             Rectangle {
                 anchors.fill: parent
                 anchors.margins: 3
-                radius: 14
-                color: Qt.alpha(Theme.glow(0), tile.selected ? 0.22 : tile.current ? 0.12 : 0.08)
-                border.width: tile.current || tile.selected ? 1 : 0
-                border.color: Qt.alpha(Theme.glow(0), tile.selected ? 0.5 : 0.38)
+                radius: Theme.radiusSmall
+                color: tile.selected ? Qt.alpha(Theme.accentColor, 0.22)
+                     : tile.current ? Theme.selectedFill : Theme.hoverOverlay
                 opacity: tile.current || tile.selected || tileMa.containsMouse ? 1 : 0
                 Behavior on opacity { NumberAnimation { duration: 120 } }
                 Behavior on color { ColorAnimation { duration: 120 } }
             }
 
-            Image {
+            // La miniature d'une image, ou l'icône teinte : les dossiers à
+            // l'accent, les fichiers en retrait.
+            Item {
                 id: tileImage
                 anchors.horizontalCenter: parent.horizontalCenter
                 y: 10
                 width: 36
                 height: 36
-                source: tile.icon
-                sourceSize.width: 72
-                sourceSize.height: 72
-                fillMode: tile.thumb ? Image.PreserveAspectCrop : Image.PreserveAspectFit
-                asynchronous: true
-                smooth: true
                 // Un fichier caché, un peu effacé.
                 opacity: tile.fileName.charAt(0) === "." ? 0.55 : 1
+
+                Image {
+                    anchors.fill: parent
+                    visible: tile.thumb
+                    source: tile.thumb ? tile.icon : ""
+                    sourceSize.width: 72
+                    sourceSize.height: 72
+                    fillMode: Image.PreserveAspectCrop
+                    asynchronous: true
+                    smooth: true
+                }
+                NixIcon {
+                    anchors.centerIn: parent
+                    visible: !tile.thumb
+                    iconSize: 30
+                    source: tile.thumb ? "" : tile.icon
+                    color: tile.fileIsDir ? Theme.accentColor : Theme.textSecondary
+                }
             }
 
             Text {
@@ -1219,7 +1226,7 @@ Item {
                     font.family: "Inter"
                     font.pixelSize: 11
                     font.weight: Font.DemiBold
-                    color: "#ffffff"
+                    color: Theme.selectedTextColor
                 }
             }
 
@@ -1306,30 +1313,45 @@ Item {
     // en attendant. Un clic sur l'erreur la congédie. Hors connexion, elle
     // dit aussi où en est l'envoi au téléphone.
     Rectangle {
+        id: statusPill
+        // La croix qui suit une erreur : sa place, écart compris.
+        readonly property real closeWidth: root.error !== "" ? 10 + 10 : 0
         anchors.horizontalCenter: grid.horizontalCenter
         anchors.bottom: grid.bottom
         anchors.bottomMargin: 8
         z: 5
         visible: root.connecting !== "" || root.error !== "" || root.notice !== ""
-        width: Math.min(statusLabel.implicitWidth + 28, grid.width - 20)
+        width: Math.min(statusLabel.implicitWidth + statusPill.closeWidth + 28, grid.width - 20)
         height: 30
-        radius: 15
-        color: Qt.alpha(Theme.bgDeep, 0.92)
+        radius: Theme.radiusSmall
+        color: Theme.bgElevated
         border.width: 1
         border.color: root.error !== "" ? Qt.alpha(Theme.colorDanger, 0.5) : Qt.alpha(Theme.glow(0), 0.4)
 
-        Text {
-            id: statusLabel
+        Row {
             anchors.centerIn: parent
-            width: Math.min(implicitWidth, parent.width - 28)
-            text: root.error !== "" ? root.error + "   ✕"
-                : root.connecting !== "" ? I18n.tr("explorer.connecting", { name: root.connecting })
-                : root.notice
-            elide: Text.ElideMiddle
-            font.family: "Inter"
-            font.pixelSize: 12
-            font.weight: Font.Medium
-            color: root.error !== "" ? Theme.colorDanger : Theme.textPrimary
+            spacing: 10
+
+            Text {
+                id: statusLabel
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.min(implicitWidth, statusPill.width - statusPill.closeWidth - 28)
+                text: root.error !== "" ? root.error
+                    : root.connecting !== "" ? I18n.tr("explorer.connecting", { name: root.connecting })
+                    : root.notice
+                elide: Text.ElideMiddle
+                font.family: "Inter"
+                font.pixelSize: 12
+                font.weight: Font.Medium
+                color: root.error !== "" ? Theme.colorDanger : Theme.textPrimary
+            }
+            NixIcon {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: root.error !== ""
+                iconSize: 10
+                source: "../assets/icons/close.svg"
+                color: Theme.colorDanger
+            }
         }
         MouseArea {
             anchors.fill: parent

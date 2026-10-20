@@ -408,19 +408,29 @@ fn gpu_name_from_lspci() -> String {
         Some(o) => o,
         None => return crate::i18n::tr("not_detected"),
     };
-    for line in out.lines() {
-        if line.contains("VGA") || line.contains("3D") || line.contains("Display") {
-            // "01:00.0 VGA compatible controller: Vendor Device (rev ..)"
-            if let Some(after) = line.split(": ").nth(1) {
-                // Drop a trailing " (rev ..)" / " (prog-if ..)" parenthetical.
-                let name = after.split(" (").next().unwrap_or(after).trim();
-                if !name.is_empty() {
-                    return name.to_string();
-                }
-            }
-        }
-    }
-    crate::i18n::tr("not_detected")
+    let names: Vec<&str> = out
+        .lines()
+        .filter(|l| l.contains("VGA") || l.contains("3D") || l.contains("Display"))
+        // "01:00.0 VGA compatible controller: Vendor Device (rev ..)"
+        .filter_map(|l| l.split(": ").nth(1))
+        // Drop a trailing " (rev ..)" / " (prog-if ..)" parenthetical.
+        .map(|after| after.split(" (").next().unwrap_or(after).trim())
+        .filter(|name| !name.is_empty())
+        .collect();
+    // A hybrid laptop lists the iGPU first: name the discrete card, the one
+    // the stats are about, and fall back to the iGPU only when it is alone.
+    names
+        .iter()
+        .find(|n| n.contains("NVIDIA"))
+        .or_else(|| {
+            names
+                .iter()
+                .find(|n| n.contains("AMD") || n.contains("ATI"))
+        })
+        .or(names.first())
+        .copied()
+        .map(str::to_string)
+        .unwrap_or_else(|| crate::i18n::tr("not_detected"))
 }
 
 /// Read a file and parse its leading integer (sysfs single-value files).

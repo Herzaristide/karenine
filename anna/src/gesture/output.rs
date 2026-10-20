@@ -10,8 +10,8 @@
 //! F24 on a second, keyboard-only virtual device, and Hyprland binds F24 as a
 //! mouse bind to `hl.dsp.window.drag()` — the same interactive move as
 //! Super + left drag. No button reaches the client, so nothing gets selected;
-//! and no Super is involved, so the Super-tap bind (karenine's dock) can't
-//! fire on release.
+//! and no Super is involved, so the Super-tap bind (karenine's conversation
+//! bar) can't fire on release.
 
 use evdev::uinput::VirtualDevice;
 use evdev::{

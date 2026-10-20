@@ -135,7 +135,7 @@ mod tests {
         );
         assert_eq!(
             out,
-            "a=#5277c3 rgb=82,119,195 hex=5277c3 bg=#0d0d0d bg_rgb=13,13,13 keep=@define"
+            "a=#5277c3 rgb=82,119,195 hex=5277c3 bg=#1b1a18 bg_rgb=27,26,24 keep=@define"
         );
     }
 

@@ -239,7 +239,7 @@ FocusScope {
         readonly property bool hovered: hover.hovered || card.editing
 
         height: body.height + 12
-        radius: 14
+        radius: Theme.radius
         color: Qt.alpha(Theme.textPrimary, 0.05)
         border.width: 1
         border.color: card.editing ? Qt.alpha(Theme.glow(0), 0.5)
@@ -248,11 +248,68 @@ FocusScope {
 
         HoverHandler { id: hover }
 
-        // Un clic : l'édition (texte, ou légende de l'image).
+        // Le porteur du glisser, comme les tuiles de l'Explorer : la carte ne
+        // bouge pas, ce proxy invisible démarre le glisser système. Il emporte
+        // l'id de la note, que le tableau noir comprend (panels/Blackboard.qml
+        // la pose où on la lâche), et son texte pour les autres applications.
+        Item {
+            id: dragProxy
+            width: card.width
+            height: card.height
+            opacity: 0
+
+            Drag.active: cardMa.drag.active || pictureMa.drag.active
+            Drag.dragType: Drag.Automatic
+            Drag.supportedActions: Qt.CopyAction
+            Drag.proposedAction: Qt.CopyAction
+            Drag.mimeData: card.hasImage
+                ? ({
+                    "application/x-karenine-note": card.note.id,
+                    "text/uri-list": "file://" + card.note.image + "\r\n",
+                    "text/plain": card.note.text !== "" ? card.note.text : card.note.image
+                })
+                : ({
+                    "application/x-karenine-note": card.note.id,
+                    "text/plain": card.note.text
+                })
+
+            // La barre reste ouverte le temps du geste (cf. DragState).
+            Drag.onDragStarted: DragState.begin("")
+            Drag.onDragFinished: {
+                DragState.end();
+                dragProxy.x = 0;
+                dragProxy.y = 0;
+            }
+        }
+
+        // Un clic : l'édition (texte, ou légende de l'image). Glisser :
+        // la note part, vers le tableau noir ou une autre application.
         MouseArea {
+            id: cardMa
             anchors.fill: parent
             cursorShape: card.editing ? Qt.IBeamCursor : Qt.PointingHandCursor
+            drag.target: card.editing ? null : dragProxy
+            drag.threshold: 10
+
+            onPressed: card.grabThumb()
+            onReleased: card.dragDone()
             onClicked: root.editingId = card.note.id
+        }
+
+        // La vignette du glisser : la carte telle qu'elle est à l'appui.
+        function grabThumb() {
+            if (!card.editing)
+                card.grabToImage(function (result) {
+                    dragProxy.Drag.imageSource = result.url;
+                });
+        }
+
+        // Filet de sécurité : un glisser annulé sans dragFinished ne doit pas
+        // laisser la barre bloquée ouverte.
+        function dragDone() {
+            DragState.end();
+            dragProxy.x = 0;
+            dragProxy.y = 0;
         }
 
         Column {
@@ -276,10 +333,16 @@ FocusScope {
                 asynchronous: true
                 smooth: true
 
-                // Un double clic l'ouvre dans la visionneuse.
+                // Un double clic l'ouvre dans la visionneuse ; glisser
+                // emporte la note, comme depuis le reste de la carte.
                 MouseArea {
+                    id: pictureMa
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
+                    drag.target: card.editing ? null : dragProxy
+                    drag.threshold: 10
+                    onPressed: card.grabThumb()
+                    onReleased: card.dragDone()
                     onClicked: root.editingId = card.note.id
                     onDoubleClicked: Quickshell.execDetached(["xdg-open", card.note.image])
                 }
@@ -360,8 +423,8 @@ FocusScope {
         Rectangle {
             anchors.fill: tools
             anchors.margins: -2
-            radius: height / 2
-            color: Qt.alpha(Theme.bgElevated, 0.85)
+            radius: Theme.radiusSmall
+            color: Theme.bgElevated
             opacity: card.hovered ? tools.opacity : 0
             Behavior on opacity { NumberAnimation { duration: 140 } }
         }
@@ -418,7 +481,7 @@ FocusScope {
 
         width: 22
         height: 22
-        radius: 11
+        radius: 6
         color: toolMa.containsMouse ? Qt.alpha(Theme.textPrimary, 0.12) : "transparent"
 
         Image {

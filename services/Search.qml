@@ -42,8 +42,8 @@ QtObject {
     property WallpaperSource wallpaperSource: WallpaperSource {
         onProduced: (seq, items) => root._collect(seq, "wallpaper", items)
     }
-    // Pas de sessions Claude : elles ont leur dock (AiDock), la recherche de
-    // la barre reste sur ce qu'on ouvre.
+    // Pas de sessions Claude : la recherche de la barre reste sur ce qu'on
+    // ouvre.
     property WebSource webSource: WebSource {
         onProduced: (seq, items) => root._collect(seq, "web", items)
     }

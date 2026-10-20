@@ -38,7 +38,7 @@ Rectangle {
     height: headerH + (loader.item ? loader.height : 0) + pad
 
     color: Theme.bgDeep
-    radius: 14
+    radius: Theme.radius
     border.width: 1
     border.color: Theme.dividerColor
 
@@ -101,7 +101,7 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             width: 20
             height: 20
-            radius: 10
+            radius: 6
             color: closeMa.containsMouse || closeBtn.activeFocus ? Theme.hoverOverlay : "transparent"
 
             activeFocusOnTab: true
@@ -113,10 +113,10 @@ Rectangle {
             }
             FocusRing { gap: 1 }
 
-            Text {
+            NixIcon {
                 anchors.centerIn: parent
-                text: "×"
-                font.pixelSize: 14
+                iconSize: 11
+                source: "../assets/icons/close.svg"
                 color: closeMa.containsMouse || closeBtn.activeFocus ? Theme.textPrimary : Theme.textDim
             }
 

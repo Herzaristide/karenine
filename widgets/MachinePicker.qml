@@ -70,24 +70,19 @@ Item {
     // ── La pastille ──────────────────────────────────────────────
     Rectangle {
         anchors.fill: parent
-        radius: height / 2
+        radius: Theme.radiusSmall
         color: Qt.alpha(Theme.glow(0), switchMa.containsMouse || picker.open ? 0.24 : 0.16)
-        border.width: 1
-        border.color: Qt.alpha(Theme.glow(0), 0.38)
         Behavior on color { ColorAnimation { duration: 140 } }
 
-        Image {
+        // Un écran pour cette machine, une baie pour un serveur, à l'accent.
+        NixIcon {
             id: switchIcon
             anchors.left: parent.left
             anchors.leftMargin: 11
             anchors.verticalCenter: parent.verticalCenter
-            width: 18
-            height: 18
-            source: Quickshell.iconPath(picker.current !== "" ? "network-server" : "computer", true)
-                    || Quickshell.iconPath("folder", true)
-            sourceSize.width: 36
-            sourceSize.height: 36
-            asynchronous: true
+            iconSize: 18
+            source: "../assets/icons/" + (picker.current !== "" ? "server.svg" : "computer.svg")
+            color: Theme.accentColor
         }
 
         Text {
@@ -105,16 +100,15 @@ Item {
             color: Theme.textPrimary
         }
 
-        Text {
+        NixIcon {
             id: chevron
             anchors.right: parent.right
             anchors.rightMargin: 12
             anchors.verticalCenter: parent.verticalCenter
-            text: "▾"
+            iconSize: 10
+            source: "../assets/icons/chevron-down.svg"
             rotation: picker.open ? 180 : 0
             Behavior on rotation { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-            font.family: "Inter"
-            font.pixelSize: 11
             color: Theme.textSecondary
         }
 
@@ -150,10 +144,10 @@ Item {
         width: picker.menuWidth
         height: Math.min(menuList.contentHeight + 12, picker.overlay.height - y)
         visible: picker.open
-        radius: 16
-        color: Qt.alpha(Theme.bgDeep, 0.96)
+        radius: Theme.radius
+        color: Theme.bgElevated
         border.width: 1
-        border.color: Qt.alpha(Theme.textPrimary, 0.12)
+        border.color: Theme.dividerColor
 
         // Celle-ci d'abord, puis les serveurs.
         readonly property var entries: [{ name: picker.localLabel, local: true, online: true }]
@@ -180,11 +174,9 @@ Item {
 
                 Rectangle {
                     anchors.fill: parent
-                    radius: height / 2
-                    color: entry.here ? Qt.alpha(Theme.glow(0), 0.16)
+                    radius: Theme.radiusSmall
+                    color: entry.here ? Theme.selectedFill
                                       : Qt.alpha(Theme.textPrimary, entryMa.containsMouse && entry.reachable ? 0.07 : 0)
-                    border.width: entry.here ? 1 : 0
-                    border.color: Qt.alpha(Theme.glow(0), 0.38)
                 }
 
                 // En ligne ou non.

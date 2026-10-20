@@ -17,7 +17,7 @@ QML component.
 | `PhoneWidget.qml` | The phone linked through KDE Connect (anna, `phone.rs`), a wide, low card at the bottom of the “System” tab (`HardwareStats.qml`), whatever machine is picked there; `telephone` opens that tab. Its card: state, mobile network, battery; “Screen” shows it in a scrcpy window, ring, clipboard. Its notifications reach the “Notifications” tab, sent by `kdeconnectd` like any other. Accepts or declines a pairing request. |
 | `NotificationCenter.qml` | The “Notifications” tab: the desktop notifications not closed yet, newest first (`services/Notifications.qml`, the shell being the `org.freedesktop.Notifications` server). Nothing pops up over the screen. Each one (`NotificationCard.qml`): icon or image, application, time, title, text, its actions, an inline reply field when the application offers one; a click runs its default action, ✕ or a right click closes it. “Clear all” closes them all. |
 | `NotesWidget.qml` | The “Notes” tab: a Keep-like wall of cards, kept on this machine only (`anna notes …`, `notes.rs`: `~/.local/share/anna/notes/notes.json` and one file per image). A note is written in the bar: type it, then pick “Create a note” among the results (`services/NoteSource.qml`, which also lists the matching notes; picking one opens the tab). At the top of the tab, “Paste”; Ctrl+V on the wall turns the clipboard into a note: an image (a screenshot, an image copied from a browser), an image file copied from a file manager, or text. Every screenshot also lands there by itself: the daemon watches `/tmp/screenshot-*.png` (Print keys, search, pilot) and `<Pictures>/capture-*.png` (the top bar), and the tab reloads when `notes.json` changes. The cards, in columns that scroll, pinned ones first then the most recent: a click edits the text (an image's caption; Escape or a click elsewhere saves, emptying a text note deletes it), a double click opens an image; on hover, at the top right (icons `pin`, `copy`, `terminal`, `trash`), pin, copy back to the clipboard, open in Claude Code (`claude` in the system terminal, from the home directory, the note as its first message — an image by its path), delete. |
-| `GlassButton.qml` | The widgets' button, in the bar's style (translucent pill, tinted if `accent`). |
+| `GlassButton.qml` | The widgets' button, flat like the bar (a quiet fill, the accent color if `accent`). |
 | `MachinePicker.qml` | The machine choice, shared by the Explorer and the System tab: a chip named after the machine shown, which unrolls it and the tailnet servers reachable over ssh (`anna servers list`), online or not. The choice goes into `Widgets.machine`, the same for every tab; each one follows it (the Explorer mounts the server with sshfs when it comes back on screen, and goes back to the mounted machine if mounting fails). |
 | `FocusRing.qml` | The outline of what has the keyboard, shared by all controls. |
 | `MusicPlayerWidget.qml` | Music player. |
@@ -25,9 +25,39 @@ QML component.
 | `Metronome.qml` | Metronome — see [Music tools](#audio-tools). |
 | `ChromaGraph.qml` | Chromagram — see [Music tools](#audio-tools). |
 | `MiniGraph.qml` | Small reusable graph. |
-| `Settings.qml` | Settings, in columns: devices; screen, tuner (the reference A, persisted by the `Tuning` singleton in `tuner.json`), voice (the wake word “Karénine”, through `ClaudeLive.voiceWakeToggle()` — anna remembers it — and the **voice language**), **interface language**; appearance; palette (the Settings tab of `WidgetHub`). The two languages are separate settings: see [Languages](#languages). |
+| `Settings.qml` | Settings, in columns: devices; screen, tuner (the reference A, persisted by the `Tuning` singleton in `tuner.json`), voice (the wake word “Karénine”, through `Pilot.voiceWakeToggle()` — anna remembers it — and the **voice language**), **interface language**; appearance; palette (the Settings tab of `WidgetHub`). The two languages are separate settings: see [Languages](#languages). |
 | `DeviceSettings.qml` | First column of the settings: sound output and input, webcam (PipeWire nodes, `wpctl set-default`); brightness and Bluetooth are in the top bar (`HubTopBar`). |
 | `WifiSettings.qml` | Under the devices in the settings: the Wi-Fi radio on or off, the current network, and the visible networks (the eight strongest) to join, through NetworkManager (`nmcli`). A known network is joined in one click; an unknown protected one asks for its password in the row itself. Without a wireless interface, the section does not appear. |
+| `BluetoothMenu.qml` | The Bluetooth menu, unfolded under its button in the top bar (`HubTopBar`). At the top, the adapter switch; then the devices: connected first, then paired, then the ones being discovered (the adapter scans while the menu is open, and stops when it closes). A click on a device: connected, it disconnects; paired, it connects; new, it pairs, becomes trusted (it will reconnect by itself) and connects. A connected headset with a microphone offers two modes: **Music** (A2DP, high-quality sound, no mic) and **Call** (HFP, the mic, phone-quality sound) — classic Bluetooth cannot do both at once. The modes are the PipeWire card profiles (`pactl list cards`). The headset only changes mode through this choice: WirePlumber's automatic switch is turned off in the NixOS configuration (`modules/audio.nix`), since anna's wake word listens all the time and the headset kept flipping. |
+| `GestureControls.qml` | Webcam gesture control (anna): on/off, the engine's state and the camera to use. A floating card (`camera`), see [Panels](#panels). |
+| `NotificationCard.qml` | One notification of the “Notifications” tab. |
+| `NixIcon.qml` | A monochrome SVG icon tinted to the theme: the artwork ships white and is recolored, so one file serves light and dark. |
+
+## In pictures
+
+The “Explorer” tab — favorites on the left, the folder as tiles, the disk
+chip at the bottom:
+
+![The Explorer tab](screenshots/explorer.webp)
+
+The “System” tab — processor, memory, graphics card, and the linked phone
+below:
+
+![The System tab](screenshots/stats.webp)
+
+The “Player” tab, here with nothing playing:
+
+![The Player tab](screenshots/player.webp)
+
+The “Music” tab — the metronome above the tuner (see [Music
+tools](#audio-tools)):
+
+![The Music tab](screenshots/music.webp)
+
+The “Settings” tab — sound, video and Wi-Fi; screen and tuner; appearance
+and accent:
+
+![The Settings tab](screenshots/settings.webp)
 
 ## Keyboard
 
@@ -46,10 +76,10 @@ appear.
 | Shift+Enter | On the screenshot: the whole screen (like right click). |
 | ← → / ↑ ↓ | Adjust sliders (volume, brightness), the track position (±5 s), the tempo, the A, the color pickers, the voice language (Shift: bigger step). |
 | ← → | Change widget: from the empty field, the tabs, or any control that does nothing else with them. Ctrl+Tab too (Ctrl+Shift+Tab: backwards). |
-| Esc | Gives the keyboard back to the field; in the field, drops the chosen suggestion, then closes the widgets, then the bar; on an armed power button, gives up. |
+| Esc | Gives the keyboard back to the field; in the field, drops the chosen suggestion, then closes the widgets, then the bar. |
 
-Logging out, rebooting and shutting down always take two presses. The
-floating card (gesture control) takes the keyboard once clicked; Esc closes
+The power buttons of the top bar act on the first press, without
+confirmation. The floating card (gesture control) takes the keyboard once clicked; Esc closes
 it.
 
 ## Relations

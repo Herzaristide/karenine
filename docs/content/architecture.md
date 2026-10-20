@@ -2,7 +2,7 @@
 title: Architecture & conventions
 group: General
 summary: Repository layout and QML import rules (qmldir, relative paths, Qt.resolvedUrl).
-links: [shell, panels, widgets, ai, backend, theme, languages]
+links: [shell, panels, widgets, search, lock-greeter, ai, backend, theme, languages]
 ---
 
 # Architecture & conventions
@@ -11,24 +11,59 @@ links: [shell, panels, widgets, ai, backend, theme, languages]
 
 ```
 shell.qml            Quickshell entry point (bar + panels, IPC through a FIFO)
-services/            Cross-cutting singletons (see Theme) and search sources
-  Theme.qml, I18n.qml, ClaudeSessions.qml, Notifications.qml (notification server)
-  claude-index.sh   (see “Scripts” below)
+lock.qml             Lock screen, a separate Quickshell instance
+greeter.qml          Login screen, run by greetd
+services/            Cross-cutting singletons and search sources
+  Theme, I18n, Widgets, Display, Tuning, DragState
+  Audio, Brightness, Battery, Notifications (notification server)
+  Anna, Pilot, Gesture, CursorProbe, DefaultApps, Recorder
+  Search, Fuzzy, AppSource, FileSource, SettingSource, WallpaperSource,
+  NoteSource, WebSource
 panels/              Top-level chrome (Wayland windows)
   ConversationBar, WidgetHub, HubTopBar, FloatingWidgets, WidgetCard,
-  AiDock, PolkitPrompt
+  PolkitPrompt
 widgets/             Panel contents
-  FileExplorer, HardwareStats, PhoneWidget, NotificationCenter, NotificationCard,
-  MusicPlayerWidget, Metronome,
-  Tuner, ChromaGraph, MiniGraph, GestureControls, Settings, DeviceSettings, WifiSettings
+  FileExplorer, HardwareStats, MachinePicker, PhoneWidget, NotificationCenter,
+  NotificationCard, NotesWidget, MusicPlayerWidget, Metronome, Tuner, AudioRecorder,
+  ChromaGraph, MiniGraph, GestureControls, Settings, DeviceSettings,
+  WifiSettings, BluetoothMenu, GlassButton, FocusRing, NixIcon
+auth/                The card shared by the lock and login screens
+lock/                Lock screen surfaces (music, stats)
+greeter/             Login screen surface
 i18n/                One dictionary per language (en.json, fr.json…)
 anna/                Single Rust daemon (see Backend)
-assets/              nixos.svg
+tests/               QML tests and contract checks (see Development)
+assets/              Phosphor icons (icons/phosphor.list, icons/sync.sh), nixos.svg
 ```
 
 Per layer: [the shell](#shell), [the panels](#panels),
-[the widgets](#widgets), [the AI cluster](#ai), [the backend](#backend),
+[the widgets](#widgets), [search](#search), [the lock & login
+screens](#lock-greeter), [the AI cluster](#ai), [the backend](#backend),
 [the languages](#languages).
+
+## Services
+
+The singletons of `services/` that are not a search source (those are on
+the [Search](#search) page):
+
+| Service | Role |
+| --- | --- |
+| `Theme.qml` | Colors and fonts, from anna (see [Theme](#theme)). |
+| `I18n.qml` | `I18n.tr("key")`, the dictionaries of `i18n/` (see [Languages](#languages)). |
+| `Widgets.qml` | Which widgets are open, and where; the machine picked for the Explorer and System tabs. |
+| `Display.qml` | Which screen carries the interface. A screen is known by its **model**, not its connector (the same monitor is DP-4 on one machine and DP-3 on another). Fallbacks: the user's choice if plugged, else the default connector, else the first screen. The main workspaces (1–5) follow it, and are re-attached after every `hyprctl reload`. |
+| `Audio.qml` | The default output's volume, live from PipeWire (capped at 100 %: above, PipeWire amplifies in software and saturates). |
+| `Brightness.qml` | The laptop backlight (`brightnessctl`), re-read on every udev event — keys, anna or the shell — without polling. |
+| `Battery.qml` | UPower over D-Bus, no polling. On battery, warns once at a low level and once at a critical one (desktop notification); plugging in re-arms them. Created at startup, so it watches even with nothing open. |
+| `Notifications.qml` | The desktop notification server (notify-send, the browser, grimblast, the phone through kdeconnectd…). |
+| `Anna.qml` | Where to reach the anna socket (`$XDG_RUNTIME_DIR`), in one place. |
+| `Pilot.qml` | The pilot and the voice as anna runs them: what the conversation bar sends and shows (see [AI cluster](#ai)). |
+| `Gesture.qml` | The gesture control state, from anna. |
+| `CursorProbe.qml` | The cursor position, asked on Hyprland's request socket (the answer of `hyprctl -j cursorpos`, without a process): a layer surface only sees the cursor when it hovers it. |
+| `DefaultApps.qml` | The editor, file manager and terminal used to open a file, resolved from the system's settings (`xdg-mime`, `$TERMINAL`…), never hard-coded. |
+| `Tuning.qml` | The tuner's reference A, persisted in `tuner.json`. |
+| `Recorder.qml` | The microphone and screen recordings, as anna runs them (`record_watch`): what the Music tab and the top bar show and send. |
+| `DragState.qml` | A drag in progress (from the explorer): it necessarily takes the cursor out of the conversation bar, which would close it and destroy the source tile mid-gesture — this flag holds the closing back while dragging. |
 
 ## QML conventions
 
@@ -43,20 +78,9 @@ Per layer: [the shell](#shell), [the panels](#panels),
 
 Work that is plainly shell work lives in `.sh` files next to the QML that
 runs them, not in an escaped JavaScript string — an awk program in quotes
-inside a QML string is neither readable nor testable. The current one feeds
-the bar's search and the [AI dock](#ai)'s history:
-
-| Script | Role |
-| --- | --- |
-| `services/claude-index.sh` | The index of the machine's Claude conversations, one TSV line per session. |
-
-The indexer only reads both ends of each JSONL and runs in four processes
-whatever the number of sessions — the naive version, a handful of
-`grep`/`jq` per file, took 3 s where this one takes 50 ms. The cost is the
-forks, not the disk.
-
-The QML finds it through `Qt.resolvedUrl`, so it follows the installation
-like the rest of the layout.
+inside a QML string is neither readable nor testable. The QML finds such a
+script through `Qt.resolvedUrl`, so it follows the installation like the
+rest of the layout.
 
 ## Relocatable by design
 

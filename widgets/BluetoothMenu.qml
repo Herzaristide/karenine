@@ -198,10 +198,10 @@ Rectangle {
 
     implicitWidth: 320
     implicitHeight: column.implicitHeight + 16
-    radius: 18
-    color: Qt.alpha(Theme.bgDeep, 0.94)
+    radius: Theme.radius
+    color: Theme.bgElevated
     border.width: 1
-    border.color: Qt.alpha(Theme.textPrimary, 0.1)
+    border.color: Theme.dividerColor
 
     // Les clics sur le menu ne traversent pas jusqu'au widget dessous.
     MouseArea {
@@ -268,7 +268,7 @@ Rectangle {
                     width: 14
                     height: 14
                     radius: 7
-                    color: "#ffffff"
+                    color: menu.powered ? Theme.bgDeep : Theme.textPrimary
                 }
                 MouseArea {
                     id: toggleMa
@@ -320,7 +320,7 @@ Rectangle {
 
                 width: list.width
                 height: 42
-                radius: 12
+                radius: Theme.radiusSmall
                 color: row.dev.connected ? Qt.alpha(Theme.accentColor, row.hovered ? 0.22 : 0.15)
                                          : Qt.alpha(Theme.textPrimary, row.hovered ? 0.08 : 0)
                 Behavior on color { ColorAnimation { duration: 160 } }
@@ -386,10 +386,10 @@ Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
                     width: segments.width + 4
                     height: 26
-                    radius: height / 2
+                    radius: Theme.radiusSmall
                     color: Qt.alpha(Theme.textPrimary, 0.06)
                     border.width: 1
-                    border.color: Qt.alpha(Theme.textPrimary, 0.1)
+                    border.color: Theme.dividerColor
 
                     Row {
                         id: segments
@@ -407,7 +407,7 @@ Rectangle {
 
                                 width: segLabel.implicitWidth + 18
                                 height: 22
-                                radius: height / 2
+                                radius: 6
                                 color: seg.active ? Qt.alpha(Theme.accentColor, 0.35)
                                                   : Qt.alpha(Theme.textPrimary, seg.hovered ? 0.08 : 0)
                                 Behavior on color { ColorAnimation { duration: 160 } }

@@ -12,9 +12,31 @@
 //!   anna notes copy <id>             → back to the clipboard
 //!   anna notes delete <id>
 //!
+//! The wallpaper blackboard (panels/Blackboard.qml) shows the notes that have
+//! a place on it, and the chalk strokes drawn around them:
+//!
+//!   anna notes add --at <x>,<y> [--on <screen>] <text>
+//!                                       → a new note, already on the board
+//!   anna notes place <id> <x> <y> [<screen>]
+//!                                       → on the board (or moved there)
+//!   anna notes unplace <id>             → off the board, still a note
+//!   anna notes board [list]             → {"ok":true,"strokes":[Stroke…]}
+//!   anna notes board draw <json>        → one stroke, or an array of them
+//!   anna notes board erase <id>…        → {"ok":true,"strokes":[erased…]}
+//!   anna notes board clear [<screen>]   → {"ok":true,"strokes":[erased…]}
+//!
+//! Positions are fractions of the screen (0 to 1), so a board survives a
+//! change of resolution. Erasing returns what it removed: drawing it again is
+//! the shell's « undo ».
+//!
+//! Every screen has its own board. A note's `screen` (and a stroke's) is the
+//! key the shell gives that screen (services/Display.qml: its model, else its
+//! connector); "" is the interface screen, where everything drawn before
+//! there were several boards stays.
+//!
 //! Everything lives in `$XDG_DATA_HOME/anna/notes` (`~/.local/share/…`):
-//! `notes.json`, and one file per pasted image, named after its note. The
-//! list is rewritten whole (a temporary file, then renamed): a crash never
+//! `notes.json`, `board.json` (the strokes), and one file per pasted image,
+//! named after its note. Each list is rewritten whole (a temporary file, then renamed): a crash never
 //! leaves half of it.
 //!
 //! The daemon also turns every screenshot into an image note
@@ -42,6 +64,33 @@ pub struct Note {
     /// Unix seconds.
     pub created: u64,
     pub updated: u64,
+    /// Its place on the blackboard, None when it is only in the tab.
+    pub board: Option<Spot>,
+    /// The screen whose board holds it, "" for the interface screen.
+    pub screen: String,
+}
+
+/// A point of the blackboard, as fractions of its width and height.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+pub struct Spot {
+    pub x: f64,
+    pub y: f64,
+}
+
+impl Spot {
+    /// A spot inside the board, or None for anything that is not a number.
+    pub fn new(x: f64, y: f64) -> Option<Spot> {
+        (x.is_finite() && y.is_finite()).then(|| Spot {
+            x: x.clamp(0.0, 1.0),
+            y: y.clamp(0.0, 1.0),
+        })
+    }
+
+    /// `0.25,0.4`, as `--at` takes it.
+    fn parse(text: &str) -> Option<Spot> {
+        let (x, y) = text.split_once(',')?;
+        Spot::new(x.trim().parse().ok()?, y.trim().parse().ok()?)
+    }
 }
 
 pub fn dir() -> PathBuf {
@@ -166,6 +215,26 @@ impl Store {
     pub fn pin(&mut self, id: &str) -> Result<Note, String> {
         let note = self.find(id)?;
         note.pinned = !note.pinned;
+        let note = note.clone();
+        self.save()?;
+        Ok(note)
+    }
+
+    /// On the board, or moved there. Not « updated »: moving a note does not
+    /// bring it to the top of the tab.
+    pub fn place(&mut self, id: &str, spot: Spot, screen: &str) -> Result<Note, String> {
+        let note = self.find(id)?;
+        note.board = Some(spot);
+        note.screen = screen.to_string();
+        let note = note.clone();
+        self.save()?;
+        Ok(note)
+    }
+
+    pub fn unplace(&mut self, id: &str) -> Result<Note, String> {
+        let note = self.find(id)?;
+        note.board = None;
+        note.screen.clear();
         let note = note.clone();
         self.save()?;
         Ok(note)
@@ -420,21 +489,9 @@ fn shot_places() -> Vec<(PathBuf, &'static str)> {
     ]
 }
 
-/// `XDG_PICTURES_DIR` from `~/.config/user-dirs.dirs`, else `~/Pictures`.
+/// `XDG_PICTURES_DIR`, else `~/Pictures`.
 fn pictures_dir() -> PathBuf {
-    let home = crate::paths::home_dir();
-    std::fs::read_to_string(home.join(".config/user-dirs.dirs"))
-        .ok()
-        .and_then(|text| {
-            text.lines()
-                .find_map(|l| l.trim().strip_prefix("XDG_PICTURES_DIR="))
-                .map(|v| {
-                    v.trim_matches('"')
-                        .replace("$HOME", &home.to_string_lossy())
-                })
-        })
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join("Pictures"))
+    crate::paths::user_dir("PICTURES", "Pictures")
 }
 
 /// Is this file a screenshot of ours, by its name?
@@ -512,6 +569,184 @@ fn fresh_shots(places: &[(PathBuf, &'static str)], start: SystemTime) -> Vec<(Pa
     out
 }
 
+// ── The blackboard's strokes ────────────────────────────────────────────────
+
+/// One line of chalk: its points as fractions of the board.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct Stroke {
+    pub id: String,
+    /// "chalk" (the text color) or "accent".
+    pub ink: String,
+    /// In logical pixels.
+    pub width: f64,
+    pub points: Vec<[f64; 2]>,
+    /// The screen whose board holds it, "" for the interface screen.
+    pub screen: String,
+}
+
+/// The inks a stroke may use; the shell picks the colors.
+const INKS: [&str; 2] = ["chalk", "accent"];
+/// A stroke longer than this is a bug of the caller, not a drawing.
+const MAX_POINTS: usize = 20_000;
+
+pub struct Board {
+    dir: PathBuf,
+    pub strokes: Vec<Stroke>,
+}
+
+impl Board {
+    pub fn open(dir: &Path) -> Board {
+        let strokes = std::fs::read_to_string(dir.join("board.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default();
+        Board {
+            dir: dir.to_path_buf(),
+            strokes,
+        }
+    }
+
+    fn save(&self) -> Result<(), String> {
+        std::fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
+        let tmp = self.dir.join("board.json.tmp");
+        let text = serde_json::to_string(&self.strokes).map_err(|e| e.to_string())?;
+        std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, self.dir.join("board.json")).map_err(|e| e.to_string())
+    }
+
+    /// Strokes drawn, or drawn again by an undo: a stroke keeps its id when
+    /// it is free, so that the next undo still finds it. All or nothing: one
+    /// bad stroke and none is kept.
+    pub fn draw(&mut self, strokes: Vec<Stroke>) -> Result<Vec<Stroke>, String> {
+        let bad = || crate::i18n::tr("notes.bad_stroke");
+        let mut added: Vec<Stroke> = Vec::with_capacity(strokes.len());
+        for mut s in strokes {
+            if !INKS.contains(&s.ink.as_str())
+                || s.points.is_empty()
+                || s.points.len() > MAX_POINTS
+                || !s.width.is_finite()
+            {
+                return Err(bad());
+            }
+            s.width = s.width.clamp(0.5, 200.0);
+            for p in &mut s.points {
+                let spot = Spot::new(p[0], p[1]).ok_or_else(bad)?;
+                *p = [spot.x, spot.y];
+            }
+            if s.id.is_empty() || self.taken(&s.id, &added) {
+                s.id = self.new_id(&added);
+            }
+            added.push(s);
+        }
+        self.strokes.extend(added.iter().cloned());
+        self.save()?;
+        Ok(added)
+    }
+
+    /// The strokes removed, in their order. An unknown id is not an error:
+    /// that stroke is already gone.
+    pub fn erase(&mut self, ids: &[String]) -> Result<Vec<Stroke>, String> {
+        let (gone, kept) = std::mem::take(&mut self.strokes)
+            .into_iter()
+            .partition(|s| ids.contains(&s.id));
+        self.strokes = kept;
+        self.save()?;
+        Ok(gone)
+    }
+
+    /// Every stroke, or only those of one screen's board.
+    pub fn clear(&mut self, screen: Option<&str>) -> Result<Vec<Stroke>, String> {
+        let (gone, kept) = std::mem::take(&mut self.strokes)
+            .into_iter()
+            .partition(|s| screen.is_none_or(|k| s.screen == k));
+        self.strokes = kept;
+        self.save()?;
+        Ok(gone)
+    }
+
+    fn taken(&self, id: &str, pending: &[Stroke]) -> bool {
+        self.strokes.iter().chain(pending).any(|s| s.id == id)
+    }
+
+    /// Like the notes' ids, prefixed with `s` so the two never meet.
+    fn new_id(&self, pending: &[Stroke]) -> String {
+        let mut n = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        while self.taken(&format!("s{n:x}"), pending) {
+            n += 1;
+        }
+        format!("s{n:x}")
+    }
+}
+
+/// `draw`'s argument: one stroke, or an array of them.
+fn parse_strokes(text: &str) -> Result<Vec<Stroke>, String> {
+    let bad = |_| crate::i18n::tr("notes.bad_stroke");
+    let value: serde_json::Value = serde_json::from_str(text).map_err(bad)?;
+    let value = if value.is_array() {
+        value
+    } else {
+        json!([value])
+    };
+    serde_json::from_value(value).map_err(bad)
+}
+
+fn board_run(args: &[String]) -> Result<serde_json::Value, String> {
+    let mut board = Board::open(&dir());
+    let rest = &args[1.min(args.len())..];
+    let strokes = |r: Result<Vec<Stroke>, String>| r.map(|s| json!({ "ok": true, "strokes": s }));
+    match args.first().map(String::as_str).unwrap_or("") {
+        "" | "list" => Ok(json!({ "ok": true, "strokes": board.strokes })),
+        "draw" => strokes(parse_strokes(&rest.join(" ")).and_then(|s| board.draw(s))),
+        "erase" => strokes(board.erase(rest)),
+        "clear" => strokes(board.clear(rest.first().map(String::as_str))),
+        other => Err(format!("notes board : action inconnue « {other} »")),
+    }
+}
+
+/// `add`'s arguments: `--at x,y` first when given, then `--on <screen>` when
+/// given, then the text. The spot is None when absent, Some(None) when it
+/// does not parse; the screen "" when absent.
+fn add_args(args: &[String]) -> (Option<Option<Spot>>, String, String) {
+    let (at, args) = match args {
+        [flag, at, rest @ ..] if flag == "--at" => (Some(Spot::parse(at)), rest),
+        _ => (None, args),
+    };
+    match args {
+        [flag, screen, rest @ ..] if flag == "--on" => (at, screen.clone(), rest.join(" ")),
+        _ => (at, String::new(), args.join(" ")),
+    }
+}
+
+fn add(store: &mut Store, args: &[String]) -> Result<Note, String> {
+    let (at, screen, text) = add_args(args);
+    let spot = match at {
+        None => None,
+        Some(None) => return Err(crate::i18n::tr("notes.bad_position")),
+        Some(spot) => spot,
+    };
+    let note = store.add_text(&text)?;
+    match spot {
+        Some(spot) => store.place(&note.id, spot, &screen),
+        None => Ok(note),
+    }
+}
+
+fn place(store: &mut Store, id: &str, x: &str, y: &str, screen: &str) -> Result<Note, String> {
+    let spot = match (x.parse(), y.parse()) {
+        (Ok(x), Ok(y)) => Spot::new(x, y),
+        _ => None,
+    };
+    store.place(
+        id,
+        spot.ok_or_else(|| crate::i18n::tr("notes.bad_position"))?,
+        screen,
+    )
+}
+
 // ── The command line ────────────────────────────────────────────────────────
 
 /// `anna notes …`: one JSON line on stdout, whatever happens.
@@ -521,10 +756,13 @@ pub fn run(args: &[String]) {
     let note = |r: Result<Note, String>| r.map(|n| json!({ "ok": true, "note": n }));
     let result = match arg(2) {
         "" | "list" => Ok(json!({ "ok": true, "notes": store.sorted() })),
-        "add" => note(store.add_text(&args[3.min(args.len())..].join(" "))),
+        "add" => note(add(&mut store, &args[3.min(args.len())..])),
         "paste" => note(paste(&mut store)),
         "edit" => note(store.edit(arg(3), &args[4.min(args.len())..].join(" "))),
         "pin" => note(store.pin(arg(3))),
+        "place" => note(place(&mut store, arg(3), arg(4), arg(5), arg(6))),
+        "unplace" => note(store.unplace(arg(3))),
+        "board" => board_run(&args[3.min(args.len())..]),
         "copy" => copy(&mut store, arg(3)).map(|_| json!({ "ok": true })),
         "delete" => store.delete(arg(3)).map(|_| json!({ "ok": true })),
         other => Err(format!("notes : action inconnue « {other} »")),
@@ -664,6 +902,155 @@ mod tests {
         );
         assert_eq!(summary(&s.sorted(), "piano"), "aucune note ne correspond");
         let _ = std::fs::remove_dir_all(&s.dir);
+    }
+
+    fn strings(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn stroke(id: &str, points: &[[f64; 2]]) -> Stroke {
+        Stroke {
+            id: id.into(),
+            ink: "chalk".into(),
+            width: 3.0,
+            points: points.to_vec(),
+            screen: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_note_goes_on_the_board_and_off_it() {
+        let mut s = temp_store("place");
+        let n = add(&mut s, &strings(&["--at", "0.25,1.5", "au", "tableau"])).unwrap();
+        assert_eq!(n.text, "au tableau");
+        // Clamped to the board.
+        assert_eq!(n.board, Some(Spot { x: 0.25, y: 1.0 }));
+        let moved = place(&mut s, &n.id, "0.5", "0.1", "").unwrap();
+        assert_eq!(moved.board, Some(Spot { x: 0.5, y: 0.1 }));
+        // Moving it does not bring it to the top of the tab.
+        assert_eq!(moved.updated, n.updated);
+        assert!(place(&mut s, &n.id, "x", "0.1", "").is_err());
+        assert!(add(&mut s, &strings(&["--at", "nan,0", "x"])).is_err());
+        let s2 = Store::open(&s.dir);
+        assert_eq!(s2.notes[0].board, Some(Spot { x: 0.5, y: 0.1 }));
+        assert_eq!(s.unplace(&n.id).unwrap().board, None);
+        // Without --at, a note of the tab only.
+        assert_eq!(add(&mut s, &strings(&["juste", "là"])).unwrap().board, None);
+        let _ = std::fs::remove_dir_all(&s.dir);
+    }
+
+    #[test]
+    fn each_screen_has_its_own_board() {
+        let mut s = temp_store("screens");
+        let n = add(
+            &mut s,
+            &strings(&["--at", "0.1,0.2", "--on", "LG ULTRAGEAR", "à", "droite"]),
+        )
+        .unwrap();
+        assert_eq!(n.text, "à droite");
+        assert_eq!(n.screen, "LG ULTRAGEAR");
+        // Moved to another screen, then back to the interface screen.
+        assert_eq!(
+            place(&mut s, &n.id, "0.5", "0.5", "eDP-1").unwrap().screen,
+            "eDP-1"
+        );
+        assert_eq!(place(&mut s, &n.id, "0.5", "0.5", "").unwrap().screen, "");
+        // Off the board, it belongs to no screen.
+        place(&mut s, &n.id, "0.5", "0.5", "eDP-1").unwrap();
+        assert_eq!(s.unplace(&n.id).unwrap().screen, "");
+        // Without --on: the interface screen.
+        let m = add(&mut s, &strings(&["--at", "0,0", "ici"])).unwrap();
+        assert_eq!((m.screen.as_str(), m.text.as_str()), ("", "ici"));
+        let _ = std::fs::remove_dir_all(&s.dir);
+
+        let dir = std::env::temp_dir().join(format!("anna-board-screens-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut b = Board::open(&dir);
+        let mut there = stroke("", &[[0.3, 0.3]]);
+        there.screen = "eDP-1".into();
+        b.draw(vec![stroke("", &[[0.1, 0.1]]), there]).unwrap();
+        assert_eq!(Board::open(&dir).strokes[1].screen, "eDP-1");
+        // Clearing one board leaves the others.
+        let gone = b.clear(Some("eDP-1")).unwrap();
+        assert_eq!(gone.len(), 1);
+        assert_eq!(gone[0].screen, "eDP-1");
+        assert_eq!(b.strokes.len(), 1);
+        assert_eq!(b.strokes[0].screen, "");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn notes_saved_before_the_board_still_load() {
+        let s = temp_store("preboard");
+        std::fs::create_dir_all(&s.dir).unwrap();
+        std::fs::write(
+            s.dir.join("notes.json"),
+            r#"[{"id":"1","text":"x","image":"","pinned":false,"created":1,"updated":1}]"#,
+        )
+        .unwrap();
+        let s = Store::open(&s.dir);
+        assert_eq!(s.notes.len(), 1);
+        assert_eq!(s.notes[0].board, None);
+        let _ = std::fs::remove_dir_all(&s.dir);
+    }
+
+    #[test]
+    fn strokes_are_drawn_erased_and_drawn_again() {
+        let dir = std::env::temp_dir().join(format!("anna-board-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut b = Board::open(&dir);
+        let drawn = b
+            .draw(vec![
+                stroke("", &[[0.1, 0.1], [2.0, -1.0]]),
+                stroke("", &[[0.5, 0.5]]),
+            ])
+            .unwrap();
+        assert_eq!(drawn.len(), 2);
+        assert_ne!(drawn[0].id, drawn[1].id);
+        assert!(drawn[0].id.starts_with('s'));
+        assert_eq!(drawn[0].points[1], [1.0, 0.0]);
+
+        let gone = b.erase(&[drawn[0].id.clone(), "inconnu".into()]).unwrap();
+        assert_eq!(gone, vec![drawn[0].clone()]);
+        assert_eq!(Board::open(&dir).strokes, vec![drawn[1].clone()]);
+
+        // Undo: drawn again, under the same id.
+        let back = b.draw(gone).unwrap();
+        assert_eq!(back[0].id, drawn[0].id);
+        // An id already on the board is not reused.
+        let twin = b.draw(vec![stroke(&drawn[1].id, &[[0.0, 0.0]])]).unwrap();
+        assert_ne!(twin[0].id, drawn[1].id);
+
+        let cleared = b.clear(None).unwrap();
+        assert_eq!(cleared.len(), 3);
+        assert!(Board::open(&dir).strokes.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_bad_stroke_draws_nothing() {
+        let dir = std::env::temp_dir().join(format!("anna-board-bad-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut b = Board::open(&dir);
+        let mut odd = stroke("", &[[0.1, 0.1]]);
+        odd.ink = "red".into();
+        assert!(b.draw(vec![stroke("", &[[0.2, 0.2]]), odd]).is_err());
+        assert!(b.draw(vec![stroke("", &[])]).is_err());
+        assert!(b.draw(vec![stroke("", &[[f64::NAN, 0.0]])]).is_err());
+        assert!(b.strokes.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn draw_takes_one_stroke_or_many() {
+        let one = parse_strokes(r#"{"ink":"accent","width":4,"points":[[0.1,0.2]]}"#).unwrap();
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].ink, "accent");
+        let many =
+            parse_strokes(r#"[{"ink":"chalk","points":[[0,0]]},{"ink":"chalk","points":[[1,1]]}]"#)
+                .unwrap();
+        assert_eq!(many.len(), 2);
+        assert!(parse_strokes("pas du json").is_err());
     }
 
     #[test]

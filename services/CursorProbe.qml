@@ -5,7 +5,7 @@ import Quickshell.Io
 // La position du curseur, demandée à Hyprland sur son socket de requêtes :
 // la même réponse que `hyprctl -j cursorpos`, sans lancer de processus. Une
 // surface layer ne voit le curseur que quand il la survole ; ailleurs, c'est
-// ici qu'on le lit (la barre de conversation, le dock IA).
+// ici qu'on le lit (la barre de conversation).
 //
 //   probe()  →  measured(x, y), en coordonnées logiques comme celles des écrans
 //

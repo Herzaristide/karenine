@@ -2,7 +2,7 @@ import QtQuick
 import QtTest
 import "pure"  // monté par tests/run.sh
 
-// Score de la recherche du dock (services/Fuzzy.qml) : l'ordre des paliers
+// Score de la recherche de la barre (services/Fuzzy.qml) : l'ordre des paliers
 // décide de ce qui remonte en tête, c'est lui qu'on fige ici.
 TestCase {
     name: "Fuzzy"

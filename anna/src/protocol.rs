@@ -89,6 +89,26 @@ pub enum Command {
     /// events, driving a sample-accurate cpal output stream.
     Metronome,
 
+    // ── recording (recorder.rs) ───────────────────────────────────────────
+    /// Start a recording, or stop the one of that kind: `kind` "audio"
+    /// (`mode` "mic", the default, or "mix": with the computer's sound) or
+    /// "screen" (`mode` "area", the default, or "screen": the focused
+    /// monitor). `{"ok":true}` once started; picking a region waits for it.
+    RecordToggle {
+        kind: String,
+        #[serde(default)]
+        mode: String,
+    },
+    /// Stop the recording of `kind`, or every one without it.
+    RecordStop {
+        #[serde(default)]
+        kind: Option<String>,
+    },
+    /// Print the status once (recorder.rs).
+    RecordGet,
+    /// Keep connection open; daemon pushes the status on every change.
+    RecordWatch,
+
     // ── gesture control (webcam) ──────────────────────────────────────────
     /// Print the gesture status once: `{"enabled","active","mode","fps","error"}`.
     GestureGet,
@@ -108,100 +128,6 @@ pub enum Command {
     /// (mode, fps once per second, enable/disable, errors).
     GestureWatch,
 
-    // ── Claude Code sessions (see claude/mod.rs) ──────────────────────────
-    /// Sent by `anna hook`: one trimmed lifecycle event of a `claude`
-    /// process. Answered with `{"ok":true}`.
-    ClaudeHook {
-        pid: Option<u32>,
-        event: crate::claude::HookEvent,
-    },
-    /// The live sessions, once: `[{id, project, cwd, state, since, …}, …]`.
-    ClaudeList,
-    /// Keep connection open; daemon pushes `{"sessions":[…]}` on every
-    /// change.
-    ClaudeWatch,
-    /// Focus the window hosting a session: `{"ok":true}` or
-    /// `{"ok":false,"error":"…"}`.
-    ClaudeFocus {
-        id: String,
-    },
-    /// Answer an open permission request of the pilot, from the dock
-    /// (see claude/permission.rs). `decision` is
-    /// "allow", "always", "deny" or "terminal". `{"ok":true}`, or
-    /// `{"ok":false}` when the request is already over.
-    ClaudeDecide {
-        request: u64,
-        decision: String,
-    },
-
-    // ── AI dock: sessions run by anna (claude/runner.rs) ─────────────────
-    /// Start a session in `cwd` — in its own worktree when `worktree` — or
-    /// `resume` one there; `prompt` is its first message.
-    /// `{"ok":true,"id":"…"}` or `{"ok":false,"error":"…"}`.
-    ClaudeStart {
-        cwd: String,
-        prompt: String,
-        #[serde(default)]
-        worktree: bool,
-        #[serde(default)]
-        resume: Option<String>,
-    },
-    /// Send a message to a session: written to it if anna runs it, otherwise
-    /// it is resumed in `cwd` with that message.
-    ClaudeSend {
-        id: String,
-        text: String,
-        #[serde(default)]
-        cwd: String,
-    },
-    /// Stop a session anna runs.
-    ClaudeStop {
-        id: String,
-    },
-    /// Keep connection open; daemon pushes `{"reset":[messages]}` with the
-    /// end of the transcript, then `{"append":[messages]}` as it grows.
-    /// A message is `{"role":"user"|"assistant"|"tool","text":"…"}`.
-    ClaudeTranscript {
-        path: String,
-    },
-    /// Where a new session can start: `[{name, path, kind}, …]`.
-    ClaudeProjects,
-    /// What a worktree session changed (claude/worktree.rs).
-    ClaudeReview {
-        cwd: String,
-    },
-    /// Act on a worktree session's work: `action` is "commit" (with
-    /// `message`), "merge" or "discard". Refused while session `id` runs.
-    ClaudeWorktree {
-        cwd: String,
-        action: String,
-        #[serde(default)]
-        message: String,
-        #[serde(default)]
-        id: String,
-    },
-    /// Open a session in "zed" or in a "terminal" (`claude --resume`).
-    ClaudeOpen {
-        cwd: String,
-        app: String,
-        #[serde(default)]
-        id: String,
-    },
-
-    // ── Knowledge: the Obsidian vault (claude/knowledge.rs) ───────────────
-    /// Every note, newest first: `[{path, title, kind, sujets, statut, date,
-    /// revu, projet, session, excerpt, mtime}, …]`. Also (re)links the
-    /// vault's skills into ~/.claude/skills.
-    KnowledgeList,
-    /// A note's body (front matter stripped): `{"ok":true,"text":"…"}`.
-    KnowledgeRead {
-        path: String,
-    },
-    /// Mark a note as read: `statut: relu`, `revu: <today>`.
-    KnowledgeReviewed {
-        path: String,
-    },
-
     // ── Pilot (claude/pilot.rs, claude/desk.rs) ───────────────────────────
     /// Send a request to the pilot; `clipboard` joins the clipboard's text.
     /// `{"ok":true}` once sent — the answer arrives on `pilot_watch`.
@@ -219,16 +145,11 @@ pub enum Command {
     // ── Voice (claude/voice.rs) ───────────────────────────────────────────
     /// Start listening, or end the recording now if already listening.
     /// `send` (default true): hand the transcript to the pilot; false only
-    /// shows it (the dock puts it in its input field).
+    /// shows it (`anna voice dictate`).
     VoiceToggle {
         #[serde(default = "yes")]
         send: bool,
     },
-    /// Push-to-talk: record until `voice_release`, silences included; the
-    /// transcript is only shown (the dock's held Space).
-    VoiceHold,
-    /// End a push-to-talk recording.
-    VoiceRelease,
     /// The wake word « Karénine » (claude/wake.rs): `on` turns it on or
     /// off, absent toggles it. Remembered across restarts.
     VoiceWake {
@@ -237,18 +158,32 @@ pub enum Command {
     },
     /// Keep connection open; daemon pushes `{"voice":{"phase":"idle"|
     /// "listening"|"transcribing","level":0–1,"text":"…","partial":bool,
-    /// "send":bool,"error":"…"}}` — `text` follows the voice while
-    /// `partial`.
+    /// "send":bool,"error":"…","speech":{"mode":"off"|"voice"|"always",
+    /// "voice":"<id>","voices":[{"id","name"}…],"error":"…"}}}` — `text`
+    /// follows the voice while `partial`.
     VoiceWatch,
+    // ── Speech (claude/speech.rs) ─────────────────────────────────────────
+    /// When the pilot's answers are read aloud (`mode`: "off", "voice" —
+    /// spoken requests only — or "always") and with which Piper voice
+    /// (`voice`, an id from `voices`). Absent fields are kept; remembered.
+    SpeechSet {
+        #[serde(default)]
+        mode: Option<String>,
+        #[serde(default)]
+        voice: Option<String>,
+    },
+    /// Read a text aloud now, whatever the mode.
+    SpeechSay {
+        text: String,
+    },
+    /// Stop reading aloud.
+    SpeechStop,
     /// Play a 16-bit WAV through the listening loop as if said into the
     /// microphone (live transcript, end of speech, outcome).
     VoiceSimulate {
         path: String,
         #[serde(default)]
         send: bool,
-        /// Played as push-to-talk: ends on `voice_release`.
-        #[serde(default)]
-        hold: bool,
     },
     /// Transcribe a WAV file (16 kHz mono): `{"ok":true,"text":"…"}`.
     VoiceTranscribe {

@@ -12,23 +12,23 @@ QtObject {
     // FileView watches it for changes and triggers a full re-parse.
     //
     // Fallbacks (used before first file load or if the daemon is not running)
-    // match the daemon's embedded NixOS blue accent so the UI is never blank.
+    // match the daemon's embedded palette (Ajar's ink and copper) so the UI is never blank.
     property var _state: ({
-        "accent":       "#5277c3",
-        "accent_dark":  "#2d4370",
-        "accent_muted": "#6a87cc",
-        "accent_rgb":   "82,119,195",
-        "accent_ansi":  "38;2;82;119;195",
+        "accent":       "#d4a35f",
+        "accent_dark":  "#765b35",
+        "accent_muted": "#e1bd8a",
+        "accent_rgb":   "212,163,95",
+        "accent_ansi":  "38;2;212;163;95",
         "mode":         "dark",
         "palette": {
-            "base00": "#0d0d0d", "base01": "#1a1a1a",
-            "base02": "#2a2a2a", "base03": "#5a6080",
-            "base04": "#8a90b0", "base05": "#e0e0ff",
-            "base06": "#f0f0ff", "base07": "#ffffff",
-            "base08": "#cc4444", "base09": "#cc8844",
-            "base0a": "#ccaa44", "base0b": "#44aa88",
-            "base0c": "#7ebae4", "base0d": "#5277c3",
-            "base0e": "#4488cc", "base0f": "#cc5566"
+            "base00": "#1b1a18", "base01": "#262421",
+            "base02": "#34312d", "base03": "#6b645a",
+            "base04": "#9a9286", "base05": "#d9d2c5",
+            "base06": "#e6e0d4", "base07": "#f2ede4",
+            "base08": "#c46a5a", "base09": "#c98a4b",
+            "base0a": "#c9a95c", "base0b": "#8fa876",
+            "base0c": "#7fa6a0", "base0d": "#d4a35f",
+            "base0e": "#8c9bb5", "base0f": "#b57a8a"
         }
     })
 
@@ -53,58 +53,120 @@ QtObject {
         } catch (e) { /* keep current _state if JSON is incomplete */ }
     }
 
+    // ── Les icônes ─────────────────────────────────────────────────────────
+    // anna recolore le thème d'icônes à l'accent (anna/src/icons.rs), mais Qt
+    // garde en cache, pour toute la vie du processus, chaque icône du thème
+    // déjà chargée : Quickshell.iconPath resterait sur l'ancien accent. anna
+    // publie donc la liste des icônes recolorées (nom → fichier) ; celles-là
+    // sont lues directement sur le disque, l'URL changeant avec l'accent
+    // (?rev=). Les autres, et tout le reste sans anna (greeter), passent par
+    // le thème comme avant.
+    property var _icons: ({ "rev": "", "root": "", "icons": {} })
+
+    property FileView _iconsFile: FileView {
+        path: Quickshell.env("XDG_RUNTIME_DIR") + "/anna-icons.json"
+        watchChanges: true
+        printErrors: false
+        onLoaded:      themeRoot._parseIcons()
+        onFileChanged: reload()
+    }
+
+    function _parseIcons() {
+        try {
+            var parsed = JSON.parse(_iconsFile.text())
+            if (parsed && parsed.icons && parsed.root)
+                themeRoot._icons = parsed
+        } catch (e) { /* fichier en cours d'écriture : on garde la liste */ }
+    }
+
+    // Même contrat que Quickshell.iconPath(name, check) : avec check, une
+    // icône introuvable donne "".
+    function icon(name, check) {
+        var icons = themeRoot._icons.icons
+        if (name && Object.prototype.hasOwnProperty.call(icons, name)) {
+            var path = themeRoot._icons.root + "/" + icons[name]
+            return "file://" + path.split("/").map(encodeURIComponent).join("/")
+                + "?rev=" + themeRoot._icons.rev
+        }
+        return Quickshell.iconPath(name, check)
+    }
+
     // ── Convenience accessors ──────────────────────────────────────────────
     readonly property bool   darkMode: _state.mode !== "light"
-    readonly property string accentHex: _state.accent || "#5277c3"
+    readonly property string accentHex: _state.accent || "#d4a35f"
 
     // ── Accent colors (read from daemon state, no local re-computation) ────
     readonly property color accentColor: accentHex
     readonly property color accentDark:  _state.accent_dark  || Qt.darker(accentColor, 1.8)
     readonly property color accentMuted: _state.accent_muted || accentColor
 
-    // L'accent vif de la barre de conversation, du dock IA et de la barre des
-    // sessions : la teinte de l'accent, saturée. `shift` la fait tourner (le
-    // halo irisé de la barre).
+    // L'accent tel quel, partout : le design est plat, sans halo irisé ni
+    // teinte dérivée. `shift` est ignoré (les anciens appels le passent encore).
     function glow(shift) {
-        var h = accentColor.hslHue >= 0 ? accentColor.hslHue : 0.6;
-        return Qt.hsla((h + (shift || 0) + 2) % 1, 0.9, 0.64, 1);
+        return accentColor;
     }
 
-    // ── Background surfaces (base00 / base01 from active palette) ─────────
-    readonly property color bgDeep:     _state.palette ? _state.palette.base00 : (darkMode ? "#0d0d0d" : "#f5f5ff")
-    readonly property color bgElevated: _state.palette ? _state.palette.base01 : (darkMode ? "#1a1a1a" : "#eaeaff")
-    readonly property color bgInput:    _state.palette ? _state.palette.base01 : (darkMode ? "#141414" : "#f8f8ff")
+    // ── La géométrie, commune à tout le shell ──────────────────────────────
+    // Celle d'Ajar : des cartes à 14 px, des lignes et boutons à 8 px.
+    readonly property int radius: 14
+    readonly property int radiusSmall: 8
+
+    // ── Les neutres : fond et texte ────────────────────────────────────────
+    // Lus dans la palette d'anna (réglables), ceux d'Ajar par défaut :
+    // l'encre en sombre, le papier en clair.
+    readonly property var _ink: ({
+        "base00": "#1b1a18", "base01": "#262421",
+        "base05": "#d9d2c5", "base04": "#9a9286", "base03": "#6b645a"
+    })
+    readonly property var _paper: ({
+        "base00": "#f5f0e6", "base01": "#ebe4d6",
+        "base05": "#2a2521", "base04": "#6e6457", "base03": "#a39887"
+    })
+    function _neutral(key) {
+        return (_state.palette && _state.palette[key]) || (darkMode ? _ink : _paper)[key];
+    }
+
+    // ── Background surfaces (base00 / base01) ──────────────────────────────
+    // Opaques : pas de verre ni de flou, le fond (l'encre ou le papier) et
+    // le panneau, un ton au-dessus.
+    readonly property color bgDeep:     _neutral("base00")
+    readonly property color bgElevated: _neutral("base01")
+    readonly property color bgInput:    _neutral("base01")
 
     // ── Dividers & overlays ────────────────────────────────────────────────
-    readonly property color dividerColor: darkMode ? Qt.rgba(1, 1, 1, 0.10) : Qt.rgba(0, 0, 0, 0.12)
-    readonly property color hoverOverlay: darkMode ? Qt.rgba(1, 1, 1, 0.05) : Qt.rgba(0, 0, 0, 0.05)
+    // Le filet d'Ajar : le texte à 8 %.
+    readonly property color dividerColor: Qt.alpha(textPrimary, 0.08)
+    readonly property color hoverOverlay: Qt.alpha(textPrimary, 0.05)
+    // Ce qui est retenu (onglet, ligne, lieu) : l'accent à 16 %, sans bordure.
+    readonly property color selectedFill: Qt.alpha(accentColor, 0.16)
 
     // ── Text hierarchy (base05 / base04 / base03) ──────────────────────────
-    readonly property color textPrimary:   _state.palette ? _state.palette.base05 : (darkMode ? "#e0e0ff" : "#1a1a3e")
-    readonly property color textSecondary: _state.palette ? _state.palette.base04 : (darkMode ? "#8a90b0" : "#555577")
-    readonly property color textDim:       _state.palette ? _state.palette.base03 : (darkMode ? "#5a6080" : "#888899")
-    readonly property color textInactive:  darkMode ? "#3e4060" : "#888888"
-    readonly property color textSubtle:    darkMode ? "#2e3050" : "#999999"
-    readonly property color textBody:      darkMode ? "#c8ccf0" : "#2a2a3e"
+    readonly property color textPrimary:   _neutral("base05")
+    readonly property color textSecondary: _neutral("base04")
+    readonly property color textDim:       _neutral("base03")
+    readonly property color textInactive:  Qt.alpha(textPrimary, 0.32)
+    readonly property color textSubtle:    Qt.alpha(textPrimary, 0.2)
+    readonly property color textBody:      textPrimary
 
     // ── Icons & interactive elements ───────────────────────────────────────
-    readonly property color iconColor:         _state.palette ? _state.palette.base07 : (darkMode ? "#FFFFFF" : "#222244")
-    readonly property color placeholderColor:  darkMode ? "#30FFFFFF" : "#50000000"
-    readonly property color selectedTextColor: darkMode ? "#000000"   : "#FFFFFF"
+    readonly property color iconColor:         textPrimary
+    readonly property color placeholderColor:  Qt.alpha(textPrimary, 0.32)
+    // Sur un aplat d'accent (bouton d'envoi, interrupteur) : la couleur du fond.
+    readonly property color selectedTextColor: bgDeep
 
     // Canvas notation staff (r,g,b string for use in rgba() calls)
-    readonly property string canvasLineRGB: darkMode ? "255,255,255" : "0,0,0"
+    readonly property string canvasLineRGB: darkMode ? "217,210,197" : "42,37,33"
 
     // ── Semantic status colors (base16 roles) ─────────────────────────────
     // base08=danger/red, base09=warning/orange, base0a=amber/yellow
     // base0b=success/green, base0c=cyan, base0e=alt-blue, base0f=coral
-    readonly property color colorDanger:  _state.palette ? _state.palette.base08 : "#cc4444"
-    readonly property color colorWarning: _state.palette ? _state.palette.base09 : "#cc8844"
-    readonly property color colorAmber:   _state.palette ? _state.palette.base0a : "#ccaa44"
-    readonly property color colorSuccess: _state.palette ? _state.palette.base0b : "#44aa88"
-    readonly property color colorCyan:    _state.palette ? _state.palette.base0c : "#7ebae4"
-    readonly property color colorAltBlue: _state.palette ? _state.palette.base0e : "#4488cc"
-    readonly property color colorCoral:   _state.palette ? _state.palette.base0f : "#cc5566"
+    readonly property color colorDanger:  _state.palette ? _state.palette.base08 : "#c46a5a"
+    readonly property color colorWarning: _state.palette ? _state.palette.base09 : "#c98a4b"
+    readonly property color colorAmber:   _state.palette ? _state.palette.base0a : "#c9a95c"
+    readonly property color colorSuccess: _state.palette ? _state.palette.base0b : "#8fa876"
+    readonly property color colorCyan:    _state.palette ? _state.palette.base0c : "#7fa6a0"
+    readonly property color colorAltBlue: _state.palette ? _state.palette.base0e : "#8c9bb5"
+    readonly property color colorCoral:   _state.palette ? _state.palette.base0f : "#b57a8a"
 
     // ── Chart series colors ───────────────────────────────────────────────
     // CPU series → accentColor, RAM → colorSuccess, GPU → colorCoral
@@ -112,12 +174,12 @@ QtObject {
     readonly property color colorGpu: colorCoral
     // Disk series — 6 slots cycling through distinct palette roles
     readonly property var diskSeriesColors: [
-        _state.palette ? _state.palette.base0e : "#4488cc",
-        _state.palette ? _state.palette.base09 : "#cc8844",
-        _state.palette ? _state.palette.base0b : "#44aa88",
-        _state.palette ? _state.palette.base0f : "#cc5566",
-        _state.palette ? _state.palette.base0a : "#ccaa44",
-        _state.palette ? _state.palette.base0c : "#7ebae4"
+        _state.palette ? _state.palette.base0e : "#8c9bb5",
+        _state.palette ? _state.palette.base09 : "#c98a4b",
+        _state.palette ? _state.palette.base0b : "#8fa876",
+        _state.palette ? _state.palette.base0f : "#b57a8a",
+        _state.palette ? _state.palette.base0a : "#c9a95c",
+        _state.palette ? _state.palette.base0c : "#7fa6a0"
     ]
 
     // ── Theme side-effects (GTK color-scheme) ──────────────────────────────
@@ -141,11 +203,11 @@ QtObject {
 
     // ── Preset palette ─────────────────────────────────────────────────────
     readonly property var presets: [
-        "#5277c3",  // NixOS blue (default)
-        "#7ebae4",  // NixOS light blue
-        "#44aa88",  // teal-green
-        "#cc5544",  // coral
-        "#ccaa44"   // amber
+        "#d4a35f",  // cuivre d'Ajar (default)
+        "#8fa876",  // sauge
+        "#7fa6a0",  // vert-de-gris
+        "#c46a5a",  // terre cuite
+        "#8c9bb5"   // ardoise
     ]
 
     // ── IPC with the anna daemon ───────────────────────────────────────────

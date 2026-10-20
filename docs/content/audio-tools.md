@@ -1,7 +1,7 @@
 ---
 title: Music tools
 group: Features
-summary: Tuner, metronome and chromagram — QML widgets + native audio services of the anna daemon.
+summary: Tuner, metronome, chromagram and recording — QML widgets + native audio services of the anna daemon.
 links: [widgets, backend, shell]
 ---
 
@@ -9,12 +9,15 @@ links: [widgets, backend, shell]
 
 karenine ships a small suite for music practice, each tool being a
 [widget](#widgets) backed by a native audio service of the
-[`anna`](#backend) daemon.
+[`anna`](#backend) daemon. The metronome and the tuner share the “Music”
+tab:
+
+![The Music tab: metronome above, tuner below](screenshots/music.webp)
 
 ## Tuner
 
-- Widget: `widgets/Tuner.qml` (**Pitch** panel, widget no. 3 through the
-  [IPC](#shell)).
+- Widget: `widgets/Tuner.qml` (the “Music” tab, `widget:musique` or
+  `widget:accordeur` through the [IPC](#shell)).
 - Backend: `anna`'s `tuner` service (`tuner_watch`) — pitch detection by FFT
   autocorrelation, one `{"pitch":<hz>}` line per frame.
 
@@ -29,6 +32,22 @@ karenine ships a small suite for music practice, each tool being a
 - Widget: `widgets/Metronome.qml`.
 - Backend: `anna`'s `metronome` service — sample-accurate `cpal` output
   stream, driven by `{"action":…}` lines, `{"beat":<n>}` events.
+
+## Recording
+
+- Sound: `widgets/AudioRecorder.qml`, under the tuner — the microphone alone
+  (« Mic ») or with what the computer plays (« Mic + computer », to play
+  over a track). FLAC in the Music folder.
+- Screen: the button next to the screenshot in the top bar
+  (`panels/HubTopBar.qml`) — click, a region; right click, the focused
+  monitor; with the computer's sound. MP4 in the Videos folder. The bar
+  hides first so it is not filmed.
+- Backend: `anna`'s `record` service (`anna/src/recorder.rs`), followed by
+  `services/Recorder.qml`. anna owns the recording, so it goes on when the
+  tab or the bar closes; while it runs, the button turns red and shows the
+  time elapsed, and a click stops it. The shortcuts (NixOS configuration)
+  run `anna record audio mic|mix`, `anna record screen area|screen` — the
+  same key starts and stops — and `anna record stop`.
 
 ## Common principle
 

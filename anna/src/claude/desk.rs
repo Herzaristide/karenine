@@ -2,9 +2,7 @@
 //! to Claude Code, and how anna carries each one out.
 //!
 //! Every call lands in the daemon (`desk` command), never in the MCP process:
-//! the daemon owns the sessions, the theme and the bar, and is the one place
-//! that asks the user before anything that can't be undone. The tools that
-//! do (`SENSITIVE`) wait for a yes in the dock (see permission.rs).
+//! the daemon owns the theme and the bar.
 //!
 //! Hyprland is driven through its Lua dispatchers — the only syntax its Lua
 //! configuration accepts (see gesture/output.rs). Only forms whose arguments
@@ -15,14 +13,11 @@ use serde_json::{json, Value};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-/// Tools that need the user's yes, every time.
-pub const SENSITIVE: [&str; 3] = ["fermer_fenetre", "commande", "reconstruire_nixos"];
-
 /// Longest output handed back to the model (characters).
 const OUTPUT_MAX: usize = 4000;
 
 /// The shell's widgets (services/Widgets.qml), plus « tout ».
-const WIDGETS: [&str; 12] = [
+const WIDGETS: [&str; 11] = [
     "explorer",
     "stats",
     "telephone",
@@ -33,7 +28,6 @@ const WIDGETS: [&str; 12] = [
     "son",
     "camera",
     "reglages",
-    "sessions",
     "tout",
 ];
 
@@ -62,7 +56,7 @@ pub fn tools() -> Value {
     let i = |d: &str| json!({ "type": "integer", "description": d });
     json!([
         tool("etat_bureau",
-            "L'état du bureau : fenêtre active, fenêtres ouvertes par workspace, volume, sessions Claude en cours.",
+            "L'état du bureau : fenêtre active, fenêtres ouvertes par workspace, volume.",
             json!({}), &[]),
         tool("aller_workspace", "Affiche le workspace demandé.",
             json!({ "numero": i("numéro du workspace (1 à 10)") }), &["numero"]),
@@ -74,7 +68,7 @@ pub fn tools() -> Value {
             json!({ "workspace": i("workspace de destination"), "cible": s("classe ou morceau de titre (facultatif)") }),
             &["workspace"]),
         tool("fermer_fenetre",
-            "Ferme une fenêtre : `cible` si donnée, sinon la fenêtre active. L'utilisateur confirme dans une bulle.",
+            "Ferme une fenêtre : `cible` si donnée, sinon la fenêtre active.",
             json!({ "cible": s("classe ou morceau de titre (facultatif)") }), &[]),
         tool("plein_ecran", "Bascule le plein écran de la fenêtre active.", json!({}), &[]),
         tool("volume",
@@ -99,14 +93,19 @@ pub fn tools() -> Value {
         tool("capture_ecran", "Fait une capture (copiée et enregistrée).",
             json!({ "zone": json!({ "type": "string", "enum": ["ecran", "selection", "fenetre"] }) }),
             &["zone"]),
-        tool("lancer_session",
-            "Confie une tâche de code ou de recherche à une session Claude Code complète, qui travaille en \
-             arrière-plan. `projet` : un dépôt de ~/ciph3r, « nixos », ou « recherche » (le coffre de notes). \
-             Dans un dépôt elle travaille dans une copie isolée, que l'utilisateur revoit avant de fusionner.",
-            json!({ "projet": s("nom du projet"), "demande": s("la tâche, formulée pour Claude Code"),
-                    "copie_isolee": json!({ "type": "boolean", "description": "défaut : vrai pour un dépôt" }) }),
-            &["projet", "demande"]),
-        tool("sessions", "Les sessions Claude Code en cours et leur état.", json!({}), &[]),
+        tool("enregistrer",
+            "Enregistre le son (fichier FLAC dans le dossier Musique) ou l'écran avec le son de \
+             l'ordinateur (MP4 dans le dossier Vidéos), ou arrête l'enregistrement en cours. \
+             L'enregistrement continue après la réponse, jusqu'à ce qu'on l'arrête.",
+            json!({ "action": json!({ "type": "string", "enum": ["demarrer", "arreter"],
+                                      "description": "défaut : demarrer" }),
+                    "quoi": json!({ "type": "string", "enum": ["son", "ecran"],
+                                    "description": "requis pour demarrer ; pour arreter, vide = tout arrêter" }),
+                    "mode": json!({ "type": "string", "enum": ["micro", "micro_ordi", "selection", "ecran"],
+                                    "description": "son : micro (défaut) ou micro_ordi (micro + ce que joue \
+                                                    l'ordinateur) ; ecran : selection (défaut, l'utilisateur \
+                                                    trace la zone) ou ecran (l'écran entier)" }) }),
+            &[]),
         tool("chercher_notes",
             "Cherche dans les notes de l'utilisateur (coffre Obsidian : recherches, projets, skills, lab).",
             json!({ "requete": s("mots à chercher") }), &["requete"]),
@@ -126,7 +125,7 @@ pub fn tools() -> Value {
             "Ouvre, ferme ou bascule un widget de l'interface : « explorer » (les dossiers du PC), « stats » (processeur, mémoire et carte graphique, de ce PC ou \
              d'un serveur du réseau Tailscale par ssh, avec terminal, redémarrage, extinction et réveil, et en dessous le téléphone), « telephone » (ouvre « stats », où est la carte du téléphone relié par KDE Connect : batterie, réseau, le faire sonner), « notifications » (les notifications reçues, ne pas déranger), « notes » (les notes façon Keep : texte et images collés), « lecteur » (lecteur en cours, paroles), « musique » (métronome et accordeur), \
              « son » (ouvre les réglages), « camera » (contrôle gestuel), « reglages » \
-             (sorties et entrées audio, webcam, luminosité, écran, thème), « sessions » (le dock des sessions Claude et du savoir). « tout » avec \
+             (sorties et entrées audio, webcam, luminosité, écran, thème). « tout » avec \
              « fermer » referme tout.",
             json!({ "nom": json!({ "type": "string", "enum": WIDGETS }),
                     "action": json!({ "type": "string", "enum": ["ouvrir", "fermer", "basculer"],
@@ -136,13 +135,9 @@ pub fn tools() -> Value {
             json!({ "couleur": s("#rrggbb") }), &["couleur"]),
         tool("presse_papiers", "Lit le texte du presse-papiers.", json!({}), &[]),
         tool("commande",
-            "Exécute une commande shell et renvoie sa sortie (30 s maximum). L'utilisateur confirme dans une bulle. \
+            "Exécute une commande shell et renvoie sa sortie (30 s maximum). \
              À réserver à ce qu'aucun autre outil ne fait.",
             json!({ "commande": s("ligne de commande") }), &["commande"]),
-        tool("reconstruire_nixos",
-            "Ouvre un terminal qui reconstruit le système NixOS (le mot de passe sudo y est demandé). \
-             L'utilisateur confirme dans une bulle.",
-            json!({}), &[]),
     ])
 }
 
@@ -171,31 +166,6 @@ fn shell_send(line: &str) -> Result<(), String> {
         .open(SHELL_FIFO)
         .and_then(|mut f| f.write_all(line.as_bytes()))
         .map_err(|e| format!("l'interface (quickshell) ne répond pas : {e}"))
-}
-
-/// One line describing a call, for the dock: its request and its thread.
-pub fn describe(tool: &str, args: &Value) -> String {
-    let s = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or("");
-    match tool {
-        "commande" => s("commande").to_string(),
-        "fermer_fenetre" => {
-            let c = s("cible");
-            if c.is_empty() {
-                "la fenêtre active".into()
-            } else {
-                c.into()
-            }
-        }
-        "reconstruire_nixos" => "sudo nixos-rebuild switch".into(),
-        _ => {
-            let a = args.to_string();
-            if a == "{}" || a == "null" {
-                String::new()
-            } else {
-                a
-            }
-        }
-    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -465,22 +435,60 @@ fn url_encode(s: &str) -> String {
         .collect()
 }
 
+pub struct Project {
+    pub name: String,
+    pub path: String,
+}
+
+/// The projects `ouvrir_projet` knows: the vault (« recherche »), every git
+/// repository under ~/ciph3r, then the NixOS configuration.
+pub fn projects() -> Vec<Project> {
+    let home = crate::paths::home_dir();
+    let mut out = Vec::new();
+    let vault = vault();
+    if vault.is_dir() {
+        out.push(Project {
+            name: "recherche".into(),
+            path: vault.to_string_lossy().into(),
+        });
+    }
+    let mut repos: Vec<Project> = std::fs::read_dir(home.join("ciph3r"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.join(".git").exists())
+        .map(|p| Project {
+            name: p
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            path: p.to_string_lossy().into(),
+        })
+        .collect();
+    repos.sort_by_key(|p| p.name.to_lowercase());
+    out.extend(repos);
+    if std::path::Path::new("/etc/nixos/.git").exists() {
+        out.push(Project {
+            name: "nixos".into(),
+            path: "/etc/nixos".into(),
+        });
+    }
+    out
+}
+
 pub fn project_dir(name: &str) -> Result<String, String> {
-    super::runner::projects()
+    projects()
         .into_iter()
         .find(|p| p.name.eq_ignore_ascii_case(name))
         .map(|p| p.path)
         .ok_or_else(|| {
-            let names: Vec<String> = super::runner::projects()
-                .into_iter()
-                .map(|p| p.name)
-                .collect();
+            let names: Vec<String> = projects().into_iter().map(|p| p.name).collect();
             format!("projet inconnu « {name} » (connus : {})", names.join(", "))
         })
 }
 
-/// The desktop state, as `etat_bureau` reports it (without the sessions,
-/// which the daemon adds).
+/// The desktop state, as `etat_bureau` reports it.
 pub fn desktop_state() -> String {
     let mut out = Vec::new();
     let active = hypr_json("activewindow");
@@ -518,8 +526,7 @@ pub fn desktop_state() -> String {
 }
 
 /// Carry out one of the synchronous tools. The daemon handles the others
-/// (sessions, theme) and the confirmation of SENSITIVE ones before calling
-/// this.
+/// (theme).
 pub fn run_tool(tool: &str, args: &Value) -> Result<String, String> {
     let s = |k: &str| {
         args.get(k)
@@ -704,14 +711,6 @@ pub fn run_tool(tool: &str, args: &Value) -> Result<String, String> {
             let code = out.status.code().unwrap_or(-1);
             Ok(cut(&format!("code {code}\n{}", text.trim())))
         }
-        "reconstruire_nixos" => {
-            let host = run("hostname", &[]).unwrap_or_default();
-            let script = format!(
-                "sudo nixos-rebuild switch --flake /etc/nixos#{host}; echo; read -p 'Entrée pour fermer'"
-            );
-            launch(&["alacritty", "-e", "sh", "-c", &script])?;
-            Ok("reconstruction lancée dans un terminal".into())
-        }
         other => Err(format!("outil inconnu : {other}")),
     }
 }
@@ -729,13 +728,12 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap())
             .collect();
-        assert!(names.contains(&"volume") && names.contains(&"lancer_session"));
+        assert!(names.contains(&"volume") && names.contains(&"commande"));
         assert!(names.contains(&"creer_note") && names.contains(&"lire_notes"));
+        assert!(names.contains(&"enregistrer"));
+        assert!(!names.contains(&"lancer_session"), "the pilot only acts");
         for t in list.as_array().unwrap() {
             assert_eq!(t["inputSchema"]["type"], "object", "{}", t["name"]);
-        }
-        for s in SENSITIVE {
-            assert!(names.contains(&s), "{s} is a tool");
         }
     }
 
@@ -775,15 +773,5 @@ mod tests {
         assert!(widget_line("tout", "ouvrir").is_err());
         assert!(widget_line("console", "").is_err());
         assert!(widget_line("stats", "rm").is_err());
-    }
-
-    #[test]
-    fn sensitive_calls_are_described() {
-        assert_eq!(
-            describe("commande", &json!({"commande": "rm -rf x"})),
-            "rm -rf x"
-        );
-        assert_eq!(describe("fermer_fenetre", &json!({})), "la fenêtre active");
-        assert_eq!(describe("etat_bureau", &json!({})), "");
     }
 }

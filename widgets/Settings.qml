@@ -128,8 +128,7 @@ Item {
                 }
 
                 // ── ÉCRAN section ──────────────────────────────────
-                // Où s'affichent la barre et les panneaux. Le dock n'est pas
-                // concerné : il suit l'écran qui a le focus.
+                // Où s'affichent la barre et les panneaux.
                 Text {
                     Layout.bottomMargin: 10
                     text: I18n.tr("settings.screen")
@@ -162,10 +161,10 @@ Item {
                             // onglets.
                             Layout.fillWidth: true
                             Layout.preferredHeight: 46
-                            radius: 14
-                            color: selected ? Qt.alpha(Theme.glow(0), 0.16)
+                            radius: Theme.radiusSmall
+                            color: selected ? Theme.selectedFill
                                             : Qt.alpha(Theme.textPrimary, rowMa.containsMouse || activeFocus ? 0.09 : 0.05)
-                            border.color: selected ? Qt.alpha(Theme.glow(0), 0.38) : Qt.alpha(Theme.textPrimary, 0.08)
+                            border.color: selected ? "transparent" : Theme.dividerColor
                             border.width: 1
                             Behavior on color { ColorAnimation { duration: 160 } }
 
@@ -245,10 +244,8 @@ Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 46
                     Layout.bottomMargin: 18
-                    radius: 14
+                    radius: Theme.radius
                     color: Qt.alpha(Theme.textPrimary, 0.05)
-                    border.color: Qt.alpha(Theme.textPrimary, 0.08)
-                    border.width: 1
 
                     Column {
                         anchors.left: parent.left
@@ -350,14 +347,12 @@ Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 46
                     Layout.bottomMargin: 18
-                    radius: 14
+                    radius: Theme.radius
                     color: Qt.alpha(Theme.textPrimary, wakeMa.containsMouse || activeFocus ? 0.09 : 0.05)
-                    border.color: Qt.alpha(Theme.textPrimary, 0.08)
-                    border.width: 1
                     Behavior on color { ColorAnimation { duration: 160 } }
 
                     activeFocusOnTab: true
-                    Keys.onPressed: (event) => root.activates(event, () => ClaudeLive.voiceWakeToggle())
+                    Keys.onPressed: (event) => root.activates(event, () => Pilot.voiceWakeToggle())
                     FocusRing { radius: wakeRow.radius + gap }
 
                     Column {
@@ -381,9 +376,9 @@ Item {
                         // et dit pourquoi.
                         Text {
                             width: parent.width
-                            text: !ClaudeLive.voiceWake && ClaudeLive.voiceError
-                                  ? ClaudeLive.voiceError
-                                  : ClaudeLive.voiceWake ? I18n.tr("settings.voice.listening") : I18n.tr("common.off")
+                            text: !Pilot.voiceWake && Pilot.voiceError
+                                  ? Pilot.voiceError
+                                  : Pilot.voiceWake ? I18n.tr("settings.voice.listening") : I18n.tr("common.off")
                             font.family: "Inter"
                             font.pixelSize: 10
                             color: Theme.textSecondary
@@ -397,13 +392,13 @@ Item {
                         anchors.rightMargin: 12
                         anchors.verticalCenter: parent.verticalCenter
                         width: 44; height: 22; radius: 11
-                        color: ClaudeLive.voiceWake ? Theme.accentColor : Theme.accentDark
+                        color: Pilot.voiceWake ? Theme.accentColor : Theme.accentDark
                         Behavior on color { ColorAnimation { duration: 200 } }
 
                         Rectangle {
                             width: 16; height: 16; radius: 8
                             anchors.verticalCenter: parent.verticalCenter
-                            x: ClaudeLive.voiceWake ? 24 : 4
+                            x: Pilot.voiceWake ? 24 : 4
                             color: Theme.iconColor
                             Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
                         }
@@ -414,7 +409,7 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: ClaudeLive.voiceWakeToggle()
+                        onClicked: Pilot.voiceWakeToggle()
                     }
                 }
 
@@ -433,10 +428,8 @@ Item {
                     Layout.preferredHeight: 46
                     Layout.topMargin: -10
                     Layout.bottomMargin: 18
-                    radius: 14
+                    radius: Theme.radius
                     color: Qt.alpha(Theme.textPrimary, activeFocus ? 0.09 : 0.05)
-                    border.color: Qt.alpha(Theme.textPrimary, 0.08)
-                    border.width: 1
 
                     activeFocusOnTab: true
                     Keys.onLeftPressed: voiceLangRow.step(-1)
@@ -482,6 +475,145 @@ Item {
                     }
                 }
 
+                // Les réponses du pilote lues à voix haute (anna/src/claude/
+                // speech.rs) : jamais, aux demandes dites seulement, ou
+                // toujours. anna s'en souvient.
+                Rectangle {
+                    id: speechRow
+                    readonly property var modes: ["off", "voice", "always"]
+                    readonly property var names: [I18n.tr("settings.voice.speech.off"),
+                                                  I18n.tr("settings.voice.speech.voice"),
+                                                  I18n.tr("settings.voice.speech.always")]
+                    readonly property int at: Math.max(0, modes.indexOf(Pilot.speechMode))
+
+                    function step(d) {
+                        var n = modes.length;
+                        Pilot.speechSetMode(modes[(speechRow.at + d + n) % n]);
+                    }
+
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 46
+                    Layout.topMargin: -10
+                    Layout.bottomMargin: 18
+                    radius: Theme.radius
+                    color: Qt.alpha(Theme.textPrimary, activeFocus ? 0.09 : 0.05)
+
+                    activeFocusOnTab: true
+                    Keys.onLeftPressed: speechRow.step(-1)
+                    Keys.onRightPressed: speechRow.step(1)
+                    Keys.onPressed: (event) => root.activates(event, () => speechRow.step(1))
+                    FocusRing { radius: speechRow.radius + gap }
+
+                    Column {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 12
+                        anchors.right: speechButtons.left
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 1
+
+                        Text {
+                            width: parent.width
+                            text: I18n.tr("settings.voice.speech")
+                            font.family: "Inter"
+                            font.pixelSize: 12
+                            font.weight: Font.Medium
+                            color: Theme.textPrimary
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            width: parent.width
+                            text: speechRow.names[speechRow.at]
+                            font.family: "Inter"
+                            font.pixelSize: 10
+                            color: Theme.textSecondary
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    Row {
+                        id: speechButtons
+                        anchors.right: parent.right
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 4
+                        GlassButton { implicitWidth: 24; implicitHeight: 24; fontSize: 13; text: "‹"; onClicked: speechRow.step(-1) }
+                        GlassButton { implicitWidth: 24; implicitHeight: 24; fontSize: 13; text: "›"; onClicked: speechRow.step(1) }
+                    }
+                }
+
+                // La voix Piper qui lit : une par fichier installé (et par
+                // locuteur pour les voix qui en ont plusieurs).
+                Rectangle {
+                    id: speakerRow
+                    readonly property int at: Math.max(0, Pilot.speechVoices.findIndex(v => v.id === Pilot.speechVoice))
+                    readonly property bool usable: Pilot.speechVoices.length > 0 && Pilot.speechMode !== "off"
+
+                    function step(d) {
+                        var n = Pilot.speechVoices.length;
+                        if (n > 0)
+                            Pilot.speechSetVoice(Pilot.speechVoices[(speakerRow.at + d + n) % n].id);
+                    }
+
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 46
+                    Layout.topMargin: -10
+                    Layout.bottomMargin: 18
+                    radius: Theme.radius
+                    color: Qt.alpha(Theme.textPrimary, activeFocus ? 0.09 : 0.05)
+                    opacity: usable ? 1 : 0.5
+                    Behavior on opacity { NumberAnimation { duration: 160 } }
+
+                    activeFocusOnTab: usable
+                    Keys.onLeftPressed: speakerRow.step(-1)
+                    Keys.onRightPressed: speakerRow.step(1)
+                    Keys.onPressed: (event) => root.activates(event, () => speakerRow.step(1))
+                    FocusRing { radius: speakerRow.radius + gap }
+
+                    Column {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 12
+                        anchors.right: speakerButtons.left
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 1
+
+                        Text {
+                            width: parent.width
+                            text: I18n.tr("settings.voice.speaker")
+                            font.family: "Inter"
+                            font.pixelSize: 12
+                            font.weight: Font.Medium
+                            color: Theme.textPrimary
+                            elide: Text.ElideRight
+                        }
+                        // Une voix qui ne peut pas lire dit pourquoi.
+                        Text {
+                            width: parent.width
+                            text: Pilot.speechError
+                                  ? Pilot.speechError
+                                  : Pilot.speechVoices.length > 0
+                                    ? Pilot.speechVoices[speakerRow.at].name
+                                    : I18n.tr("settings.voice.speaker.none")
+                            font.family: "Inter"
+                            font.pixelSize: 10
+                            color: Theme.textSecondary
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    Row {
+                        id: speakerButtons
+                        anchors.right: parent.right
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 4
+                        visible: Pilot.speechVoices.length > 1
+                        GlassButton { implicitWidth: 24; implicitHeight: 24; fontSize: 13; text: "‹"; onClicked: speakerRow.step(-1) }
+                        GlassButton { implicitWidth: 24; implicitHeight: 24; fontSize: 13; text: "›"; onClicked: speakerRow.step(1) }
+                    }
+                }
+
                 // ── LANGUE section ─────────────────────────────────
                 // Une ligne par fichier de i18n/ : une langue ajoutée là
                 // apparaît ici d'elle-même.
@@ -510,10 +642,10 @@ Item {
 
                             Layout.fillWidth: true
                             Layout.preferredHeight: 36
-                            radius: 12
-                            color: selected ? Qt.alpha(Theme.glow(0), 0.16)
+                            radius: Theme.radiusSmall
+                            color: selected ? Theme.selectedFill
                                             : Qt.alpha(Theme.textPrimary, langMa.containsMouse || activeFocus ? 0.09 : 0.05)
-                            border.color: selected ? Qt.alpha(Theme.glow(0), 0.38) : Qt.alpha(Theme.textPrimary, 0.08)
+                            border.color: selected ? "transparent" : Theme.dividerColor
                             border.width: 1
                             Behavior on color { ColorAnimation { duration: 160 } }
 
@@ -641,7 +773,7 @@ Item {
                         selectByMouse: true
                         background: Rectangle {
                             color: Theme.bgInput
-                            radius: height / 2
+                            radius: 6
                             border.color: Theme.accentDark
                             border.width: 1
                         }
@@ -894,7 +1026,7 @@ Item {
 
                     activeFocusOnTab: true
                     Keys.onPressed: (event) => root.activates(event, rainbowBtn.toggle)
-                    FocusRing { radius: 12 + gap }
+                    FocusRing { radius: Theme.radiusSmall + gap }
 
                     // Rainbow gradient background
                     Canvas {
@@ -925,7 +1057,7 @@ Item {
                     // Dimming overlay — lighter when active
                     Rectangle {
                         anchors.fill: parent
-                        radius: 12
+                        radius: Theme.radiusSmall
                         color: Theme.bgDeep
                         opacity: root.rainbowActive ? 0.10 : 0.50
                         Behavior on opacity { NumberAnimation { duration: 250 } }
@@ -934,7 +1066,7 @@ Item {
                     // Active border glow
                     Rectangle {
                         anchors.fill: parent
-                        radius: 12
+                        radius: Theme.radiusSmall
                         color: "transparent"
                         border.color: Theme.iconColor
                         border.width: 1
@@ -977,23 +1109,33 @@ Item {
 
                     activeFocusOnTab: true
                     Keys.onPressed: (event) => root.activates(event, resetBtn.reset)
-                    FocusRing { radius: 12 + gap }
+                    FocusRing { radius: Theme.radiusSmall + gap }
 
                     Rectangle {
                         anchors.fill: parent
-                        radius: 12
+                        radius: Theme.radiusSmall
                         color: Qt.alpha(Theme.textPrimary, 0.1)
                         border.color: Theme.dividerColor
                         border.width: 1
                     }
 
-                    Text {
+                    Row {
                         anchors.centerIn: parent
-                        text: "↺ " + I18n.tr("settings.reset")
-                        font.family: "Inter"
-                        font.pixelSize: 11
-                        font.weight: Font.Medium
-                        color: Theme.textSecondary
+                        spacing: 5
+                        NixIcon {
+                            anchors.verticalCenter: parent.verticalCenter
+                            iconSize: 12
+                            source: "../assets/icons/reset.svg"
+                            color: Theme.textSecondary
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: I18n.tr("settings.reset")
+                            font.family: "Inter"
+                            font.pixelSize: 11
+                            font.weight: Font.Medium
+                            color: Theme.textSecondary
+                        }
                     }
 
                     MouseArea {

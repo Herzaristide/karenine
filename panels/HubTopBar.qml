@@ -10,19 +10,20 @@ import "../services"
 import "../widgets"
 
 // La barre du haut des widgets, la même quel que soit l'onglet. Quatre
-// groupes posés sur le verre, chacun dans sa pilule : l'alimentation à
-// gauche, les niveaux (luminosité, volume) au milieu, le Bluetooth et la
-// capture, puis la batterie à droite. Le Bluetooth déplie la liste des
-// appareils (widgets/BluetoothMenu.qml).
+// groupes posés sur le fond, chacun sur son aplat : l'alimentation à
+// gauche, les niveaux (luminosité, volume) au milieu, le Bluetooth, la
+// capture et l'enregistrement de l'écran, puis la batterie à droite. Le
+// Bluetooth déplie la liste des appareils (widgets/BluetoothMenu.qml).
 //
-//   ╭ 🔒 ☾ ⇥ ↻ ⏻ ╮   ╭ ☀ ━━●── 80 %  │  🔊 ━━━●─ 64 % ╮  ╭ ᛒ ⌗ ╮  ╭ [87]▸ ╮
+//   ╭ 🔒 ☾ ⇥ ↻ ⏻ ╮   ╭ ☀ ━━●── 80 %  │  🔊 ━━━●─ 64 % ╮  ╭ ᛒ ⌗ ● ╮  ╭ [87]▸ ╮
 //
 // Chaque bouton d'alimentation agit dès le premier clic, sans confirmation.
 // Les curseurs se partagent la place qui reste : la barre peut être étroite.
 //
 // Au clavier : Tab passe d'un bouton à l'autre, Entrée ou Espace l'actionne.
 // Maj+Entrée sur la
-// capture prend l'écran entier, comme le clic droit. Sur un curseur, ← →
+// capture ou l'enregistrement prend l'écran entier, comme le clic droit.
+// Sur un curseur, ← →
 // (ou ↑ ↓) règlent par pas, Début et Fin vont aux bouts.
 Item {
     id: top
@@ -74,14 +75,34 @@ Item {
         }
     }
 
+    // ── L'enregistrement de l'écran ──────────────────────────────
+    // anna le tient (services/Recorder.qml) : clic, une région ; clic droit,
+    // l'écran qui a le focus ; avec le son de l'ordinateur. Comme pour la
+    // capture, la barre disparaît d'abord pour ne pas être filmée. Pendant
+    // l'enregistrement, le bouton rougit et compte ; un clic l'arrête.
+    function screenRecord(region) {
+        if (Recorder.screenOn) {
+            Recorder.stop("screen");
+            return;
+        }
+        top.bar.dismiss();
+        recTimer.region = region;
+        recTimer.restart();
+    }
+
+    Timer {
+        id: recTimer
+        property string region: "area"
+        interval: 350
+        onTriggered: Recorder.toggleScreen(recTimer.region)
+    }
+
     // ── Petits éléments ──────────────────────────────────────────
-    // Une pilule de verre qui porte un groupe.
+    // Un aplat qui porte un groupe : le panneau, un ton au-dessus du fond.
     component Pill: Rectangle {
         Layout.preferredHeight: top.height
-        radius: height / 2
-        color: Qt.alpha(Theme.textPrimary, 0.05)
-        border.width: 1
-        border.color: Qt.alpha(Theme.textPrimary, 0.08)
+        radius: Theme.radiusSmall
+        color: Theme.bgElevated
     }
 
     // Une icône teinte (les SVG sont blancs).
@@ -135,9 +156,9 @@ Item {
         Layout.alignment: Qt.AlignVCenter
         implicitWidth: top.btnSize
         implicitHeight: top.btnSize
-        radius: height / 2
+        radius: Theme.radiusSmall
         color: ib.alerted ? Qt.alpha(ib.alertColor, 0.18)
-                          : Qt.alpha(Theme.textPrimary, ib.hovered ? 0.1 : 0)
+                          : ib.hovered ? Theme.hoverOverlay : "transparent"
         Behavior on color { ColorAnimation { duration: 160; easing.type: Easing.OutCubic } }
         scale: ibMa.pressed ? 0.92 : 1
         Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
@@ -183,8 +204,8 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         height: top.btnSize
         width: top.btnSize
-        radius: height / 2
-        color: Qt.alpha(Theme.textPrimary, pb.hovered ? 0.1 : 0)
+        radius: Theme.radiusSmall
+        color: pb.hovered ? Theme.hoverOverlay : "transparent"
         Behavior on color { ColorAnimation { duration: 180; easing.type: Easing.OutCubic } }
         scale: pbMa.pressed ? 0.92 : 1
         Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
@@ -266,7 +287,7 @@ Item {
             width: 10
             height: 10
             radius: 5
-            color: "#ffffff"
+            color: Theme.textPrimary
             // Visible au survol, pendant le glisser et au clavier seulement :
             // au repos, la barre seule suffit.
             opacity: slMa.containsMouse || sl.dragging || sl.activeFocus ? 1 : 0
@@ -415,7 +436,7 @@ Item {
             }
         }
 
-        // Le Bluetooth et la capture.
+        // Le Bluetooth, la capture et l'enregistrement de l'écran.
         Pill {
             Layout.preferredWidth: toolsRow.width + 8
 
@@ -437,6 +458,25 @@ Item {
                 IconButton {
                     icon: "screenshot.svg"
                     onClicked: (button) => top.screenshot(button === Qt.RightButton ? "screen" : "area")
+                }
+                IconButton {
+                    visible: Recorder.available
+                    icon: "screen-record.svg"
+                    alertColor: Recorder.screenOn ? Theme.colorDanger : "transparent"
+                    onClicked: (button) => top.screenRecord(button === Qt.RightButton ? "screen" : "area")
+                }
+                // Le temps écoulé, tant que l'écran est filmé.
+                Text {
+                    visible: Recorder.screenOn
+                    anchors.verticalCenter: parent.verticalCenter
+                    leftPadding: 2
+                    rightPadding: 4
+                    text: Recorder.elapsed(Recorder.screen)
+                    color: Theme.colorDanger
+                    font.family: top.bar.uiFont
+                    font.pixelSize: 11
+                    font.weight: Font.DemiBold
+                    font.features: { "tnum": 1 }
                 }
             }
 
@@ -483,28 +523,12 @@ Item {
         spacing: 3
 
         // L'éclair, le temps de la charge.
-        Canvas {
-            id: bolt
+        NixIcon {
             anchors.verticalCenter: parent.verticalCenter
             visible: bat.charging
-            width: 7
-            height: 11
-            property color tint: bat.tone
-            onTintChanged: requestPaint()
-            onPaint: {
-                var ctx = getContext("2d");
-                ctx.reset();
-                ctx.fillStyle = bolt.tint;
-                ctx.beginPath();
-                ctx.moveTo(4.4, 0);
-                ctx.lineTo(0, 6.3);
-                ctx.lineTo(3.1, 6.3);
-                ctx.lineTo(2.4, 11);
-                ctx.lineTo(7, 4.5);
-                ctx.lineTo(3.9, 4.5);
-                ctx.closePath();
-                ctx.fill();
-            }
+            iconSize: 12
+            source: "../assets/icons/bolt.svg"
+            color: bat.tone
         }
 
         // Le corps.

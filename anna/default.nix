@@ -45,13 +45,11 @@ pkgs.rustPlatform.buildRustPackage {
     cp -r ${./templates}/. "$out/share/anna/templates/"
 
     # Wrap host-agnostic subprocess tools into PATH:
-    #   hyprctl (hyprland), dbus-send (dbus), gtk-update-icon-cache (gtk3)
+    #   hyprctl (hyprland), dbus-send (dbus), gtk-update-icon-cache (gtk3),
+    #   dconf
     #     → theme live-reload signals
     #   lspci (pciutils), df (coreutils)
     #     → hwstats collection
-    #   git
-    #     → reviewing / merging the worktrees of AI dock sessions
-    #       (claude/worktree.rs)
     #   pw-record (pipewire)
     #     → the echo-cancelled mic of the wake word and dictation (audio.rs)
     #   ssh (openssh)
@@ -63,12 +61,20 @@ pkgs.rustPlatform.buildRustPackage {
     #   wpctl (wireplumber), brightnessctl, playerctl, wl-paste (wl-clipboard),
     #   xdg-open (xdg-utils), grimblast
     #     → the pilot's desk tools (claude/desk.rs)
+    #   ffmpeg, slurp, libnotify (notify-send)
+    #     → recording the microphone, picking a screen region, saying where
+    #       the file went (recorder.rs); ffmpeg also reads the webcam
+    #       (gesture/camera.rs). gpu-screen-recorder is left to the ambient
+    #       PATH: it needs its gsr-kms-server wrapper, given a capability by
+    #       the NixOS configuration (programs.gpu-screen-recorder).
     #   whisper-server, whisper-cli (whisper-cpp, Vulkan build), vulkaninfo
     #   (vulkan-tools)
     #     → transcribing what is said to the pilot, live (claude/voice.rs,
     #       claude/whisper.rs): Vulkan runs on the discrete GPU whatever its
     #       vendor (NVIDIA here, AMD on gary), and on the CPU without one. The
     #       model file is provided by the NixOS configuration.
+    # The icon theme recoloured to the accent (src/icons.rs): Reversal, read in
+    # place from the store through ANNA_ICON_SOURCE.
     # The wake word « Karénine » (claude/wake.rs): openWakeWord's two shared
     # models, and the word's own model trained in lab/wakeword-karenine. ONNX
     # Runtime is loaded at run time (ort's load-dynamic).
@@ -77,11 +83,17 @@ pkgs.rustPlatform.buildRustPackage {
     cp ${embedding} "$out/share/anna/wake/embedding_model.onnx"
     cp ${./models/wake/karenine.onnx} "$out/share/anna/wake/karenine.onnx"
 
+    # The pilot's answers read aloud (claude/speech.rs): Piper voices run with
+    # ONNX Runtime, their phonemes from libespeak-ng (loaded at run time, its
+    # data dir compiled in), played by pw-play (pipewire, already on PATH).
+    # The voice files are provided by the NixOS configuration.
     # nvidia-smi and sudo(dmidecode) are intentionally left to the ambient PATH:
     # they are host-specific and, for sudo, must be the setuid system binary.
     wrapProgram "$out/bin/anna" \
       --set-default ORT_DYLIB_PATH ${pkgs.onnxruntime}/lib/libonnxruntime.so \
       --set-default ANNA_WAKE_MODELS "$out/share/anna/wake" \
+      --set-default ESPEAK_DYLIB_PATH ${pkgs.espeak-ng}/lib/libespeak-ng.so.1 \
+      --set-default ANNA_ICON_SOURCE ${pkgs.reversal-icon-theme}/share/icons \
       --prefix PATH : ${
         lib.makeBinPath (
           with pkgs;
@@ -89,9 +101,9 @@ pkgs.rustPlatform.buildRustPackage {
             hyprland
             dbus
             gtk3
+            dconf
             pciutils
             coreutils
-            git
             wireplumber
             pipewire
             brightnessctl
@@ -99,6 +111,9 @@ pkgs.rustPlatform.buildRustPackage {
             wl-clipboard
             xdg-utils
             grimblast
+            ffmpeg
+            slurp
+            libnotify
             openssh
             systemd
             (whisper-cpp.override { vulkanSupport = true; })

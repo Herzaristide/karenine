@@ -189,10 +189,8 @@ ColumnLayout {
 
     component Card: Rectangle {
         Layout.fillWidth: true
-        radius: 14
+        radius: Theme.radius
         color: Qt.alpha(Theme.textPrimary, 0.05)
-        border.width: 1
-        border.color: Qt.alpha(Theme.textPrimary, 0.08)
     }
 
     // Quatre barres, pleines selon le signal.
@@ -297,8 +295,7 @@ ColumnLayout {
                 GlassButton {
                     implicitWidth: 22
                     implicitHeight: 22
-                    fontSize: 12
-                    text: "↻"
+                    icon: Qt.resolvedUrl("../assets/icons/refresh.svg")
                     onClicked: {
                         if (listProc.running)
                             return;
@@ -333,7 +330,7 @@ ColumnLayout {
                         id: netRow
                         Layout.fillWidth: true
                         implicitHeight: 32
-                        radius: 10
+                        radius: Theme.radiusSmall
                         readonly property bool hovered: netMa.containsMouse || netRow.activeFocus
                         color: Qt.alpha(Theme.textPrimary, net.modelData.active ? 0.08 : netRow.hovered ? 0.06 : 0)
 
@@ -365,11 +362,18 @@ ColumnLayout {
                                 elide: Text.ElideRight
                             }
                             Text {
-                                text: root.joining === net.modelData.ssid ? "…"
-                                    : net.modelData.active ? "✓"
-                                    : net.modelData.secure ? "🔒" : ""
+                                visible: root.joining === net.modelData.ssid
+                                text: "…"
                                 font.family: "Inter"
                                 font.pixelSize: 11
+                                color: Theme.textDim
+                            }
+                            // Le réseau actif, coché ; un réseau protégé, cadenassé.
+                            NixIcon {
+                                visible: root.joining !== net.modelData.ssid
+                                         && (net.modelData.active || net.modelData.secure)
+                                iconSize: 12
+                                source: "../assets/icons/" + (net.modelData.active ? "check.svg" : "lock.svg")
                                 color: net.modelData.active ? Theme.accentColor : Theme.textDim
                             }
                         }

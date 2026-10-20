@@ -1,13 +1,13 @@
 //! Speaking to the pilot.
 //!
 //! One trigger (`anna voice`, a key bound to it, the FIFO's `voix`, or the
-//! dock's 🎙) starts listening; the end of speech stops it — or the same
+//! bar's 🎙) starts listening; the end of speech stops it — or the same
 //! trigger again. Like Claude Code's own dictation, the transcript shows up
 //! while the user speaks: the recording so far is transcribed again every
 //! half second by a warm whisper.cpp server (whisper.rs). At the end, the
 //! whole is transcribed once more and either handed to the pilot (Super+V)
-//! or left in the dock's input field to read over (the dock's 🎙). Nothing
-//! leaves the machine but the transcript.
+//! or only shown (`anna voice dictate`). Nothing leaves the machine but the
+//! transcript.
 //!
 //!   idle → listening → transcribing → idle
 //!
@@ -41,8 +41,6 @@ const END_SILENCE: f32 = 1.2;
 const NO_SPEECH: f32 = 6.0;
 /// …and never record longer than this.
 const MAX_LEN: f32 = 30.0;
-/// Push-to-talk ends with the key, or after this long.
-const HOLD_MAX: f32 = 120.0;
 /// Whisper's input rate.
 const WHISPER_RATE: u32 = 16_000;
 
@@ -364,7 +362,7 @@ pub fn strip_wake(text: &str) -> Option<String> {
 /// tools the pilot is asked about. Given as its initial prompt, they steer
 /// "Carnine" back to "karenine" and "Z" to "Zed".
 pub fn vocabulary() -> String {
-    let mut words: Vec<String> = super::runner::projects()
+    let mut words: Vec<String> = super::desk::projects()
         .into_iter()
         .map(|p| p.name)
         .filter(|n| n != "recherche")
@@ -373,12 +371,10 @@ pub fn vocabulary() -> String {
         [
             "Zed",
             "anna",
-            "dock",
             "Claude",
             "Obsidian",
             "Hyprland",
             "NixOS",
-            "worktree",
             "workspace",
         ]
         .map(String::from),
@@ -446,11 +442,8 @@ pub struct Voice {
     partial: AtomicBool,
     error: Mutex<String>,
     /// Hand the transcript to the pilot (`anna voice`, Super+V), or only
-    /// show it (the dock's 🎙 fills its input field with it).
+    /// show it (`anna voice dictate`).
     send: AtomicBool,
-    /// Push-to-talk (the dock's held Space): only the release ends the
-    /// recording, whatever the silences.
-    hold: AtomicBool,
     /// Listening for « Karénine » (wake.rs).
     wake: AtomicBool,
     /// The current turn was started by the wake word, whose audio is
@@ -482,7 +475,6 @@ impl Voice {
             partial: AtomicBool::new(false),
             error: Mutex::new(String::new()),
             send: AtomicBool::new(true),
-            hold: AtomicBool::new(false),
             wake: AtomicBool::new(super::wake::remembered()),
             woken: AtomicBool::new(false),
             preroll: Mutex::new(None),
@@ -509,6 +501,15 @@ impl Voice {
                 }
             }
         });
+        // The speech's settings and errors are shown with the voice's.
+        let weak = Arc::downgrade(&me);
+        let mut changed = me.pilot.speech().subscribe();
+        tokio::spawn(async move {
+            while let Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) = changed.recv().await {
+                let Some(me) = weak.upgrade() else { break };
+                me.publish();
+            }
+        });
         // The wake word, for the daemon's lifetime (idle while off).
         let w = Arc::clone(&me);
         std::thread::spawn(move || super::wake::listen(w));
@@ -524,11 +525,13 @@ impl Voice {
             "send": self.send.load(Ordering::SeqCst),
             "wake": self.wake.load(Ordering::SeqCst),
             "error": *lock(&self.error),
+            // Reading the answers aloud (speech.rs), for the settings.
+            "speech": self.pilot.speech().state(),
         }})
         .to_string()
     }
 
-    fn publish(&self) {
+    pub fn publish(&self) {
         let _ = self.tx.send(self.snapshot_line());
     }
 
@@ -549,22 +552,9 @@ impl Voice {
     pub fn toggle(self: &Arc<Self>, send: bool) {
         let phase = *lock(&self.phase);
         match phase {
-            Phase::Idle => self.start(send, false),
+            Phase::Idle => self.start(send),
             Phase::Listening => self.stop.store(true, Ordering::SeqCst),
             Phase::Transcribing => {}
-        }
-    }
-
-    /// Push-to-talk: record while the key is held, until `release`. The
-    /// transcript is only shown (the dock puts it in its input field).
-    pub fn hold(self: &Arc<Self>) {
-        self.start(false, true);
-    }
-
-    /// The held key is released: end the recording (if there is one).
-    pub fn release(&self) {
-        if *lock(&self.phase) == Phase::Listening {
-            self.stop.store(true, Ordering::SeqCst);
         }
     }
 
@@ -605,7 +595,7 @@ impl Voice {
     }
 
     /// Enter listening (false if a turn is already under way).
-    fn begin(&self, send: bool, hold: bool) -> bool {
+    fn begin(&self, send: bool) -> bool {
         {
             let mut p = lock(&self.phase);
             if *p != Phase::Idle {
@@ -613,9 +603,10 @@ impl Voice {
             }
             *p = Phase::Listening;
         }
+        // Speaking over the answer being read cuts it short.
+        self.pilot.speech().stop();
         self.stop.store(false, Ordering::SeqCst);
         self.send.store(send, Ordering::SeqCst);
-        self.hold.store(hold, Ordering::SeqCst);
         self.partial.store(false, Ordering::SeqCst);
         lock(&self.error).clear();
         lock(&self.text).clear();
@@ -662,7 +653,7 @@ impl Voice {
                 if self.send.load(Ordering::SeqCst) {
                     let me = Arc::clone(self);
                     handle.spawn(async move {
-                        if let Err(e) = me.pilot.ask(&text, false).await {
+                        if let Err(e) = me.pilot.ask(&text, false, true).await {
                             *lock(&me.error) = e;
                             me.publish();
                         }
@@ -681,8 +672,8 @@ impl Voice {
         }
     }
 
-    pub fn start(self: &Arc<Self>, send: bool, hold: bool) {
-        if !self.begin(send, hold) {
+    pub fn start(self: &Arc<Self>, send: bool) {
+        if !self.begin(send) {
             return;
         }
         self.spawn_record();
@@ -691,7 +682,7 @@ impl Voice {
     /// « Karénine » was heard (wake.rs): listen to the request, with the
     /// word's audio in front so that Whisper confirms it.
     pub fn woken(self: &Arc<Self>, preroll: Vec<f32>, rate: u32) {
-        if !self.begin(true, false) {
+        if !self.begin(true) {
             return;
         }
         self.woken.store(true, Ordering::SeqCst);
@@ -736,8 +727,8 @@ impl Voice {
     /// Play a recording through the listening loop in real time, as if said
     /// into the microphone: the same end-of-speech detection, live
     /// transcript and outcome. For trying the whole path without speaking.
-    pub fn simulate(self: &Arc<Self>, samples: Vec<f32>, rate: u32, send: bool, hold: bool) {
-        if !self.begin(send, hold) {
+    pub fn simulate(self: &Arc<Self>, samples: Vec<f32>, rate: u32, send: bool) {
+        if !self.begin(send) {
             return;
         }
         let me = Arc::clone(self);
@@ -802,7 +793,6 @@ impl Voice {
         let mut pending: Vec<f32> = Vec::new();
         let mut frames = 0usize;
         let mut last_partial = Instant::now();
-        let hold = self.hold.load(Ordering::SeqCst);
         // Started by the wake word: its first transcript must begin with
         // « Karénine », or the detector was wrong and the turn stops there.
         let woken = self.woken.load(Ordering::SeqCst);
@@ -814,9 +804,7 @@ impl Voice {
         let outcome = 'listen: loop {
             if self.stop.load(Ordering::SeqCst) {
                 // Stopped by hand: only what followed real speech counts.
-                // A held key marks speech itself (one speaks at once, so
-                // the room noise is never measured).
-                break if (hold || ep.heard_speech()) && all.len() > rate as usize / 2 {
+                break if ep.heard_speech() && all.len() > rate as usize / 2 {
                     Endpoint::Done
                 } else {
                     Endpoint::Nothing
@@ -841,14 +829,12 @@ impl Voice {
                 }
                 match fed {
                     Endpoint::More => {}
-                    // Key held: silences are pauses; only a runaway hold ends.
-                    _ if hold && (all.len() as f32) < rate as f32 * HOLD_MAX => {}
                     end => break 'listen end,
                 }
             }
             // The transcript so far. Audio arriving meanwhile waits in the
             // capture channel: nothing is lost, the pass is just late.
-            if (hold || woken || ep.heard_speech()) && last_partial.elapsed() >= PARTIAL_EVERY {
+            if (woken || ep.heard_speech()) && last_partial.elapsed() >= PARTIAL_EVERY {
                 if let Some(Ok(text)) = self.transcribe_warm(&all, rate) {
                     last_partial_text = Some((all.len(), text.clone()));
                     // The wake word isn't part of the request.
@@ -877,11 +863,10 @@ impl Voice {
         }
 
         // The last partial came after the end of speech: it is the final
-        // transcript already. Not with a held key: the noise floor is then
-        // measured on speech, and loud frames say little.
+        // transcript already.
         if let Some((covered, text)) = last_partial_text {
             let margin = (rate as f32 * FINAL_MARGIN) as usize;
-            if !hold && !text.is_empty() && covered >= speech_end + margin {
+            if !text.is_empty() && covered >= speech_end + margin {
                 return Ok(Some(text));
             }
         }

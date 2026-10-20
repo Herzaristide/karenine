@@ -14,6 +14,25 @@ pub fn accent_dir() -> PathBuf {
     home_dir().join(".config/accent")
 }
 
+/// `XDG_<key>_DIR` from `~/.config/user-dirs.dirs` (`PICTURES`, `MUSIC`…),
+/// else `~/<fallback>`.
+pub fn user_dir(key: &str, fallback: &str) -> PathBuf {
+    let home = home_dir();
+    let prefix = format!("XDG_{key}_DIR=");
+    std::fs::read_to_string(home.join(".config/user-dirs.dirs"))
+        .ok()
+        .and_then(|text| {
+            text.lines()
+                .find_map(|l| l.trim().strip_prefix(prefix.as_str()).map(str::to_string))
+                .map(|v| {
+                    v.trim_matches('"')
+                        .replace("$HOME", &home.to_string_lossy())
+                })
+        })
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(fallback))
+}
+
 /// Path to the anna control socket: `$XDG_RUNTIME_DIR/anna.sock`.
 pub fn socket_path() -> String {
     format!("{}/anna.sock", runtime_dir())

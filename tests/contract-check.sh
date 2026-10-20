@@ -44,4 +44,21 @@ for q in $(find "$root" -name qmldir -not -path '*/target/*' -not -path '*/.clau
     done
 done
 
+# Les icônes : chaque SVG nommé par le QML (`"play.svg"`, `glyph("file")`)
+# existe, et chaque SVG de assets/icons vient de phosphor.list (cf. sync.sh).
+icons="$root/assets/icons"
+find "$root" -name '*.qml' -not -path '*/tests/*' -not -path '*/.claude/*' \
+        -not -path '*/target/*' -exec cat {} + \
+    | grep -oE '"[a-z0-9-]+\.svg"|glyph\("[a-z0-9-]+"\)' \
+    | sed -E 's/^glyph\("([a-z0-9-]+)"\)$/\1.svg/; s/"//g' \
+    | sort -u > "$work/icons"
+for f in $(cat "$work/icons"); do
+    [ -f "$icons/$f" ] || [ -f "$root/assets/$f" ] || { echo "icône introuvable : $f" >&2; status=1; }
+done
+grep -vE '^[[:space:]]*(#|$)' "$icons/phosphor.list" | awk '{ print $1 ".svg" }' | sort > "$work/listed"
+for f in "$icons"/*.svg; do
+    grep -qxF "$(basename "$f")" "$work/listed" \
+        || { echo "assets/icons/$(basename "$f") n'est pas dans phosphor.list" >&2; status=1; }
+done
+
 exit $status

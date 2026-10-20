@@ -110,10 +110,8 @@ ColumnLayout {
         Layout.fillWidth: true
         // Un nom long passe sur deux lignes : la carte grandit.
         implicitHeight: Math.max(46, rowText.implicitHeight + 16)
-        radius: 14
+        radius: Theme.radius
         color: Qt.alpha(Theme.textPrimary, 0.05)
-        border.width: 1
-        border.color: Qt.alpha(Theme.textPrimary, 0.08)
 
         Column {
             id: rowText

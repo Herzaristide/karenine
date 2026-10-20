@@ -1,8 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <polygon fill="#ffffff" points="12,2.6 15.4,4.6 15.4,11.4 12,13.4 8.6,11.4 8.6,4.6"/>
-  <g fill="none" stroke="#ffffff" stroke-width="2.1" stroke-linecap="butt" stroke-linejoin="miter">
-    <path d="M5.4 10 V12.2 L12 16 L18.6 12.2 V10"/>
-    <path d="M12 16 V21.4"/>
-    <path d="M8.4 21.4 H15.6"/>
-  </g>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="#ffffff"><path d="M128,176a48.05,48.05,0,0,0,48-48V64a48,48,0,0,0-96,0v64A48.05,48.05,0,0,0,128,176ZM96,64a32,32,0,0,1,64,0v64a32,32,0,0,1-64,0Zm40,143.6V240a8,8,0,0,1-16,0V207.6A80.11,80.11,0,0,1,48,128a8,8,0,0,1,16,0,64,64,0,0,0,128,0,8,8,0,0,1,16,0A80.11,80.11,0,0,1,136,207.6Z"/></svg>

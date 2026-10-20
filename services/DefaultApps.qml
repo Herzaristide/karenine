@@ -3,7 +3,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 
-// Résout les trois outils que le dock utilise pour ouvrir un fichier — éditeur,
+// Résout les trois outils que la barre utilise pour ouvrir un fichier — éditeur,
 // explorateur, terminal — à partir des réglages du système, jamais en dur. Si
 // tu changes de défaut, la carte suit : icône comprise.
 //
@@ -79,14 +79,14 @@ QtObject {
         if (entry) {
             for (var i = 0; i < entry.command.length; i++)
                 argv.push(entry.command[i]);
-            icon = Quickshell.iconPath(entry.icon, true);
+            icon = Theme.icon(entry.icon, true);
         }
         if (argv.length === 0 && bin.length > 0)
             argv = [bin];
         if (icon.length === 0 && argv.length > 0)
-            icon = Quickshell.iconPath(argv[0], true);
+            icon = Theme.icon(argv[0], true);
         if (icon.length === 0)
-            icon = Quickshell.iconPath(generic, true);
+            icon = Theme.icon(generic, true);
 
         return {
             bin:  argv.length > 0 ? argv[0] : "",

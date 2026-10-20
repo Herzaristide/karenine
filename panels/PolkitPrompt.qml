@@ -97,7 +97,7 @@ PanelWindow { // qmllint disable uncreatable-type
         anchors.centerIn: parent
         width: 420
         implicitHeight: col.implicitHeight + 40
-        radius: 16
+        radius: Theme.radius
         color: Theme.bgDeep
         border.width: 1
         border.color: prompt.failed ? Theme.colorDanger : Theme.dividerColor
@@ -250,7 +250,7 @@ PanelWindow { // qmllint disable uncreatable-type
 
         implicitWidth: btnText.implicitWidth + 28
         implicitHeight: 32
-        radius: 10
+        radius: Theme.radiusSmall
         color: btn.primary ? Theme.accentColor : (btn.hovered ? Theme.hoverOverlay : "transparent")
         border.width: btn.primary ? 0 : 1
         border.color: Theme.dividerColor

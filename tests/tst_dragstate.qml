@@ -2,7 +2,7 @@ import QtQuick
 import QtTest
 import "pure"  // monté par tests/run.sh
 
-// Le drapeau qui suspend la fermeture du dock pendant un glisser
+// Le drapeau qui suspend la fermeture de la barre pendant un glisser
 // (services/DragState.qml).
 TestCase {
     name: "DragState"

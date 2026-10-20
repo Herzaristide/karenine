@@ -12,7 +12,7 @@ Rectangle {
 
     anchors.fill: parent
     anchors.margins: -gap
-    radius: height / 2
+    radius: Theme.radiusSmall + gap
     color: "transparent"
     border.width: 2
     border.color: Qt.alpha(Theme.glow(0), 0.9)

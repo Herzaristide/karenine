@@ -1,24 +1,24 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Effects
-import QtQuick.Shapes
 import Quickshell
 import Quickshell.Wayland
 import "../services"
+import "../widgets"
 
 // La barre de conversation : tout ce qui reste de la barre du haut. Une
 // pastille en bas au centre, le flocon NixOS à gauche, le champ à droite ;
-// ce qu'on y écrit va au pilote (ClaudeLive.pilotAsk), et sa réponse
+// ce qu'on y écrit va au pilote (Pilot.pilotAsk), et sa réponse
 // s'affiche juste au-dessus.
 //
 //          ╭──────────────────────────────────────────╮
 //          │ › baisse le son                       ✕  │   le dernier tour,
 //          │ (volume {"delta":-10})                   │   sur une carte du
-//          │ Volume à 40 %.                           │   même verre
+//          │ Volume à 40 %.                           │   même aplat
 //          ╰──────────────────────────────────────────╯
-//         ✦╭──────────────────────────────────────────╮✦  capsule de verre,
-//         ✦│ ❄  Demander à Karénine…             (🎤) │✦  halo irisé quand
-//         ✦╰──────────────────────────────────────────╯✦  elle écoute ou pense
+//          ╭──────────────────────────────────────────╮   un aplat opaque,
+//          │ ❄  Demander à Karénine…             (🎤) │   filet d'accent quand
+//          ╰──────────────────────────────────────────╯   elle écoute ou pense
 //
 // Cachée par défaut : elle monte du bord de l'écran quand on dit « Karénine »
 // ou qu'on tape Super, et repart une fois la réponse lue. La voix passe par le même
@@ -30,9 +30,9 @@ import "../services"
 // widgets, un onglet à la fois (panels/WidgetHub.qml).
 //
 // La même barre cherche : dès la première lettre, les suggestions
-// (applications, fichiers, réglages, web — le service Search, celui de
-// l'ancien dock) s'empilent juste au-dessus, sur une carte du même verre que
-// la capsule, la meilleure contre la barre. Écrire referme les widgets.
+// (applications, fichiers, réglages, web — le service Search) s'empilent
+// juste au-dessus, sur une carte du même aplat que la capsule, la meilleure
+// contre la barre. Écrire referme les widgets.
 // Entrée part toujours au pilote ; ↑ entre dans la liste, et Entrée ou un
 // clic ouvre alors la suggestion retenue.
 //
@@ -53,7 +53,9 @@ PanelWindow { // qmllint disable uncreatable-type
     // Distance au bord de l'écran.
     readonly property int gap: 120
 
-    WlrLayershell.layer: WlrLayer.Top
+    // Overlay, pas Top : une fenêtre en plein écran passe devant la couche
+    // Top dans Hyprland, et la barre n'apparaîtrait plus quand on l'appelle.
+    WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.namespace: "quickshell-conversation"
     // Exclusive le temps d'une demande au clavier : une surface layer ne
     // reçoit les frappes qu'une fois cliquée sinon.
@@ -89,7 +91,7 @@ PanelWindow { // qmllint disable uncreatable-type
     // suivante (la voix qui se tait, le pilote qui prend la main).
     readonly property bool wanted: !bar.dismissed
                                    && (bar.voiceOn || bar.focusRequested || input.activeFocus
-                                       || input.text.length > 0 || ClaudeLive.pilotBusy || answer.shown
+                                       || input.text.length > 0 || Pilot.pilotBusy || answer.shown
                                        || Widgets.hubOpen)
     property bool shown: false
     // ── Les widgets ──────────────────────────────────────────────
@@ -182,7 +184,7 @@ PanelWindow { // qmllint disable uncreatable-type
     readonly property int leaveSlack: 60
     readonly property bool pointerInside: pillHover.hovered || resultsHover.hovered
     readonly property bool typing: bar.shown && !bar.dismissed && !bar.voiceOn
-                                   && !ClaudeLive.pilotBusy
+                                   && !Pilot.pilotBusy
                                    && (bar.focusRequested || input.activeFocus || input.text.length > 0)
     // La plus courte distance du curseur à la barre depuis l'ouverture ;
     // -1 : pas encore mesurée.
@@ -285,10 +287,10 @@ PanelWindow { // qmllint disable uncreatable-type
         easing.type: Easing.InCubic
     }
 
-    // Le niveau de la voix, lissé : le halo, le flocon et l'onde le suivent
+    // Le niveau de la voix, lissé : le filet et l'onde le suivent
     // sans à-coups.
-    property real level: ClaudeLive.voicePhase === "listening"
-                         ? Math.min(1, ClaudeLive.voiceLevel * 1.5) : 0
+    property real level: Pilot.voicePhase === "listening"
+                         ? Math.min(1, Pilot.voiceLevel * 1.5) : 0
     Behavior on level { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
 
     onFocusRequestedChanged: {
@@ -314,7 +316,7 @@ PanelWindow { // qmllint disable uncreatable-type
         if (text.length === 0)
             return;
         bar.launch(text);
-        ClaudeLive.pilotAsk(text, false);
+        Pilot.pilotAsk(text, false);
         // La réponse s'affiche au-dessus de la capsule fermée.
         Widgets.hubOpen = false;
         input.text = "";
@@ -460,7 +462,7 @@ PanelWindow { // qmllint disable uncreatable-type
             radius: 7
             color: slider.knobColor
             border.width: 2
-            border.color: "#ffffff"
+            border.color: Theme.bgDeep
             scale: knobMa.pressed ? 1.15 : 1
             Behavior on scale { NumberAnimation { duration: 100 } }
         }
@@ -509,7 +511,7 @@ PanelWindow { // qmllint disable uncreatable-type
                     width: 14
                     height: 14
                     radius: 7
-                    color: "#ffffff"
+                    color: Theme.darkMode ? Theme.bgDeep : "#ffffff"
                     Behavior on x { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
                 }
                 MouseArea {
@@ -561,37 +563,45 @@ PanelWindow { // qmllint disable uncreatable-type
         }
     }
 
-    // L'icône d'un résultat, prise au thème ; vide, l'initiale prend le relais.
+    // Une icône de assets/icons (Phosphor), que la ligne teinte.
+    readonly property string glyphDir: "../assets/icons/"
+    function glyph(name) {
+        return bar.glyphDir + name + ".svg";
+    }
+
+    // L'icône d'un résultat : celle de l'application (prise au thème), une
+    // image qui se montre elle-même, ou une icône de assets/icons ; vide,
+    // l'initiale prend le relais.
     function iconFor(item) {
         var p = item.payload || {};
         switch (item.type) {
         case "app":
-            return p.entry && p.entry.icon ? Quickshell.iconPath(p.entry.icon, true) : "";
+            return p.entry && p.entry.icon ? Theme.icon(p.entry.icon, true) : "";
         case "file":
             if (p.isDir)
-                return Quickshell.iconPath("folder", true);
+                return bar.glyph("folder");
             // Une image se montre elle-même.
             if (bar.imageSuffixes.indexOf((p.suffix || "").toLowerCase()) !== -1)
                 return "file://" + p.path.split("/").map(encodeURIComponent).join("/");
-            return Quickshell.iconPath("text-x-generic", true);
+            return bar.glyph("file-text");
         case "web":
             return DefaultApps.browser ? DefaultApps.browser.icon : "";
         case "wallpaper":
-            return Quickshell.iconPath("preferences-desktop-wallpaper", true);
+            return bar.glyph("wallpaper");
         case "note":
             if (p.create)
-                return Quickshell.iconPath("document-new", true);
+                return bar.glyph("file-new");
             // Une note image se montre elle-même.
             if (p.note && p.note.image)
                 return "file://" + p.note.image.split("/").map(encodeURIComponent).join("/");
-            return Quickshell.iconPath("text-x-generic", true);
+            return bar.glyph("notes");
         case "setting":
             switch (p.key) {
-            case "volume":     return Quickshell.iconPath("audio-volume-high", true);
-            case "theme":      return Quickshell.iconPath("preferences-desktop-theme", true);
-            case "accent":     return Quickshell.iconPath("preferences-desktop-color", true);
-            case "screenshot": return Quickshell.iconPath("applets-screenshooter", true);
-            case "language":   return Quickshell.iconPath("preferences-desktop-locale", true);
+            case "volume":     return bar.glyph("volume");
+            case "theme":      return bar.glyph("theme");
+            case "accent":     return bar.glyph("accent");
+            case "screenshot": return bar.glyph("screenshot");
+            case "language":   return bar.glyph("language");
             }
         }
         return "";
@@ -608,7 +618,7 @@ PanelWindow { // qmllint disable uncreatable-type
     // Les éléments depuis la dernière demande : { heard, actions, reply,
     // failed }.
     readonly property var turn: {
-        var items = ClaudeLive.pilotItems;
+        var items = Pilot.pilotItems;
         var start = items.length - 1;
         while (start >= 0 && items[start].kind !== "user")
             start--;
@@ -624,19 +634,19 @@ PanelWindow { // qmllint disable uncreatable-type
         };
     }
 
-    readonly property bool voiceOn: ClaudeLive.voicePhase !== "idle"
+    readonly property bool voiceOn: Pilot.voicePhase !== "idle"
 
     // Le pilote a fini sur une question (« quelle fenêtre ? ») : la réponse
     // reste affichée jusqu'à ce qu'on y réponde.
-    readonly property bool asking: !ClaudeLive.pilotBusy && bar.turn !== null
+    readonly property bool asking: !Pilot.pilotBusy && bar.turn !== null
                                    && !bar.turn.failed && bar.turn.reply.trim().endsWith("?")
 
     Connections {
-        target: ClaudeLive
+        target: Pilot
         // Une demande partie d'ailleurs (la voix, `anna`) : sa réponse
         // s'affiche ici aussi.
         function onPilotBusyChanged() {
-            if (ClaudeLive.pilotBusy) {
+            if (Pilot.pilotBusy) {
                 bar.dismissed = false;
                 answer.show();
             }
@@ -647,19 +657,18 @@ PanelWindow { // qmllint disable uncreatable-type
         }
         // Rien entendu, modèle absent… : dit une fois, brièvement.
         function onVoiceErrorChanged() {
-            if (ClaudeLive.voiceError.length === 0)
+            if (Pilot.voiceError.length === 0)
                 return;
-            answer.notice = "🎙 " + ClaudeLive.voiceError;
+            answer.notice = "🎙 " + Pilot.voiceError;
             answer.show();
             answer.hideLater(0);
         }
     }
 
     // ── La réponse, au-dessus de la barre ────────────────────────
-    // Une carte du même verre que la capsule et les suggestions (Hyprland la
-    // floute, son ombre vit avec celle de la capsule). En haut, ce qui a été
-    // demandé, discret, et de quoi la fermer ; puis ce que le pilote a fait,
-    // en pastilles ; puis sa réponse.
+    // Une carte du même aplat que la capsule et les suggestions. En haut,
+    // ce qui a été demandé, discret, et de quoi la fermer ; puis ce que le
+    // pilote a fait, en pastilles ; puis sa réponse.
     Item {
         id: answer
 
@@ -716,27 +725,18 @@ PanelWindow { // qmllint disable uncreatable-type
             onHoveredChanged: {
                 if (hovered)
                     hideTimer.stop();
-                else if (answer.shown && !ClaudeLive.pilotBusy)
+                else if (answer.shown && !Pilot.pilotBusy)
                     hideTimer.restart();
             }
         }
 
-        // Le verre, et son reflet en haut, comme la capsule.
+        // Le même aplat que la capsule.
         Rectangle {
             anchors.fill: parent
-            radius: 22
-            color: Qt.alpha(Theme.bgDeep, Theme.darkMode ? 0.62 : 0.7)
+            radius: Theme.radius
+            color: Theme.bgDeep
             border.width: 1
-            border.color: Theme.darkMode ? Qt.rgba(1, 1, 1, 0.09) : Qt.rgba(0, 0, 0, 0.08)
-        }
-        Rectangle {
-            anchors.fill: parent
-            anchors.margins: 1
-            radius: 21
-            gradient: Gradient {
-                GradientStop { position: 0.0; color: Theme.darkMode ? Qt.rgba(1, 1, 1, 0.07) : Qt.rgba(1, 1, 1, 0.5) }
-                GradientStop { position: Math.min(1, 30 / Math.max(1, answer.height)); color: "transparent" }
-            }
+            border.color: Theme.dividerColor
         }
 
         // Un clic droit la congédie.
@@ -805,15 +805,14 @@ PanelWindow { // qmllint disable uncreatable-type
                         anchors.verticalCenter: parent.verticalCenter
                         width: 22
                         height: 22
-                        radius: 11
-                        color: Qt.alpha(Theme.textPrimary, closeMa.containsMouse ? 0.1 : 0.05)
+                        radius: Theme.radiusSmall
+                        color: closeMa.containsMouse ? Theme.hoverOverlay : "transparent"
                         Behavior on color { ColorAnimation { duration: 140 } }
 
-                        Text {
+                        NixIcon {
                             anchors.centerIn: parent
-                            text: "✕"
-                            font.family: bar.uiFont
-                            font.pixelSize: 10
+                            iconSize: 10
+                            source: "../assets/icons/close.svg"
                             color: closeMa.containsMouse ? Theme.textPrimary : Theme.textSecondary
                         }
                         MouseArea {
@@ -842,10 +841,8 @@ PanelWindow { // qmllint disable uncreatable-type
                             required property string modelData
                             width: Math.min(chipLabel.implicitWidth + 18, column.width)
                             height: 22
-                            radius: 11
-                            color: Qt.alpha(bar.hue(0), 0.13)
-                            border.width: 1
-                            border.color: Qt.alpha(bar.hue(0), 0.22)
+                            radius: 6
+                            color: Theme.hoverOverlay
 
                             Text {
                                 id: chipLabel
@@ -883,10 +880,8 @@ PanelWindow { // qmllint disable uncreatable-type
                     visible: bar.asking && answer.notice.length === 0
                     width: askLabel.implicitWidth + 20
                     height: 24
-                    radius: 12
-                    color: Qt.alpha(bar.hue(0), 0.18)
-                    border.width: 1
-                    border.color: Qt.alpha(bar.hue(0), 0.38)
+                    radius: 6
+                    color: Theme.selectedFill
 
                     Text {
                         id: askLabel
@@ -901,7 +896,7 @@ PanelWindow { // qmllint disable uncreatable-type
 
                 // Le pilote réfléchit : trois points qui respirent.
                 Row {
-                    visible: answer.notice.length === 0 && ClaudeLive.pilotBusy
+                    visible: answer.notice.length === 0 && Pilot.pilotBusy
                     height: 14
                     spacing: 5
                     Repeater {
@@ -915,7 +910,7 @@ PanelWindow { // qmllint disable uncreatable-type
                             radius: 3.5
                             color: bar.hue(dot.index * 0.14)
                             SequentialAnimation on opacity {
-                                running: ClaudeLive.pilotBusy && bar.shown
+                                running: Pilot.pilotBusy && bar.shown
                                 loops: Animation.Infinite
                                 PauseAnimation { duration: dot.index * 160 }
                                 NumberAnimation { to: 0.25; duration: 420; easing.type: Easing.InOutSine }
@@ -929,12 +924,11 @@ PanelWindow { // qmllint disable uncreatable-type
     }
 
     // ── Les suggestions, au-dessus de la barre ───────────────────
-    // Une carte du même verre que la capsule (Hyprland la floute aussi, son
-    // ombre vit avec celle de la capsule), posée juste au-dessus : une ligne
-    // par suggestion, l'icône, le nom puis où il se trouve, et son type dans
-    // une pastille à droite. La meilleure est en bas, contre la barre, pour
-    // que ↑ y entre directement ; la retenue prend la teinte de la barre,
-    // comme l'onglet actif des widgets.
+    // Une carte du même aplat que la capsule, posée juste au-dessus : une
+    // ligne par suggestion, l'icône, le nom puis où il se trouve, et son type
+    // à droite. La meilleure est en bas, contre la barre, pour que ↑ y entre
+    // directement ; la retenue prend un fond d'accent, comme l'onglet actif
+    // des widgets.
     Item {
         id: results
 
@@ -965,22 +959,13 @@ PanelWindow { // qmllint disable uncreatable-type
 
         HoverHandler { id: resultsHover }
 
-        // Le verre, et son reflet en haut, comme la capsule.
+        // Le même aplat que la capsule.
         Rectangle {
             anchors.fill: parent
-            radius: 22
-            color: Qt.alpha(Theme.bgDeep, Theme.darkMode ? 0.62 : 0.7)
+            radius: Theme.radius
+            color: Theme.bgDeep
             border.width: 1
-            border.color: Theme.darkMode ? Qt.rgba(1, 1, 1, 0.09) : Qt.rgba(0, 0, 0, 0.08)
-        }
-        Rectangle {
-            anchors.fill: parent
-            anchors.margins: 1
-            radius: 21
-            gradient: Gradient {
-                GradientStop { position: 0.0; color: Theme.darkMode ? Qt.rgba(1, 1, 1, 0.07) : Qt.rgba(1, 1, 1, 0.5) }
-                GradientStop { position: Math.min(1, 30 / Math.max(1, results.height)); color: "transparent" }
-            }
+            border.color: Theme.dividerColor
         }
 
         ListView {
@@ -1009,6 +994,7 @@ PanelWindow { // qmllint disable uncreatable-type
 
                 readonly property bool current: bar.selected === row.index
                 readonly property string icon: bar.iconFor(row.modelData)
+                readonly property bool glyph: row.icon.indexOf(bar.glyphDir) === 0
                 // Un réglage se règle sur place : son contrôle prend la place
                 // de la pastille du type. Les écrans, eux, passent au suivant
                 // d'un clic.
@@ -1017,11 +1003,9 @@ PanelWindow { // qmllint disable uncreatable-type
 
                 Rectangle {
                     anchors.fill: parent
-                    radius: height / 2
-                    color: row.current ? Qt.alpha(bar.hue(0), 0.16)
-                                       : Qt.alpha(Theme.textPrimary, rowMa.containsMouse ? 0.06 : 0)
-                    border.width: row.current ? 1 : 0
-                    border.color: Qt.alpha(bar.hue(0), 0.38)
+                    radius: Theme.radiusSmall
+                    color: row.current ? Theme.selectedFill
+                                       : rowMa.containsMouse ? Theme.hoverOverlay : "transparent"
                     Behavior on color { ColorAnimation { duration: 120 } }
                 }
 
@@ -1037,25 +1021,34 @@ PanelWindow { // qmllint disable uncreatable-type
                     Image {
                         id: rowImage
                         anchors.fill: parent
-                        source: row.icon
+                        source: row.glyph ? "" : row.icon
                         sourceSize.width: 48
                         sourceSize.height: 48
                         fillMode: row.icon.startsWith("file://") ? Image.PreserveAspectCrop
                                                                  : Image.PreserveAspectFit
                         asynchronous: true
                         smooth: true
-                        visible: row.icon.length > 0 && rowImage.status !== Image.Error
+                        visible: !row.glyph && row.icon.length > 0 && rowImage.status !== Image.Error
                     }
 
-                    // Repli : l'initiale, sur une pastille de la teinte du type.
+                    // Sinon, une pastille de la teinte du type : l'icône de
+                    // assets/icons, ou à défaut l'initiale.
                     Rectangle {
                         anchors.fill: parent
                         radius: 7
                         visible: !rowImage.visible
                         color: Qt.alpha(row.modelData.tone, 0.2)
 
+                        NixIcon {
+                            anchors.centerIn: parent
+                            visible: row.glyph
+                            iconSize: 14
+                            source: row.glyph ? row.icon : ""
+                            color: row.modelData.tone
+                        }
                         Text {
                             anchors.centerIn: parent
+                            visible: !row.glyph
                             text: row.modelData.title.substring(0, 1).toUpperCase()
                             color: row.modelData.tone
                             font.family: bar.uiFont
@@ -1075,8 +1068,8 @@ PanelWindow { // qmllint disable uncreatable-type
                     anchors.verticalCenter: parent.verticalCenter
                     width: kindLabel.implicitWidth + 16
                     height: 22
-                    radius: 11
-                    color: row.current ? Qt.alpha(bar.hue(0), 0.22) : Qt.alpha(row.modelData.tone, 0.13)
+                    radius: 6
+                    color: row.current ? "transparent" : Theme.hoverOverlay
                     Behavior on color { ColorAnimation { duration: 120 } }
 
                     Text {
@@ -1149,243 +1142,15 @@ PanelWindow { // qmllint disable uncreatable-type
     }
 
     // ── La barre ─────────────────────────────────────────────────
-    // Une capsule de verre, à la façon de macOS, toujours à sa pleine largeur :
-    // seules son arrivée et son départ s'animent. L'écoute et la réflexion
-    // l'entourent d'un halo irisé qui tourne lentement.
-    readonly property bool glowing: bar.voiceOn || ClaudeLive.pilotBusy
+    // Un aplat opaque aux coins des cartes, toujours à sa pleine largeur :
+    // seules son arrivée et son départ s'animent. Ni verre, ni ombre, ni
+    // halo : l'écoute et la réflexion passent son filet à l'accent.
+    readonly property bool glowing: bar.voiceOn || Pilot.pilotBusy
     readonly property string uiFont: "Inter"
 
-    // Les teintes du halo, autour de la couleur d'accent.
+    // L'accent ; `shift` ne sert plus (cf. Theme.glow).
     function hue(shift) {
         return Theme.glow(shift);
-    }
-
-    // L'ombre portée d'une carte de verre (suggestions, réponse), découpée à
-    // sa forme comme celle de la capsule : elle ne passe jamais sous le verre.
-    component CardShadow: Item {
-        id: cs
-        required property Item card
-        readonly property int margin: 40
-        width: cs.card.width + 2 * cs.margin
-        height: cs.card.height + 2 * cs.margin
-        visible: cs.card.visible
-
-        Item {
-            id: csShadow
-            anchors.fill: parent
-            visible: false
-            layer.enabled: true
-            Rectangle {
-                x: cs.margin
-                y: cs.margin + 6
-                width: cs.card.width
-                height: cs.card.height
-                radius: 22
-                color: "#000000"
-            }
-        }
-        Item {
-            id: csCut
-            anchors.fill: parent
-            visible: false
-            layer.enabled: true
-            Rectangle {
-                x: cs.margin
-                y: cs.margin
-                width: cs.card.width
-                height: cs.card.height
-                radius: 22
-                color: "#000000"
-            }
-        }
-        MultiEffect {
-            anchors.fill: parent
-            source: csShadow
-            autoPaddingEnabled: false
-            blurEnabled: true
-            blur: 1.0
-            blurMax: 32
-            opacity: (Theme.darkMode ? 0.55 : 0.22) * cs.card.opacity
-            maskEnabled: true
-            maskSource: csCut
-            maskInverted: true
-        }
-    }
-
-    // ── Le halo ──────────────────────────────────────────────────
-    // Un anneau au dégradé conique, collé au bord de la capsule : une copie
-    // floutée pour la lueur, une copie nette pour le fil. Il vit dans sa
-    // propre surface, sans flou ni clic : sur celle de la barre, Hyprland
-    // flouterait toute la zone où la lueur laisse une trace.
-    property PanelWindow glowWindow: PanelWindow { // qmllint disable uncreatable-type
-        screen: bar.screen
-        WlrLayershell.layer: WlrLayer.Top
-        WlrLayershell.namespace: "quickshell-conversation-glow"
-        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-        anchors { bottom: true }
-        exclusionMode: ExclusionMode.Ignore
-        implicitWidth: bar.barW + 2 * glow.pad + 160
-        implicitHeight: bar.barH + bar.gap + 2 * glow.pad + 90 + bar.hubMax
-        color: "transparent"
-        mask: Region {} // qmllint disable unqualified
-
-        // L'ombre portée de la capsule, découpée à sa forme : elle ne
-        // passe jamais sous le verre. Ses calques ont la taille de la
-        // capsule et de la marge du flou, pas de la surface ; la capsule qui
-        // monte les déplace (Translate) sans les redessiner ni les reflouter.
-        Item {
-            id: shadowBox
-            // Le flou (blurMax) et le décalage de l'ombre y tiennent.
-            readonly property int margin: 40
-            x: (parent.width - pill.width) / 2 - margin
-            y: parent.height - bar.gap - pill.height - margin
-            width: pill.width + 2 * margin
-            height: pill.height + 2 * margin
-            transform: Translate { y: bar.lift }
-
-            Item {
-                id: shadowShape
-                anchors.fill: parent
-                visible: false
-                layer.enabled: true
-                Rectangle {
-                    x: shadowBox.margin
-                    y: shadowBox.margin + 6
-                    width: pill.width
-                    height: pill.height
-                    radius: bar.barH / 2
-                    color: "#000000"
-                }
-            }
-            Item {
-                id: pillShape
-                anchors.fill: parent
-                visible: false
-                layer.enabled: true
-                Rectangle {
-                    x: shadowBox.margin
-                    y: shadowBox.margin
-                    width: pill.width
-                    height: pill.height
-                    radius: bar.barH / 2
-                    color: "#000000"
-                }
-            }
-            MultiEffect {
-                anchors.fill: parent
-                source: shadowShape
-                autoPaddingEnabled: false
-                blurEnabled: true
-                blur: 1.0
-                blurMax: 32
-                opacity: (Theme.darkMode ? 0.55 : 0.22) * pill.opacity
-                visible: opacity > 0
-                maskEnabled: true
-                maskSource: pillShape
-                maskInverted: true
-            }
-        }
-
-        // La même ombre sous la carte des suggestions et sous celle de la
-        // réponse (jamais affichées ensemble).
-        CardShadow {
-            card: results
-            x: (parent.width - results.width) / 2 - margin
-            y: parent.height - bar.gap - pill.height - results.anchors.bottomMargin
-               - results.height - margin
-            transform: Translate { y: results.drop }
-        }
-        CardShadow {
-            card: answer
-            x: (parent.width - answer.width) / 2 - margin
-            y: parent.height - bar.gap - pill.height - answer.anchors.bottomMargin
-               - answer.height - margin
-            transform: Translate { y: answer.rise }
-        }
-
-        Item {
-            id: glow
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: bar.gap - glow.pad - bar.lift
-            width: pill.width + 2 * pad
-            height: pill.height + 2 * pad
-            scale: pill.scale * (0.97 + 0.03 * bar.reveal)
-            transformOrigin: Item.Bottom
-
-            readonly property int pad: 14
-            readonly property real thickness: 1.5
-            property real angle: 0
-
-            // L'écoute l'allume franchement, la réflexion à mi-voix.
-            opacity: (bar.glowing ? (bar.voiceOn ? 1 : 0.55) : 0) * pill.opacity
-            visible: opacity > 0
-            Behavior on opacity { NumberAnimation { duration: 420; easing.type: Easing.OutCubic } }
-
-            // Une rotation lente : les couleurs dérivent plus qu'elles ne tournent.
-            NumberAnimation on angle {
-                from: 0
-                to: 360
-                duration: 9000
-                loops: Animation.Infinite
-                running: glow.visible
-            }
-
-            Shape {
-                id: ring
-                anchors.fill: parent
-                visible: false
-                layer.enabled: true
-                preferredRendererType: Shape.CurveRenderer
-
-                ShapePath {
-                    strokeWidth: -1
-                    fillRule: ShapePath.OddEvenFill
-                    fillGradient: ConicalGradient {
-                        centerX: ring.width / 2
-                        centerY: ring.height / 2
-                        angle: glow.angle
-                        GradientStop { position: 0.0;  color: bar.hue(0) }
-                        GradientStop { position: 0.25; color: bar.hue(0.07) }
-                        GradientStop { position: 0.5;  color: bar.hue(-0.06) }
-                        GradientStop { position: 0.75; color: bar.hue(0.12) }
-                        GradientStop { position: 1.0;  color: bar.hue(0) }
-                    }
-                    PathRectangle {
-                        x: glow.pad - glow.thickness
-                        y: glow.pad - glow.thickness
-                        width: pill.width + 2 * glow.thickness
-                        height: pill.height + 2 * glow.thickness
-                        radius: bar.barH / 2 + glow.thickness
-                    }
-                    PathRectangle {
-                        x: glow.pad
-                        y: glow.pad
-                        width: pill.width
-                        height: pill.height
-                        radius: bar.barH / 2
-                    }
-                }
-            }
-
-            // La lueur : une auréole douce dont l'intensité suit la voix
-            // (lissée), sans que l'anneau ne change de taille.
-            MultiEffect {
-                anchors.fill: ring
-                source: ring
-                blurEnabled: true
-                blur: 1.0
-                blurMax: 40
-                opacity: 0.45 + 0.55 * bar.level
-            }
-
-            // Le fil net, discret.
-            MultiEffect {
-                anchors.fill: ring
-                source: ring
-                opacity: 0.85
-            }
-        }
     }
 
     Item {
@@ -1423,31 +1188,19 @@ PanelWindow { // qmllint disable uncreatable-type
             NumberAnimation { target: pill; property: "scale"; to: 1.0; duration: 380; easing.type: Easing.OutQuint }
         }
 
-        // ── Le verre ─────────────────────────────────────────────
-        // Translucide : Hyprland floute ce qui passe derrière (même règle de
-        // couche que les cartes de la réponse et des suggestions). Son ombre
-        // portée vit avec le halo, dans la surface sans flou.
-        // Les coins gardent le rayon de la capsule fermée : ouverte, elle
-        // devient une carte aux mêmes arrondis.
+        // ── L'aplat ──────────────────────────────────────────────
+        // Opaque, le fond du thème, et un filet discret. Fermée ou ouverte,
+        // les mêmes coins que les cartes. Le filet passe à l'accent pendant
+        // l'écoute et la réflexion.
         Rectangle {
-            id: glass
+            id: surface
             anchors.fill: parent
-            radius: bar.barH / 2
-            color: Qt.alpha(Theme.bgDeep, Theme.darkMode ? 0.62 : 0.7)
+            radius: Theme.radius
+            color: Theme.bgDeep
             border.width: 1
-            border.color: Theme.darkMode ? Qt.rgba(1, 1, 1, 0.09) : Qt.rgba(0, 0, 0, 0.08)
-        }
-
-        // Le reflet : un liseré clair en haut, qui s'éteint sur la hauteur
-        // d'une capsule fermée.
-        Rectangle {
-            anchors.fill: parent
-            anchors.margins: 1
-            radius: bar.barH / 2 - 1
-            gradient: Gradient {
-                GradientStop { position: 0.0; color: Theme.darkMode ? Qt.rgba(1, 1, 1, 0.09) : Qt.rgba(1, 1, 1, 0.55) }
-                GradientStop { position: 0.55 * bar.barH / Math.max(bar.barH, pill.height); color: "transparent" }
-            }
+            border.color: bar.glowing ? Qt.alpha(Theme.accentColor, bar.voiceOn ? 0.5 + 0.5 * bar.level : 0.45)
+                                      : Theme.dividerColor
+            Behavior on border.color { ColorAnimation { duration: 240; easing.type: Easing.OutCubic } }
         }
 
         // ── Les widgets, au-dessus du champ ──────────────────────
@@ -1469,12 +1222,7 @@ PanelWindow { // qmllint disable uncreatable-type
             width: pill.width - 44
             height: 1
             opacity: widgetHub.opacity
-            gradient: Gradient {
-                orientation: Gradient.Horizontal
-                GradientStop { position: 0.0; color: "transparent" }
-                GradientStop { position: 0.5; color: Qt.alpha(Theme.textPrimary, 0.12) }
-                GradientStop { position: 1.0; color: "transparent" }
-            }
+            color: Theme.dividerColor
         }
 
         // La ligne du champ : toujours la hauteur d'une capsule fermée, en bas.
@@ -1498,7 +1246,7 @@ PanelWindow { // qmllint disable uncreatable-type
             // Transcription ou pilote au travail : il tourne doucement. Pas
             // barre cachée : personne ne le voit.
             readonly property bool turning: bar.shown
-                                            && (ClaudeLive.voicePhase === "transcribing" || ClaudeLive.pilotBusy)
+                                            && (Pilot.voicePhase === "transcribing" || Pilot.pilotBusy)
             // Revient droit une fois le travail fini.
             onTurningChanged: if (!turning) settle.restart()
 
@@ -1591,13 +1339,11 @@ PanelWindow { // qmllint disable uncreatable-type
                 anchors.centerIn: parent
                 width: 34
                 height: 34
-                radius: 17
+                radius: Theme.radiusSmall
                 readonly property bool on: !sendBtn.on
                 property real popScale: 1.0
-                color: bar.voiceOn ? Qt.alpha(bar.hue(0), 0.2)
-                     : voiceMa.containsMouse ? Qt.alpha(Theme.textPrimary, 0.08) : "transparent"
-                border.width: bar.voiceOn ? 1 : 0
-                border.color: Qt.alpha(bar.hue(0), 0.45)
+                color: bar.voiceOn ? Theme.selectedFill
+                     : voiceMa.containsMouse ? Theme.hoverOverlay : "transparent"
                 Behavior on color { ColorAnimation { duration: 220; easing.type: Easing.OutCubic } }
                 opacity: on ? 1 : 0
                 scale: popScale * (on ? (voiceMa.pressed ? 0.92 : 1) : 0.7)
@@ -1642,7 +1388,7 @@ PanelWindow { // qmllint disable uncreatable-type
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     // Parler au pilote, ou couper l'écoute en cours.
-                    onClicked: ClaudeLive.voiceToggle(true)
+                    onClicked: Pilot.voiceToggle(true)
                 }
             }
 
@@ -1652,7 +1398,7 @@ PanelWindow { // qmllint disable uncreatable-type
                 anchors.centerIn: parent
                 width: 32
                 height: 32
-                radius: 16
+                radius: Theme.radiusSmall
                 color: bar.hue(0)
                 readonly property bool on: input.text.trim().length > 0 && !bar.voiceOn
                 opacity: on ? 1 : 0
@@ -1661,14 +1407,11 @@ PanelWindow { // qmllint disable uncreatable-type
                 Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
                 Behavior on scale { NumberAnimation { duration: 260; easing.type: Easing.OutQuint } }
 
-                Text {
+                NixIcon {
                     anchors.centerIn: parent
-                    anchors.verticalCenterOffset: -1
-                    text: "↑"
-                    font.family: bar.uiFont
-                    font.pixelSize: 17
-                    font.weight: Font.Bold
-                    color: "#ffffff"
+                    iconSize: 15
+                    source: "../assets/icons/send.svg"
+                    color: Theme.selectedTextColor
                 }
 
                 MouseArea {
@@ -1687,7 +1430,7 @@ PanelWindow { // qmllint disable uncreatable-type
                 anchors.centerIn: parent
                 spacing: 3
                 readonly property bool on: bar.voiceOn
-                readonly property bool transcribing: ClaudeLive.voicePhase === "transcribing"
+                readonly property bool transcribing: Pilot.voicePhase === "transcribing"
                 property real phase: 0
                 opacity: on ? 1 : 0
                 scale: on ? 1 : 0.7
@@ -1828,7 +1571,7 @@ PanelWindow { // qmllint disable uncreatable-type
                 Behavior on opacity { NumberAnimation { duration: 160 } }
                 Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
                 text: bar.asking && answer.shown ? I18n.tr("bar.yourAnswer")
-                    : ClaudeLive.voiceWake ? I18n.tr("bar.placeholderWake")
+                    : Pilot.voiceWake ? I18n.tr("bar.placeholderWake")
                     : I18n.tr("bar.placeholder")
                 font.family: bar.uiFont
                 font.pixelSize: 15
@@ -1863,12 +1606,12 @@ PanelWindow { // qmllint disable uncreatable-type
                 Behavior on opacity { NumberAnimation { duration: 200 } }
                 Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
                 elide: Text.ElideLeft
-                text: ClaudeLive.voiceText.length > 0 ? ClaudeLive.voiceText
-                    : ClaudeLive.voicePhase === "listening" ? I18n.tr("voice.listening") : I18n.tr("voice.transcribing")
+                text: Pilot.voiceText.length > 0 ? Pilot.voiceText
+                    : Pilot.voicePhase === "listening" ? I18n.tr("voice.listening") : I18n.tr("voice.transcribing")
                 font.family: bar.uiFont
                 font.pixelSize: 15
                 font.weight: Font.Medium
-                color: ClaudeLive.voicePartial || ClaudeLive.voicePhase === "transcribing"
+                color: Pilot.voicePartial || Pilot.voicePhase === "transcribing"
                        ? Theme.textSecondary : Theme.textPrimary
                 Behavior on color { ColorAnimation { duration: 200 } }
             }
