@@ -213,7 +213,8 @@ Item {
                     implicitHeight: 38
                     accent: true
                     fontSize: 13
-                    text: metroPanel.metroRunning ? "■  " + I18n.tr("common.stop") : "▶  " + I18n.tr("metronome.start")
+                    icon: Qt.resolvedUrl("../assets/icons/" + (metroPanel.metroRunning ? "stop.svg" : "play.svg"))
+                    text: metroPanel.metroRunning ? I18n.tr("common.stop") : I18n.tr("metronome.start")
                     onClicked: metroPanel.metroRunning = !metroPanel.metroRunning
                 }
                 // 2 → 3 → 4 → 5 → 6 → 2

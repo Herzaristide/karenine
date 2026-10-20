@@ -2,7 +2,7 @@
 //! to Claude Code, and how anna carries each one out.
 //!
 //! Every call lands in the daemon (`desk` command), never in the MCP process:
-//! the daemon owns the sessions, the theme and the bar.
+//! the daemon owns the theme and the bar.
 //!
 //! Hyprland is driven through its Lua dispatchers — the only syntax its Lua
 //! configuration accepts (see gesture/output.rs). Only forms whose arguments
@@ -56,7 +56,7 @@ pub fn tools() -> Value {
     let i = |d: &str| json!({ "type": "integer", "description": d });
     json!([
         tool("etat_bureau",
-            "L'état du bureau : fenêtre active, fenêtres ouvertes par workspace, volume, sessions Claude en cours.",
+            "L'état du bureau : fenêtre active, fenêtres ouvertes par workspace, volume.",
             json!({}), &[]),
         tool("aller_workspace", "Affiche le workspace demandé.",
             json!({ "numero": i("numéro du workspace (1 à 10)") }), &["numero"]),
@@ -93,7 +93,6 @@ pub fn tools() -> Value {
         tool("capture_ecran", "Fait une capture (copiée et enregistrée).",
             json!({ "zone": json!({ "type": "string", "enum": ["ecran", "selection", "fenetre"] }) }),
             &["zone"]),
-        tool("sessions", "Les sessions Claude Code en cours et leur état.", json!({}), &[]),
         tool("chercher_notes",
             "Cherche dans les notes de l'utilisateur (coffre Obsidian : recherches, projets, skills, lab).",
             json!({ "requete": s("mots à chercher") }), &["requete"]),
@@ -476,8 +475,7 @@ pub fn project_dir(name: &str) -> Result<String, String> {
         })
 }
 
-/// The desktop state, as `etat_bureau` reports it (without the sessions,
-/// which the daemon adds).
+/// The desktop state, as `etat_bureau` reports it.
 pub fn desktop_state() -> String {
     let mut out = Vec::new();
     let active = hypr_json("activewindow");
@@ -515,7 +513,7 @@ pub fn desktop_state() -> String {
 }
 
 /// Carry out one of the synchronous tools. The daemon handles the others
-/// (sessions, theme).
+/// (theme).
 pub fn run_tool(tool: &str, args: &Value) -> Result<String, String> {
     let s = |k: &str| {
         args.get(k)

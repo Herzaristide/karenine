@@ -7,9 +7,8 @@ import "../widgets"
 
 // Le fond d'écran : un tableau noir, sous toutes les fenêtres (la couche
 // Background du layer-shell). Il porte les notes qu'on y a posées, en
-// cartes, et les traits de craie autour (services/Board.qml) ; le tableau
-// est un seul, sur l'écran de l'interface. Les autres écrans reçoivent la
-// même ardoise, vide.
+// cartes, et les traits de craie autour (services/Board.qml). Chaque écran
+// a le sien : ce qu'on y écrit reste sur cet écran.
 //
 //   ┌──────────────────────────────────────────────────────────────┐
 //   │  ╭──────────────╮               ╭──╮                          │
@@ -38,14 +37,21 @@ import "../widgets"
 PanelWindow { // qmllint disable uncreatable-type
     id: slate
 
-    // Le tableau lui-même, ou une simple ardoise (les autres écrans).
-    property bool board: true
+    // L'écran de ce tableau (sa clé, cf. Display.screenKey), et s'il porte
+    // l'interface : celui-là garde aussi ce qui a été posé avant qu'il y ait
+    // un tableau par écran.
+    readonly property string key: Display.screenKey(slate.screen)
+    readonly property bool primary: slate.screen === Display.primary
+
+    // Ce qui est à ce tableau-ci.
+    readonly property var notes: Board.on(Board.notes, slate.key, slate.primary)
+    readonly property var strokes: Board.on(Board.strokes, slate.key, slate.primary)
 
     WlrLayershell.layer: WlrLayer.Background
     WlrLayershell.namespace: "quickshell-blackboard"
     // Le clavier au clic seulement : il revient aux fenêtres dès qu'on
     // clique dans l'une d'elles.
-    WlrLayershell.keyboardFocus: slate.board ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
     exclusionMode: ExclusionMode.Ignore
     anchors { top: true; bottom: true; left: true; right: true }
     color: Theme.bgDeep
@@ -179,7 +185,6 @@ PanelWindow { // qmllint disable uncreatable-type
         // En haut à gauche, calée sur le quadrillage. Sous la craie et les
         // cartes : on écrit par-dessus comme sur le reste du tableau.
         BoardClock {
-            visible: slate.board
             x: grid.cell * 2
             y: grid.cell * 2
             size: Math.round(slate.height * 0.19)
@@ -189,9 +194,8 @@ PanelWindow { // qmllint disable uncreatable-type
         Canvas {
             id: chalk
             anchors.fill: parent
-            visible: slate.board
             // Redessiné quand les traits, la taille ou les couleurs changent.
-            property var strokes: Board.strokes
+            property var strokes: slate.strokes
             property var hidden: slate.erasing
             property color chalkColor: Theme.textPrimary
             property color accentColor: Theme.accentColor
@@ -222,7 +226,6 @@ PanelWindow { // qmllint disable uncreatable-type
         Canvas {
             id: live
             anchors.fill: parent
-            visible: slate.board
             property var points: slate.livePoints
             property var waiting: slate.pending
             onPointsChanged: requestPaint()
@@ -243,7 +246,6 @@ PanelWindow { // qmllint disable uncreatable-type
         MouseArea {
             id: surface
             anchors.fill: parent
-            enabled: slate.board
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             cursorShape: pressedButtons & Qt.RightButton ? Qt.OpenHandCursor : Qt.CrossCursor
 
@@ -297,7 +299,8 @@ PanelWindow { // qmllint disable uncreatable-type
                     ink: slate.liveInk,
                     width: slate.chalkWidth,
                     points: simple.map(p => [Chalk.fraction(p[0] / slate.width),
-                                             Chalk.fraction(p[1] / slate.height)])
+                                             Chalk.fraction(p[1] / slate.height)]),
+                    screen: slate.key
                 });
             }
         }
@@ -309,7 +312,6 @@ PanelWindow { // qmllint disable uncreatable-type
         // la tenait.
         DropArea {
             anchors.fill: parent
-            enabled: slate.board
             keys: ["application/x-karenine-note", "text/plain"]
 
             onDropped: (drop) => {
@@ -318,9 +320,9 @@ PanelWindow { // qmllint disable uncreatable-type
                 var id = drop.formats.indexOf("application/x-karenine-note") >= 0
                          ? drop.getDataAsString("application/x-karenine-note") : "";
                 if (id !== "")
-                    Board.placeFromTab(id, x, y);
+                    Board.placeFromTab(id, x, y, slate.key);
                 else if (drop.hasText && drop.text.trim() !== "")
-                    Board.addNote(drop.text.trim(), x, y);
+                    Board.addNote(drop.text.trim(), x, y, slate.key);
                 else
                     return;
                 drop.accept(Qt.CopyAction);
@@ -329,7 +331,7 @@ PanelWindow { // qmllint disable uncreatable-type
 
         // ── Les cartes posées ────────────────────────────────────
         Repeater {
-            model: slate.board ? Board.notes : []
+            model: slate.notes
 
             delegate: Card {
                 id: placed
@@ -422,7 +424,7 @@ PanelWindow { // qmllint disable uncreatable-type
             onFinished: (text) => {
                 slate.composing = false;
                 if (text !== "")
-                    Board.addNote(text, composer.x / slate.width, composer.y / slate.height);
+                    Board.addNote(text, composer.x / slate.width, composer.y / slate.height, slate.key);
             }
         }
 
@@ -431,7 +433,7 @@ PanelWindow { // qmllint disable uncreatable-type
             anchors.left: parent.left
             anchors.bottom: parent.bottom
             anchors.margins: slate.margin
-            visible: slate.board && Board.feedback !== ""
+            visible: Board.feedback !== ""
             text: Board.feedback
             font.family: "Inter"
             font.pixelSize: 13
@@ -451,7 +453,7 @@ PanelWindow { // qmllint disable uncreatable-type
     // Le chiffon : les traits sous lui disparaissent, en attendant qu'anna
     // les efface pour de bon au relâcher.
     function wipe(x, y) {
-        var hit = Chalk.strokesNear(Board.strokes, [x, y], slate.eraserRadius, slate.width, slate.height);
+        var hit = Chalk.strokesNear(slate.strokes, [x, y], slate.eraserRadius, slate.width, slate.height);
         var fresh = hit.filter(id => slate.erasing.indexOf(id) < 0);
         if (fresh.length > 0)
             slate.erasing = slate.erasing.concat(fresh);

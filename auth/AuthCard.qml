@@ -112,11 +112,18 @@ Item {
 
             Text {
                 visible: Battery.present
-                text: Battery.percent + " %" + (Battery.status === "Charging" ? " ⚡" : "")
+                text: Battery.percent + " %"
                 color: Battery.percent <= 15 && Battery.status !== "Charging" ? Theme.colorDanger : Theme.textDim
                 font.family: "JetBrains Mono"
                 font.pixelSize: 10
                 font.letterSpacing: 1.5
+            }
+
+            NixIcon {
+                visible: Battery.present && Battery.status === "Charging"
+                source: "../assets/icons/bolt.svg"
+                iconSize: 10
+                color: Theme.textDim
             }
         }
 

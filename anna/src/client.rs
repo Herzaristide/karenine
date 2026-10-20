@@ -39,12 +39,6 @@ fn build_command(args: &[String]) -> Option<(serde_json::Value, bool)> {
             ),
             _ => return None,
         },
-        "claude" => match arg(2) {
-            None | Some("list") => (json!({"cmd": "claude_list"}), false),
-            Some("watch") => (json!({"cmd": "claude_watch"}), true),
-            Some("focus") => (json!({"cmd": "claude_focus", "id": arg(3)?}), false),
-            _ => return None,
-        },
         "servers" => match arg(2) {
             None | Some("list") => (json!({"cmd": "servers_list"}), false),
             Some("watch") => (json!({"cmd": "servers_watch", "name": arg(3)}), true),
@@ -79,6 +73,14 @@ fn build_command(args: &[String]) -> Option<(serde_json::Value, bool)> {
                 false,
             ),
             Some("watch") => (json!({"cmd": "voice_watch"}), true),
+            // Reading the answers aloud.
+            Some("say") => (
+                json!({"cmd": "speech_say", "text": args[3..].join(" ")}),
+                false,
+            ),
+            Some("hush") => (json!({"cmd": "speech_stop"}), false),
+            Some("speech") => (json!({"cmd": "speech_set", "mode": arg(3)?}), false),
+            Some("speaker") => (json!({"cmd": "speech_set", "voice": arg(3)?}), false),
             Some("transcribe") => (json!({"cmd": "voice_transcribe", "path": arg(3)?}), false),
             _ => return None,
         },
@@ -140,22 +142,20 @@ fn usage() -> ! {
            gesture on|off|toggle|status|watch      Webcam gesture control\n\
            gesture cameras | camera /dev/videoN   List / pick the capture device\n\
            gesture debug [--dry]                   Foreground engine with diagnostics\n\
-           claude [list|watch]                     Live Claude Code sessions\n\
-           claude focus <session-id>               Focus the window hosting a session\n\
            pilot <demande…> | watch | reset       Ask the pilot / follow it / forget it\n\
            voice [toggle] | watch                  Speak to the pilot (start / end listening)\n\
            voice dictate                          Same, but only show the transcript\n\
            voice wake [on|off]                    Wake word « Karénine » (toggle)\n\
            voice transcribe <file.wav>            Transcribe a 16 kHz mono WAV\n\
+           voice say <text> | hush                Read a text aloud / stop reading\n\
+           voice speech off|voice|always          When the pilot's answers are read aloud\n\
+           voice speaker <id>                     The Piper voice reading them\n\
            servers [list] | watch [name]          Tailnet devices / their stats (ssh)\n\
            servers on|off|reboot <name>           Wake-on-LAN / power off, reboot (ssh)\n\
            phone [watch]                          KDE Connect phones: battery, network\n\
            phone ring|ping|browse|clipboard|accept|reject <device>\n\
            phone share <device> <path>\n\
-           phone screen <name>                    Its screen: the scrcpy command (USB, else Tailscale)\n\
-         \n\
-         Claude Code hook (in its settings, not by hand):\n\
-           hook                                    Forward one event from stdin"
+           phone screen <name>                    Its screen: the scrcpy command (USB, else Tailscale)"
     );
     std::process::exit(2);
 }
@@ -221,12 +221,6 @@ mod tests {
             parses(&["gesture", "camera", "/dev/video2"]),
             Command::GestureSetCamera { .. }
         ));
-        assert!(matches!(parses(&["claude"]), Command::ClaudeList));
-        assert!(matches!(parses(&["claude", "watch"]), Command::ClaudeWatch));
-        assert!(matches!(
-            parses(&["claude", "focus", "abc"]),
-            Command::ClaudeFocus { .. }
-        ));
         match parses(&["pilot", "baisse", "le", "son"]) {
             Command::PilotAsk { text, clipboard } => {
                 assert_eq!((text.as_str(), clipboard), ("baisse le son", false))
@@ -263,20 +257,6 @@ mod tests {
         }
     }
 
-    /// The hook's message must parse as a daemon command too.
-    #[test]
-    fn hook_message_round_trips() {
-        let v = json!({
-            "cmd": "claude_hook",
-            "pid": 42,
-            "event": {"hook_event_name": "Stop", "session_id": "s"},
-        });
-        assert!(matches!(
-            serde_json::from_value::<Command>(v).unwrap(),
-            Command::ClaudeHook { pid: Some(42), .. }
-        ));
-    }
-
     #[test]
     fn quotes_in_arguments_stay_valid_json() {
         match parses(&["set", r#"#12"}, "x":"y"#]) {
@@ -299,7 +279,6 @@ mod tests {
         assert!(build_command(&argv(&["palette-color", "base08"])).is_none());
         assert!(build_command(&argv(&["gesture", "camera"])).is_none());
         assert!(build_command(&argv(&["gesture", "fly"])).is_none());
-        assert!(build_command(&argv(&["claude", "focus"])).is_none());
         assert!(build_command(&argv(&["frobnicate"])).is_none());
     }
 }

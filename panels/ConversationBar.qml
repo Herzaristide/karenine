@@ -4,6 +4,7 @@ import QtQuick.Effects
 import Quickshell
 import Quickshell.Wayland
 import "../services"
+import "../widgets"
 
 // La barre de conversation : tout ce qui reste de la barre du haut. Une
 // pastille en bas au centre, le flocon NixOS à gauche, le champ à droite ;
@@ -562,7 +563,15 @@ PanelWindow { // qmllint disable uncreatable-type
         }
     }
 
-    // L'icône d'un résultat, prise au thème ; vide, l'initiale prend le relais.
+    // Une icône de assets/icons (Phosphor), que la ligne teinte.
+    readonly property string glyphDir: "../assets/icons/"
+    function glyph(name) {
+        return bar.glyphDir + name + ".svg";
+    }
+
+    // L'icône d'un résultat : celle de l'application (prise au thème), une
+    // image qui se montre elle-même, ou une icône de assets/icons ; vide,
+    // l'initiale prend le relais.
     function iconFor(item) {
         var p = item.payload || {};
         switch (item.type) {
@@ -570,29 +579,29 @@ PanelWindow { // qmllint disable uncreatable-type
             return p.entry && p.entry.icon ? Theme.icon(p.entry.icon, true) : "";
         case "file":
             if (p.isDir)
-                return Theme.icon("folder", true);
+                return bar.glyph("folder");
             // Une image se montre elle-même.
             if (bar.imageSuffixes.indexOf((p.suffix || "").toLowerCase()) !== -1)
                 return "file://" + p.path.split("/").map(encodeURIComponent).join("/");
-            return Theme.icon("text-x-generic", true);
+            return bar.glyph("file-text");
         case "web":
             return DefaultApps.browser ? DefaultApps.browser.icon : "";
         case "wallpaper":
-            return Theme.icon("preferences-desktop-wallpaper", true);
+            return bar.glyph("wallpaper");
         case "note":
             if (p.create)
-                return Theme.icon("document-new", true);
+                return bar.glyph("file-new");
             // Une note image se montre elle-même.
             if (p.note && p.note.image)
                 return "file://" + p.note.image.split("/").map(encodeURIComponent).join("/");
-            return Theme.icon("text-x-generic", true);
+            return bar.glyph("notes");
         case "setting":
             switch (p.key) {
-            case "volume":     return Theme.icon("audio-volume-high", true);
-            case "theme":      return Theme.icon("preferences-desktop-theme", true);
-            case "accent":     return Theme.icon("preferences-desktop-color", true);
-            case "screenshot": return Theme.icon("applets-screenshooter", true);
-            case "language":   return Theme.icon("preferences-desktop-locale", true);
+            case "volume":     return bar.glyph("volume");
+            case "theme":      return bar.glyph("theme");
+            case "accent":     return bar.glyph("accent");
+            case "screenshot": return bar.glyph("screenshot");
+            case "language":   return bar.glyph("language");
             }
         }
         return "";
@@ -800,11 +809,10 @@ PanelWindow { // qmllint disable uncreatable-type
                         color: closeMa.containsMouse ? Theme.hoverOverlay : "transparent"
                         Behavior on color { ColorAnimation { duration: 140 } }
 
-                        Text {
+                        NixIcon {
                             anchors.centerIn: parent
-                            text: "✕"
-                            font.family: bar.uiFont
-                            font.pixelSize: 10
+                            iconSize: 10
+                            source: "../assets/icons/close.svg"
                             color: closeMa.containsMouse ? Theme.textPrimary : Theme.textSecondary
                         }
                         MouseArea {
@@ -986,6 +994,7 @@ PanelWindow { // qmllint disable uncreatable-type
 
                 readonly property bool current: bar.selected === row.index
                 readonly property string icon: bar.iconFor(row.modelData)
+                readonly property bool glyph: row.icon.indexOf(bar.glyphDir) === 0
                 // Un réglage se règle sur place : son contrôle prend la place
                 // de la pastille du type. Les écrans, eux, passent au suivant
                 // d'un clic.
@@ -1012,25 +1021,34 @@ PanelWindow { // qmllint disable uncreatable-type
                     Image {
                         id: rowImage
                         anchors.fill: parent
-                        source: row.icon
+                        source: row.glyph ? "" : row.icon
                         sourceSize.width: 48
                         sourceSize.height: 48
                         fillMode: row.icon.startsWith("file://") ? Image.PreserveAspectCrop
                                                                  : Image.PreserveAspectFit
                         asynchronous: true
                         smooth: true
-                        visible: row.icon.length > 0 && rowImage.status !== Image.Error
+                        visible: !row.glyph && row.icon.length > 0 && rowImage.status !== Image.Error
                     }
 
-                    // Repli : l'initiale, sur une pastille de la teinte du type.
+                    // Sinon, une pastille de la teinte du type : l'icône de
+                    // assets/icons, ou à défaut l'initiale.
                     Rectangle {
                         anchors.fill: parent
                         radius: 7
                         visible: !rowImage.visible
                         color: Qt.alpha(row.modelData.tone, 0.2)
 
+                        NixIcon {
+                            anchors.centerIn: parent
+                            visible: row.glyph
+                            iconSize: 14
+                            source: row.glyph ? row.icon : ""
+                            color: row.modelData.tone
+                        }
                         Text {
                             anchors.centerIn: parent
+                            visible: !row.glyph
                             text: row.modelData.title.substring(0, 1).toUpperCase()
                             color: row.modelData.tone
                             font.family: bar.uiFont
@@ -1389,13 +1407,10 @@ PanelWindow { // qmllint disable uncreatable-type
                 Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
                 Behavior on scale { NumberAnimation { duration: 260; easing.type: Easing.OutQuint } }
 
-                Text {
+                NixIcon {
                     anchors.centerIn: parent
-                    anchors.verticalCenterOffset: -1
-                    text: "↑"
-                    font.family: bar.uiFont
-                    font.pixelSize: 17
-                    font.weight: Font.Bold
+                    iconSize: 15
+                    source: "../assets/icons/send.svg"
                     color: Theme.selectedTextColor
                 }
 

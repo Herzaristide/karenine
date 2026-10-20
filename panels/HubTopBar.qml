@@ -481,28 +481,12 @@ Item {
         spacing: 3
 
         // L'éclair, le temps de la charge.
-        Canvas {
-            id: bolt
+        NixIcon {
             anchors.verticalCenter: parent.verticalCenter
             visible: bat.charging
-            width: 7
-            height: 11
-            property color tint: bat.tone
-            onTintChanged: requestPaint()
-            onPaint: {
-                var ctx = getContext("2d");
-                ctx.reset();
-                ctx.fillStyle = bolt.tint;
-                ctx.beginPath();
-                ctx.moveTo(4.4, 0);
-                ctx.lineTo(0, 6.3);
-                ctx.lineTo(3.1, 6.3);
-                ctx.lineTo(2.4, 11);
-                ctx.lineTo(7, 4.5);
-                ctx.lineTo(3.9, 4.5);
-                ctx.closePath();
-                ctx.fill();
-            }
+            iconSize: 12
+            source: "../assets/icons/bolt.svg"
+            color: bat.tone
         }
 
         // Le corps.

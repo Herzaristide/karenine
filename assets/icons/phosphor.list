@@ -1,0 +1,83 @@
+# Les icônes de karenine, toutes tirées de Phosphor (https://phosphoricons.com).
+# Une ligne par fichier de ce dossier :
+#
+#   <nom local>  <graisse>  <icône Phosphor>
+#
+# graisse : thin, light, regular, bold, fill ou duotone. Le QML ne connaît
+# que le nom local (`play.svg`) : changer d'icône ou de graisse se fait ici,
+# puis `sh assets/icons/sync.sh`. Le dessin est blanc, recoloré au thème par
+# NixIcon (ou un MultiEffect).
+
+# ── L'interface ──────────────────────────────────────────────
+bell          regular  bell
+bluetooth     regular  bluetooth
+brightness    regular  sun
+copy          regular  copy
+eye           regular  eye
+folder        regular  folder
+lock          regular  lock
+logout        regular  sign-out
+mic           regular  microphone
+music         regular  music-notes
+notes         regular  note
+phone         regular  device-mobile
+pin           regular  push-pin
+power         regular  power
+reboot        regular  arrow-clockwise
+screenshot    regular  selection
+settings      regular  gear-six
+stats         regular  chart-line
+suspend       regular  moon
+terminal      regular  terminal-window
+trash         regular  trash
+up            regular  arrow-up
+volume        regular  speaker-high
+volume-mute   regular  speaker-slash
+refresh       regular  arrow-clockwise
+reset         regular  arrow-counter-clockwise
+arrow-right   regular  arrow-right
+# Petites (10 à 12 px) : en gras pour rester lisibles.
+close         bold     x
+chevron-down  bold     caret-down
+send          bold     arrow-up
+check         bold     check
+
+# ── Les machines et les disques ──────────────────────────────
+computer      regular  desktop
+server        regular  hard-drives
+disk          regular  hard-drive
+
+# ── Le lecteur : pleines, comme des touches ──────────────────
+play          fill     play
+pause         fill     pause
+stop          fill     stop
+prev          fill     skip-back
+next          fill     skip-forward
+loop          regular  repeat
+loop-one      regular  repeat-once
+lyrics        regular  quotes
+music-note    regular  music-note
+bolt          fill     lightning
+
+# ── Les lieux et les fichiers (explorateur, recherche) ───────
+place-desktop regular  desktop
+documents     regular  files
+downloads     regular  download-simple
+pictures      regular  image
+videos        regular  film-strip
+file          regular  file
+file-text     regular  file-text
+file-code     regular  file-code
+file-pdf      regular  file-pdf
+file-audio    regular  file-audio
+file-video    regular  file-video
+file-image    regular  file-image
+file-archive  regular  file-archive
+file-html     regular  file-html
+file-new      regular  file-plus
+
+# ── Les réglages (recherche de la barre) ─────────────────────
+wallpaper     regular  image
+theme         regular  circle-half
+accent        regular  palette
+language      regular  translate

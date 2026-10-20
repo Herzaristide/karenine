@@ -307,13 +307,21 @@ Item {
                 }
                 Text {
                     visible: root.connected && root.phone.battery >= 0
-                    text: root.connected ? I18n.tr("common.percent", { n: root.phone.battery }) + (root.phone.charging ? "  ⚡" : "") : ""
+                    text: root.connected ? I18n.tr("common.percent", { n: root.phone.battery }) : ""
                     font.family: "Inter"
                     font.pixelSize: 12
                     font.weight: Font.Medium
                     font.features: { "tnum": 1 }
                     color: root.connected && root.phone.battery <= 15 && !root.phone.charging
                            ? Theme.colorDanger : Theme.textPrimary
+                }
+                // L'éclair, le temps de la charge, du vert de la jauge.
+                NixIcon {
+                    visible: root.connected && root.phone.charging
+                    Layout.alignment: Qt.AlignVCenter
+                    iconSize: 12
+                    source: "../assets/icons/bolt.svg"
+                    color: Theme.colorSuccess
                 }
             }
         }

@@ -91,15 +91,14 @@ ShellRoot {
 
     // La barre de conversation, en bas au centre : le flocon (la voix) et le
     // champ qui parle au pilote, sa réponse au-dessus.
-    // Le fond d'écran : le tableau noir sur l'écran de l'interface, la même
-    // ardoise vide sur les autres (panels/Blackboard.qml).
+    // Le fond d'écran : un tableau noir par écran, chacun avec ses notes et
+    // ses traits (panels/Blackboard.qml).
     Variants {
         model: Quickshell.screens
 
         Blackboard {
             required property var modelData
             screen: modelData
-            board: modelData === Display.primary
         }
     }
 

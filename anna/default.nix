@@ -77,11 +77,16 @@ pkgs.rustPlatform.buildRustPackage {
     cp ${embedding} "$out/share/anna/wake/embedding_model.onnx"
     cp ${./models/wake/karenine.onnx} "$out/share/anna/wake/karenine.onnx"
 
+    # The pilot's answers read aloud (claude/speech.rs): Piper voices run with
+    # ONNX Runtime, their phonemes from libespeak-ng (loaded at run time, its
+    # data dir compiled in), played by pw-play (pipewire, already on PATH).
+    # The voice files are provided by the NixOS configuration.
     # nvidia-smi and sudo(dmidecode) are intentionally left to the ambient PATH:
     # they are host-specific and, for sudo, must be the setuid system binary.
     wrapProgram "$out/bin/anna" \
       --set-default ORT_DYLIB_PATH ${pkgs.onnxruntime}/lib/libonnxruntime.so \
       --set-default ANNA_WAKE_MODELS "$out/share/anna/wake" \
+      --set-default ESPEAK_DYLIB_PATH ${pkgs.espeak-ng}/lib/libespeak-ng.so.1 \
       --set-default ANNA_ICON_SOURCE ${pkgs.reversal-icon-theme}/share/icons \
       --prefix PATH : ${
         lib.makeBinPath (

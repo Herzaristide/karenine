@@ -295,8 +295,7 @@ ColumnLayout {
                 GlassButton {
                     implicitWidth: 22
                     implicitHeight: 22
-                    fontSize: 12
-                    text: "↻"
+                    icon: Qt.resolvedUrl("../assets/icons/refresh.svg")
                     onClicked: {
                         if (listProc.running)
                             return;
@@ -363,11 +362,18 @@ ColumnLayout {
                                 elide: Text.ElideRight
                             }
                             Text {
-                                text: root.joining === net.modelData.ssid ? "…"
-                                    : net.modelData.active ? "✓"
-                                    : net.modelData.secure ? "🔒" : ""
+                                visible: root.joining === net.modelData.ssid
+                                text: "…"
                                 font.family: "Inter"
                                 font.pixelSize: 11
+                                color: Theme.textDim
+                            }
+                            // Le réseau actif, coché ; un réseau protégé, cadenassé.
+                            NixIcon {
+                                visible: root.joining !== net.modelData.ssid
+                                         && (net.modelData.active || net.modelData.secure)
+                                iconSize: 12
+                                source: "../assets/icons/" + (net.modelData.active ? "check.svg" : "lock.svg")
                                 color: net.modelData.active ? Theme.accentColor : Theme.textDim
                             }
                         }

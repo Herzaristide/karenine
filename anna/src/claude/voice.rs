@@ -501,6 +501,15 @@ impl Voice {
                 }
             }
         });
+        // The speech's settings and errors are shown with the voice's.
+        let weak = Arc::downgrade(&me);
+        let mut changed = me.pilot.speech().subscribe();
+        tokio::spawn(async move {
+            while let Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) = changed.recv().await {
+                let Some(me) = weak.upgrade() else { break };
+                me.publish();
+            }
+        });
         // The wake word, for the daemon's lifetime (idle while off).
         let w = Arc::clone(&me);
         std::thread::spawn(move || super::wake::listen(w));
@@ -516,11 +525,13 @@ impl Voice {
             "send": self.send.load(Ordering::SeqCst),
             "wake": self.wake.load(Ordering::SeqCst),
             "error": *lock(&self.error),
+            // Reading the answers aloud (speech.rs), for the settings.
+            "speech": self.pilot.speech().state(),
         }})
         .to_string()
     }
 
-    fn publish(&self) {
+    pub fn publish(&self) {
         let _ = self.tx.send(self.snapshot_line());
     }
 
@@ -592,6 +603,8 @@ impl Voice {
             }
             *p = Phase::Listening;
         }
+        // Speaking over the answer being read cuts it short.
+        self.pilot.speech().stop();
         self.stop.store(false, Ordering::SeqCst);
         self.send.store(send, Ordering::SeqCst);
         self.partial.store(false, Ordering::SeqCst);
@@ -640,7 +653,7 @@ impl Voice {
                 if self.send.load(Ordering::SeqCst) {
                     let me = Arc::clone(self);
                     handle.spawn(async move {
-                        if let Err(e) = me.pilot.ask(&text, false).await {
+                        if let Err(e) = me.pilot.ask(&text, false, true).await {
                             *lock(&me.error) = e;
                             me.publish();
                         }

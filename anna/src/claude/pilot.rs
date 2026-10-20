@@ -9,15 +9,17 @@
 //! code and research stay with the user.
 //!
 //! Each request carries a short context block (time, active window,
-//! sessions), built here at send time. The process lives across requests so
+//! projects), built here at send time. The process lives across requests so
 //! a request costs no start-up; it is restarted after a while (idle or many
 //! turns) to keep its context small. Nothing is written to disk.
 //!
 //! What the bar shows — the user's requests, the tool calls, the answers —
 //! is kept here as a short log, pushed to `pilot_watch` subscribers whole on
-//! every change.
+//! every change. The answers are also handed to the speech as they stream
+//! (speech.rs), which reads them aloud or not.
 
-use super::{desk, Sessions};
+use super::desk;
+use super::speech::Speech;
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::process::Stdio;
@@ -49,7 +51,7 @@ Comment :
 - Fermer une fenêtre et lancer une commande shell s'exécutent sans confirmation : ne le fais que si la demande est claire. Tu ne reconstruis jamais le système NixOS : c'est à l'utilisateur de le faire.
 - `commande` est un dernier recours, quand aucun autre outil ne convient.
 
-Chaque demande commence par un bloc [contexte] (heure, fenêtre active, sessions en cours) : sers-t'en, ne le recopie pas."#;
+Chaque demande commence par un bloc [contexte] (heure, fenêtre active, projets) : sers-t'en, ne le recopie pas."#;
 
 /// The user's own instructions for the pilot, if any: appended to the
 /// prompt (preferred apps, habits, projects…).
@@ -78,7 +80,7 @@ pub struct Pilot {
     last: Mutex<Instant>,
     log: Mutex<VecDeque<Value>>,
     tx: broadcast::Sender<String>,
-    sessions: Arc<Sessions>,
+    speech: Arc<Speech>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -107,7 +109,7 @@ fn action_line(name: &str, input: &Value) -> String {
 }
 
 impl Pilot {
-    pub fn new(sessions: Arc<Sessions>) -> Arc<Self> {
+    pub fn new(speech: Arc<Speech>) -> Arc<Self> {
         let (tx, _) = broadcast::channel(32);
         Arc::new(Pilot {
             proc: AsyncMutex::new(None),
@@ -119,8 +121,12 @@ impl Pilot {
             last: Mutex::new(Instant::now()),
             log: Mutex::new(VecDeque::new()),
             tx,
-            sessions,
+            speech,
         })
+    }
+
+    pub fn speech(&self) -> &Arc<Speech> {
+        &self.speech
     }
 
     pub fn snapshot_line(&self) -> String {
@@ -146,6 +152,7 @@ impl Pilot {
 
     /// Forget the conversation: the next request starts a fresh process.
     pub async fn reset(&self) {
+        self.speech.stop();
         self.stop().await;
         lock(&self.log).clear();
         self.in_text.store(false, Ordering::SeqCst);
@@ -210,8 +217,6 @@ impl Pilot {
                 "--disable-slash-commands",
             ])
             .current_dir(&dir)
-            // Not a session of the user's: no dot in the bar.
-            .env("ANNA_HOOK_IGNORE", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -263,6 +268,8 @@ impl Pilot {
                             let t = b.get("text").and_then(Value::as_str).unwrap_or("").trim();
                             if !t.is_empty() {
                                 self.push("reply", t);
+                                self.speech.feed(t);
+                                self.speech.flush();
                             }
                         }
                         Some("tool_use") => {
@@ -285,6 +292,7 @@ impl Pilot {
                         .unwrap_or_else(|| crate::i18n::tr("failed"));
                     self.push("error", &why);
                 }
+                self.speech.end();
                 self.busy.store(false, Ordering::SeqCst);
                 self.publish();
             }
@@ -320,6 +328,8 @@ impl Pilot {
                     {
                         text.push_str(piece);
                     }
+                    drop(log);
+                    self.speech.feed(piece);
                 } else {
                     // Nothing shown before the first words.
                     let piece = piece.trim_start();
@@ -329,6 +339,7 @@ impl Pilot {
                     self.push("reply", piece);
                     self.in_text.store(true, Ordering::SeqCst);
                     self.streamed.store(true, Ordering::SeqCst);
+                    self.speech.feed(piece);
                 }
                 self.publish();
             }
@@ -339,6 +350,7 @@ impl Pilot {
                     text.truncate(end);
                 }
                 drop(log);
+                self.speech.flush();
                 self.publish();
             }
             _ => {}
@@ -355,16 +367,25 @@ impl Pilot {
         *slot = None;
         drop(slot);
         if self.busy.swap(false, Ordering::SeqCst) {
+            self.speech.end();
             self.push("error", &crate::i18n::tr("pilot.stopped"));
             self.publish();
         }
     }
 
-    /// Send one request. Its answer arrives through the log.
-    pub async fn ask(self: &Arc<Self>, text: &str, clipboard: bool) -> Result<(), String> {
+    /// Send one request. Its answer arrives through the log. `spoken`: it
+    /// was said, not typed (the answer may then be read aloud).
+    pub async fn ask(
+        self: &Arc<Self>,
+        text: &str,
+        clipboard: bool,
+        spoken: bool,
+    ) -> Result<(), String> {
         if self.busy.load(Ordering::SeqCst) {
             return Err(crate::i18n::tr("pilot.busy"));
         }
+        // A new request silences the last answer.
+        let aloud = self.speech.begin(spoken);
         let stale = {
             let last = *lock(&self.last);
             last.elapsed() > MAX_IDLE || self.turns.load(Ordering::SeqCst) >= MAX_TURNS
@@ -373,11 +394,15 @@ impl Pilot {
             self.stop().await;
         }
 
-        let sessions = self.sessions.list();
-        let context = tokio::task::spawn_blocking(move || context_block(&sessions, clipboard))
+        let context = tokio::task::spawn_blocking(move || context_block(clipboard))
             .await
             .unwrap_or_default();
-        let message = format!("{context}\n[demande]\n{text}");
+        let aloud = if aloud {
+            "\nréponse lue à voix haute : phrases courtes, sans markdown, sans liste ni code\n"
+        } else {
+            "\n"
+        };
+        let message = format!("{context}{aloud}[demande]\n{text}");
 
         let mut slot = self.proc.lock().await;
         if slot.is_none() {
@@ -408,7 +433,7 @@ impl Pilot {
 }
 
 /// What the pilot is told with every request.
-fn context_block(sessions: &[super::Session], clipboard: bool) -> String {
+fn context_block(clipboard: bool) -> String {
     let mut out = vec!["[contexte]".to_string()];
     if let Ok(o) = std::process::Command::new("date")
         .arg("+%A %d %B %Y, %H:%M")
@@ -422,22 +447,6 @@ fn context_block(sessions: &[super::Session], clipboard: bool) -> String {
     }
     out.push(crate::i18n::pilot_language_line());
     out.push(desk::desktop_state());
-    if sessions.is_empty() {
-        out.push("sessions Claude : aucune".into());
-    } else {
-        let list: Vec<String> = sessions
-            .iter()
-            .map(|s| {
-                let state = match s.state {
-                    super::State::Working => "travaille",
-                    super::State::Waiting => "attend l'utilisateur",
-                    super::State::Idle => "au repos",
-                };
-                format!("{} ({state})", s.project)
-            })
-            .collect();
-        out.push(format!("sessions Claude : {}", list.join(", ")));
-    }
     let projects: Vec<String> = super::desk::projects()
         .into_iter()
         .map(|p| p.name)
@@ -465,7 +474,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_streamed_reply_grows_in_one_entry() {
-        let pilot = Pilot::new(Sessions::new());
+        let pilot = Pilot::new(Speech::new());
         let delta = |t: &str| {
             json!({ "type": "stream_event", "event": { "type": "content_block_delta",
                 "delta": { "type": "text_delta", "text": t } } })

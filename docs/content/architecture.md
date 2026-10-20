@@ -33,7 +33,7 @@ greeter/             Login screen surface
 i18n/                One dictionary per language (en.json, fr.json…)
 anna/                Single Rust daemon (see Backend)
 tests/               QML tests and contract checks (see Development)
-assets/              Icons, nixos.svg
+assets/              Phosphor icons (icons/phosphor.list, icons/sync.sh), nixos.svg
 ```
 
 Per layer: [the shell](#shell), [the panels](#panels),

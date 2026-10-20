@@ -1,7 +1,7 @@
 ---
 title: AI cluster
 group: Features
-summary: The pilot (desktop actions asked from the conversation bar), the voice that speaks to it, the Claude Code sessions anna follows.
+summary: The pilot (desktop actions asked from the conversation bar), the voice that speaks to it, and its answers read aloud.
 links: [panels, backend, widgets, languages]
 ---
 
@@ -38,7 +38,7 @@ Mechanics: `claude -p` in stream-json, with its own system prompt
 with `anna mcp` as its only MCP server (`--strict-mcp-config`), without the
 user's settings (`--setting-sources project`: no hooks, no journal) and
 without a transcript on disk. Each request carries a context block: date,
-language to answer in, active window, open windows, sound, sessions,
+language to answer in, active window, open windows, sound,
 projects. The process is kept between two requests and restarted after
 20 min of inactivity or 30 requests. Count about 2 s for a direct answer,
 4 s on the first call with a tool.
@@ -176,30 +176,44 @@ private Anthropic service.
 | `anna/src/claude/voice.rs` | Listening, end of sentence, live text, sending to the pilot. |
 | `anna/src/claude/whisper.rs` | The whisper.cpp server: card choice, language, start, stop. |
 
-## Claude Code sessions
+### Answers read aloud
 
-The machine's Claude Code sessions are started by hand, in a terminal. They
-report to anna through their hooks (`anna hook`, declared in Claude Code's
-configuration for SessionStart, UserPromptSubmit, PostToolUse, Notification,
-Stop and SessionEnd), and anna keeps their state (working / waiting / idle):
-the pilot sees it in its context and through its `sessions` tool, and
-`anna claude [list|watch|focus <id>]` reads it from the command line.
-Nothing in the interface shows them.
+The pilot's answer is spoken as it is written: each finished sentence is
+synthesised while the next one comes, so the first words are heard about a
+tenth of a second after the pilot writes them. Code blocks, links and
+markdown marks are not read, and the pilot is told when its answer will be
+heard (short sentences, no list). Saying “Karénine”, Super+V, a new request
+or `anna voice hush` cut it short. The echo cancellation keeps the voice out
+of the microphone: it does not wake anna.
 
-Permission requests stay with Claude Code: its own dialog asks, in the
-terminal. `anna hook` ignores a PermissionRequest that would still be
-declared, so an old configuration does not hold Claude back.
+Under “Voice” in the settings:
 
-anna also keeps the vault's skills active: each `Skills/<name>/SKILL.md` of
-`~/v4ult` is linked into `~/.claude/skills/` at start-up, and a link whose
-note disappeared is removed. Nothing else in that folder is touched.
+- **Read answers aloud**: never, when asked by voice (the default), or
+  always (`anna voice speech off|voice|always`).
+- **Reading voice**: one choice per installed voice, and per speaker for a
+  voice that has several (`anna voice speaker <id>`).
+
+Both are remembered in `~/.local/state/anna/speech.json`.
+
+The voices are [Piper](https://github.com/OHF-Voice/piper1-gpl)'s (VITS
+models, ONNX), run by anna itself with ONNX Runtime, like the wake word:
+espeak-ng turns the text into phonemes (libespeak-ng, loaded at run time,
+called as Piper calls it), the voice's map turns them into ids, the model
+into sound, played by `pw-play`. No Python: Piper's own package pulls in
+3.6 GB of training tools. On the processor, a sentence takes about a
+twentieth of its duration to synthesise.
+
+A voice is a `<name>.onnx` file and its `<name>.onnx.json`, in
+`ANNA_PIPER_VOICES`, otherwise `~/.local/share/anna/piper/`, linked by the
+NixOS configuration (French: `fr_FR-siwis-medium`, `fr_FR-upmc-medium` with
+jessica and pierre, `fr_FR-tom-medium`). Without a choice, the first voice
+of the voice language reads. The loaded voice is released after 10 minutes
+of silence. `anna say "text" [file.wav]` speaks a text without the daemon,
+and gives the synthesis time per sentence.
 
 | File | Role |
 | --- | --- |
-| `anna/src/claude/mod.rs` | The sessions' state: working / waiting / idle. |
-| `anna/src/claude/hook.rs` | `anna hook`: forwards an event reduced to the bare minimum. |
-| `anna/src/claude/focus.rs` | Finds a session's window in the process tree. |
-| `anna/src/claude/skills.rs` | Links the vault's skills for Claude Code. |
+| `anna/src/claude/speech.rs` | Text cleanup, phonemes, synthesis, playback, settings. |
 
 ## Relations
 

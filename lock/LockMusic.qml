@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell.Services.Mpris
 import "../services"
+import "../widgets"
 
 // Lecteur MPRIS compact du lockscreen : pochette, titre/artiste, transport.
 //
@@ -78,7 +79,7 @@ RowLayout {
     component TransportButton: Rectangle {
         id: button
 
-        required property string glyph
+        required property string icon
 
         signal activated
 
@@ -88,12 +89,11 @@ RowLayout {
         color: mouse.containsMouse && button.enabled ? Theme.hoverOverlay : "transparent"
         opacity: button.enabled ? 1.0 : 0.35
 
-        Text {
+        NixIcon {
             anchors.centerIn: parent
-            text: button.glyph
+            iconSize: 14
+            source: "../assets/icons/" + button.icon + ".svg"
             color: Theme.textPrimary
-            font.family: "JetBrains Mono"
-            font.pixelSize: 14
         }
 
         MouseArea {
@@ -106,19 +106,19 @@ RowLayout {
     }
 
     TransportButton {
-        glyph: "⏮"
+        icon: "prev"
         enabled: musicRoot.interactive && musicRoot.hasPlayer && musicRoot.player.canGoPrevious
         onActivated: musicRoot.player.previous()
     }
 
     TransportButton {
-        glyph: musicRoot.isPlaying ? "⏸" : "▶"
+        icon: musicRoot.isPlaying ? "pause" : "play"
         enabled: musicRoot.interactive && musicRoot.hasPlayer
         onActivated: musicRoot.player.togglePlaying()
     }
 
     TransportButton {
-        glyph: "⏭"
+        icon: "next"
         enabled: musicRoot.interactive && musicRoot.hasPlayer && musicRoot.player.canGoNext
         onActivated: musicRoot.player.next()
     }

@@ -15,17 +15,24 @@
 //! The wallpaper blackboard (panels/Blackboard.qml) shows the notes that have
 //! a place on it, and the chalk strokes drawn around them:
 //!
-//!   anna notes add --at <x>,<y> <text>  → a new note, already on the board
-//!   anna notes place <id> <x> <y>       → on the board (or moved there)
+//!   anna notes add --at <x>,<y> [--on <screen>] <text>
+//!                                       → a new note, already on the board
+//!   anna notes place <id> <x> <y> [<screen>]
+//!                                       → on the board (or moved there)
 //!   anna notes unplace <id>             → off the board, still a note
 //!   anna notes board [list]             → {"ok":true,"strokes":[Stroke…]}
 //!   anna notes board draw <json>        → one stroke, or an array of them
 //!   anna notes board erase <id>…        → {"ok":true,"strokes":[erased…]}
-//!   anna notes board clear              → {"ok":true,"strokes":[erased…]}
+//!   anna notes board clear [<screen>]   → {"ok":true,"strokes":[erased…]}
 //!
 //! Positions are fractions of the screen (0 to 1), so a board survives a
 //! change of resolution. Erasing returns what it removed: drawing it again is
 //! the shell's « undo ».
+//!
+//! Every screen has its own board. A note's `screen` (and a stroke's) is the
+//! key the shell gives that screen (services/Display.qml: its model, else its
+//! connector); "" is the interface screen, where everything drawn before
+//! there were several boards stays.
 //!
 //! Everything lives in `$XDG_DATA_HOME/anna/notes` (`~/.local/share/…`):
 //! `notes.json`, `board.json` (the strokes), and one file per pasted image,
@@ -59,6 +66,8 @@ pub struct Note {
     pub updated: u64,
     /// Its place on the blackboard, None when it is only in the tab.
     pub board: Option<Spot>,
+    /// The screen whose board holds it, "" for the interface screen.
+    pub screen: String,
 }
 
 /// A point of the blackboard, as fractions of its width and height.
@@ -213,9 +222,10 @@ impl Store {
 
     /// On the board, or moved there. Not « updated »: moving a note does not
     /// bring it to the top of the tab.
-    pub fn place(&mut self, id: &str, spot: Spot) -> Result<Note, String> {
+    pub fn place(&mut self, id: &str, spot: Spot, screen: &str) -> Result<Note, String> {
         let note = self.find(id)?;
         note.board = Some(spot);
+        note.screen = screen.to_string();
         let note = note.clone();
         self.save()?;
         Ok(note)
@@ -224,6 +234,7 @@ impl Store {
     pub fn unplace(&mut self, id: &str) -> Result<Note, String> {
         let note = self.find(id)?;
         note.board = None;
+        note.screen.clear();
         let note = note.clone();
         self.save()?;
         Ok(note)
@@ -582,6 +593,8 @@ pub struct Stroke {
     /// In logical pixels.
     pub width: f64,
     pub points: Vec<[f64; 2]>,
+    /// The screen whose board holds it, "" for the interface screen.
+    pub screen: String,
 }
 
 /// The inks a stroke may use; the shell picks the colors.
@@ -654,8 +667,12 @@ impl Board {
         Ok(gone)
     }
 
-    pub fn clear(&mut self) -> Result<Vec<Stroke>, String> {
-        let gone = std::mem::take(&mut self.strokes);
+    /// Every stroke, or only those of one screen's board.
+    pub fn clear(&mut self, screen: Option<&str>) -> Result<Vec<Stroke>, String> {
+        let (gone, kept) = std::mem::take(&mut self.strokes)
+            .into_iter()
+            .partition(|s| screen.is_none_or(|k| s.screen == k));
+        self.strokes = kept;
         self.save()?;
         Ok(gone)
     }
@@ -697,22 +714,27 @@ fn board_run(args: &[String]) -> Result<serde_json::Value, String> {
         "" | "list" => Ok(json!({ "ok": true, "strokes": board.strokes })),
         "draw" => strokes(parse_strokes(&rest.join(" ")).and_then(|s| board.draw(s))),
         "erase" => strokes(board.erase(rest)),
-        "clear" => strokes(board.clear()),
+        "clear" => strokes(board.clear(rest.first().map(String::as_str))),
         other => Err(format!("notes board : action inconnue « {other} »")),
     }
 }
 
-/// `add`'s arguments: `--at x,y` first when given, then the text. The spot
-/// is None when absent, Some(None) when it does not parse.
-fn add_args(args: &[String]) -> (Option<Option<Spot>>, String) {
+/// `add`'s arguments: `--at x,y` first when given, then `--on <screen>` when
+/// given, then the text. The spot is None when absent, Some(None) when it
+/// does not parse; the screen "" when absent.
+fn add_args(args: &[String]) -> (Option<Option<Spot>>, String, String) {
+    let (at, args) = match args {
+        [flag, at, rest @ ..] if flag == "--at" => (Some(Spot::parse(at)), rest),
+        _ => (None, args),
+    };
     match args {
-        [flag, at, rest @ ..] if flag == "--at" => (Some(Spot::parse(at)), rest.join(" ")),
-        _ => (None, args.join(" ")),
+        [flag, screen, rest @ ..] if flag == "--on" => (at, screen.clone(), rest.join(" ")),
+        _ => (at, String::new(), args.join(" ")),
     }
 }
 
 fn add(store: &mut Store, args: &[String]) -> Result<Note, String> {
-    let (at, text) = add_args(args);
+    let (at, screen, text) = add_args(args);
     let spot = match at {
         None => None,
         Some(None) => return Err(crate::i18n::tr("notes.bad_position")),
@@ -720,12 +742,12 @@ fn add(store: &mut Store, args: &[String]) -> Result<Note, String> {
     };
     let note = store.add_text(&text)?;
     match spot {
-        Some(spot) => store.place(&note.id, spot),
+        Some(spot) => store.place(&note.id, spot, &screen),
         None => Ok(note),
     }
 }
 
-fn place(store: &mut Store, id: &str, x: &str, y: &str) -> Result<Note, String> {
+fn place(store: &mut Store, id: &str, x: &str, y: &str, screen: &str) -> Result<Note, String> {
     let spot = match (x.parse(), y.parse()) {
         (Ok(x), Ok(y)) => Spot::new(x, y),
         _ => None,
@@ -733,6 +755,7 @@ fn place(store: &mut Store, id: &str, x: &str, y: &str) -> Result<Note, String> 
     store.place(
         id,
         spot.ok_or_else(|| crate::i18n::tr("notes.bad_position"))?,
+        screen,
     )
 }
 
@@ -749,7 +772,7 @@ pub fn run(args: &[String]) {
         "paste" => note(paste(&mut store)),
         "edit" => note(store.edit(arg(3), &args[4.min(args.len())..].join(" "))),
         "pin" => note(store.pin(arg(3))),
-        "place" => note(place(&mut store, arg(3), arg(4), arg(5))),
+        "place" => note(place(&mut store, arg(3), arg(4), arg(5), arg(6))),
         "unplace" => note(store.unplace(arg(3))),
         "board" => board_run(&args[3.min(args.len())..]),
         "copy" => copy(&mut store, arg(3)).map(|_| json!({ "ok": true })),
@@ -903,6 +926,7 @@ mod tests {
             ink: "chalk".into(),
             width: 3.0,
             points: points.to_vec(),
+            screen: String::new(),
         }
     }
 
@@ -913,11 +937,11 @@ mod tests {
         assert_eq!(n.text, "au tableau");
         // Clamped to the board.
         assert_eq!(n.board, Some(Spot { x: 0.25, y: 1.0 }));
-        let moved = place(&mut s, &n.id, "0.5", "0.1").unwrap();
+        let moved = place(&mut s, &n.id, "0.5", "0.1", "").unwrap();
         assert_eq!(moved.board, Some(Spot { x: 0.5, y: 0.1 }));
         // Moving it does not bring it to the top of the tab.
         assert_eq!(moved.updated, n.updated);
-        assert!(place(&mut s, &n.id, "x", "0.1").is_err());
+        assert!(place(&mut s, &n.id, "x", "0.1", "").is_err());
         assert!(add(&mut s, &strings(&["--at", "nan,0", "x"])).is_err());
         let s2 = Store::open(&s.dir);
         assert_eq!(s2.notes[0].board, Some(Spot { x: 0.5, y: 0.1 }));
@@ -925,6 +949,43 @@ mod tests {
         // Without --at, a note of the tab only.
         assert_eq!(add(&mut s, &strings(&["juste", "là"])).unwrap().board, None);
         let _ = std::fs::remove_dir_all(&s.dir);
+    }
+
+    #[test]
+    fn each_screen_has_its_own_board() {
+        let mut s = temp_store("screens");
+        let n = add(
+            &mut s,
+            &strings(&["--at", "0.1,0.2", "--on", "LG ULTRAGEAR", "à", "droite"]),
+        )
+        .unwrap();
+        assert_eq!(n.text, "à droite");
+        assert_eq!(n.screen, "LG ULTRAGEAR");
+        // Moved to another screen, then back to the interface screen.
+        assert_eq!(place(&mut s, &n.id, "0.5", "0.5", "eDP-1").unwrap().screen, "eDP-1");
+        assert_eq!(place(&mut s, &n.id, "0.5", "0.5", "").unwrap().screen, "");
+        // Off the board, it belongs to no screen.
+        place(&mut s, &n.id, "0.5", "0.5", "eDP-1").unwrap();
+        assert_eq!(s.unplace(&n.id).unwrap().screen, "");
+        // Without --on: the interface screen.
+        let m = add(&mut s, &strings(&["--at", "0,0", "ici"])).unwrap();
+        assert_eq!((m.screen.as_str(), m.text.as_str()), ("", "ici"));
+        let _ = std::fs::remove_dir_all(&s.dir);
+
+        let dir = std::env::temp_dir().join(format!("anna-board-screens-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut b = Board::open(&dir);
+        let mut there = stroke("", &[[0.3, 0.3]]);
+        there.screen = "eDP-1".into();
+        b.draw(vec![stroke("", &[[0.1, 0.1]]), there]).unwrap();
+        assert_eq!(Board::open(&dir).strokes[1].screen, "eDP-1");
+        // Clearing one board leaves the others.
+        let gone = b.clear(Some("eDP-1")).unwrap();
+        assert_eq!(gone.len(), 1);
+        assert_eq!(gone[0].screen, "eDP-1");
+        assert_eq!(b.strokes.len(), 1);
+        assert_eq!(b.strokes[0].screen, "");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -969,7 +1030,7 @@ mod tests {
         let twin = b.draw(vec![stroke(&drawn[1].id, &[[0.0, 0.0]])]).unwrap();
         assert_ne!(twin[0].id, drawn[1].id);
 
-        let cleared = b.clear().unwrap();
+        let cleared = b.clear(None).unwrap();
         assert_eq!(cleared.len(), 3);
         assert!(Board::open(&dir).strokes.is_empty());
         let _ = std::fs::remove_dir_all(&dir);

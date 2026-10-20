@@ -12,9 +12,14 @@ import Quickshell.Io
 // Les positions sont des fractions de l'écran (0 à 1) : `board` d'une note
 // est le coin haut gauche de son texte, `points` d'un trait ses sommets.
 //
+// Chaque écran a son tableau : `screen` d'une note ou d'un trait est la clé
+// de son écran (Display.screenKey), "" celui de l'interface (tout ce qui a
+// été posé avant qu'il y en ait plusieurs). Les gestes prennent la clé de
+// l'écran où ils ont lieu ; `on()` dit ce qu'un écran affiche.
+//
 // Chaque geste du tableau garde de quoi se défaire (Ctrl+Z) et se refaire
 // (Ctrl+Maj+Z) : un trait effacé est redessiné sous le même id, une note
-// déplacée revient à sa place.
+// déplacée revient à sa place, sur son écran.
 Singleton {
     id: board
 
@@ -62,6 +67,12 @@ Singleton {
             }
         }
         onLoadFailed: board.strokes = []
+    }
+
+    // Ce qui est au tableau de l'écran `key` (`primary` : celui de
+    // l'interface, qui garde aussi ce qui n'a pas d'écran).
+    function on(items, key, primary) {
+        return items.filter(i => (i.screen || "") === key || (primary && !i.screen));
     }
 
     // ── Les commandes ────────────────────────────────────────────
@@ -150,7 +161,12 @@ Singleton {
     }
 
     // ── Les gestes ───────────────────────────────────────────────
-    // Un trait : ses points déjà en fractions.
+    // `place <id> x y [écran]`, l'écran omis quand c'est "".
+    function _place(id, at, screen) {
+        return ["place", id, at[0], at[1]].concat(screen ? [screen] : []);
+    }
+
+    // Un trait : ses points déjà en fractions, son écran.
     function draw(stroke) {
         var step = { stroke: stroke, id: "" };
         var drawIt = function () {
@@ -181,52 +197,61 @@ Singleton {
         board.record(step);
     }
 
-    function addNote(text, x, y) {
+    // `add --at x,y [--on écran] <texte>`.
+    function _add(at, screen, text) {
+        return ["add", "--at", at].concat(screen ? ["--on", screen] : [], [text]);
+    }
+
+    function addNote(text, x, y, screen) {
         var step = { id: "" };
         var at = Chalk.fraction(x) + "," + Chalk.fraction(y);
         step.redo = function () {
-            board.act(["add", "--at", at, text], function (r) { step.id = r.note.id; });
+            board.act(board._add(at, screen, text), function (r) { step.id = r.note.id; });
         };
         step.undo = function () { board.act(["delete", step.id]); };
         step.redo();
         board.record(step);
     }
 
+    // Déplacée sur le tableau de son écran : elle y reste.
     function move(note, x, y) {
+        var screen = note.screen || "";
         var from = [note.board.x, note.board.y];
         var to = [Chalk.fraction(x), Chalk.fraction(y)];
-        board.act(["place", note.id, to[0], to[1]]);
+        board.act(board._place(note.id, to, screen));
         board.record({
-            undo: function () { board.act(["place", note.id, from[0], from[1]]); },
-            redo: function () { board.act(["place", note.id, to[0], to[1]]); }
+            undo: function () { board.act(board._place(note.id, from, screen)); },
+            redo: function () { board.act(board._place(note.id, to, screen)); }
         });
     }
 
-    // Une note glissée depuis l'onglet Notes : posée au tableau, ou déplacée
-    // si elle y était déjà. Défaire la remet où elle était (ou hors du
-    // tableau).
-    function placeFromTab(id, x, y) {
+    // Une note glissée depuis l'onglet Notes : posée au tableau de `screen`,
+    // ou déplacée si elle était déjà à un tableau (même d'un autre écran).
+    // Défaire la remet où elle était (ou hors du tableau).
+    function placeFromTab(id, x, y, screen) {
         var known = board.notes.find(n => n.id === id);
         var from = known ? [known.board.x, known.board.y] : null;
+        var fromScreen = known ? (known.screen || "") : "";
         var to = [Chalk.fraction(x), Chalk.fraction(y)];
-        board.act(["place", id, to[0], to[1]]);
+        board.act(board._place(id, to, screen));
         board.record({
             undo: function () {
                 if (from)
-                    board.act(["place", id, from[0], from[1]]);
+                    board.act(board._place(id, from, fromScreen));
                 else
                     board.act(["unplace", id]);
             },
-            redo: function () { board.act(["place", id, to[0], to[1]]); }
+            redo: function () { board.act(board._place(id, to, screen)); }
         });
     }
 
     // Retirée du tableau, la note reste dans l'onglet Notes.
     function unplace(note) {
+        var screen = note.screen || "";
         var at = [note.board.x, note.board.y];
         board.act(["unplace", note.id]);
         board.record({
-            undo: function () { board.act(["place", note.id, at[0], at[1]]); },
+            undo: function () { board.act(board._place(note.id, at, screen)); },
             redo: function () { board.act(["unplace", note.id]); }
         });
     }
@@ -239,9 +264,10 @@ Singleton {
         var step = { id: note.id };
         var before = note.text;
         var at = note.board.x + "," + note.board.y;
+        var screen = note.screen || "";
         var set = function (value) {
             if (step.id === "")
-                board.act(["add", "--at", at, value], function (r) { step.id = r.note.id; });
+                board.act(board._add(at, screen, value), function (r) { step.id = r.note.id; });
             else
                 board.act(["edit", step.id, value], function (r) {
                     if (r.note.id === "")

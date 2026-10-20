@@ -98,9 +98,9 @@ Rectangle {
                     color: Theme.textDim
                 }
 
-                Text {
-                    text: "✕"
-                    font.pixelSize: 11
+                NixIcon {
+                    iconSize: 11
+                    source: "../assets/icons/close.svg"
                     color: closeMa.containsMouse ? Theme.textPrimary : Theme.textDim
 
                     MouseArea {

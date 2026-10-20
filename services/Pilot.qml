@@ -29,6 +29,27 @@ Singleton {
     // Le mot d'activation « Karénine » écoute (micro ouvert en continu).
     property bool voiceWake: false
 
+    // Les réponses lues à voix haute (anna/src/claude/speech.rs).
+    // speechMode : "off", "voice" (demandes dites seulement) ou "always".
+    // speechVoices : [{ id, name }], les voix Piper installées ; speechVoice
+    // est celle qui lit.
+    property string speechMode: "voice"
+    property string speechVoice: ""
+    property var speechVoices: []
+    property string speechError: ""
+
+    function speechSetMode(mode) {
+        pilot._send({ cmd: "speech_set", mode: mode });
+    }
+
+    function speechSetVoice(id) {
+        pilot._send({ cmd: "speech_set", voice: id });
+    }
+
+    function speechStop() {
+        pilot._send({ cmd: "speech_stop" });
+    }
+
     // Lance l'écoute, ou la termine tout de suite si elle est en cours.
     function voiceToggle(send) {
         pilot._send({ cmd: "voice_toggle", send: send === undefined ? true : !!send });
@@ -54,6 +75,13 @@ Singleton {
                 pilot.voicePartial = !!msg.voice.partial;
                 pilot.voiceError = msg.voice.error || "";
                 pilot.voiceWake = !!msg.voice.wake;
+                var s = msg.voice.speech;
+                if (s) {
+                    pilot.speechMode = s.mode || "voice";
+                    pilot.speechVoice = s.voice || "";
+                    pilot.speechVoices = s.voices || [];
+                    pilot.speechError = s.error || "";
+                }
                 pilot.voicePhase = msg.voice.phase;
             }
         }

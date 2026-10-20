@@ -469,10 +469,11 @@ Item {
             }
 
             // Placeholder note icon (no art)
-            Text {
+            NixIcon {
                 anchors.centerIn: parent
                 visible: discArt.status !== Image.Ready
-                text: "♪"; font.pixelSize: parent.width * 0.35
+                iconSize: parent.width * 0.3
+                source: "../assets/icons/music-note.svg"
                 color: Theme.iconColor; opacity: 0.22
             }
 
@@ -495,10 +496,11 @@ Item {
             opacity: !root.showLyrics && root.hasPlayer && !root.isPlaying && !vinylContainer.dragging ? 0.92 : 0.0
             Behavior on opacity { NumberAnimation { duration: 260 } }
 
-            Text {
+            NixIcon {
                 anchors.centerIn: parent
-                text: root.hasPlayer ? "⏸" : "♪"
-                font.pixelSize: 20; color: Theme.textPrimary
+                iconSize: 20
+                source: "../assets/icons/" + (root.hasPlayer ? "pause.svg" : "music-note.svg")
+                color: Theme.textPrimary
             }
         }
 
@@ -514,10 +516,11 @@ Item {
             opacity: show ? 0.92 : 0.0
             Behavior on opacity { NumberAnimation { duration: 160 } }
 
-            Text {
+            NixIcon {
                 anchors.centerIn: parent
-                text: vinylContainer.dragDx > 0 ? "⏮" : "⏭"
-                font.pixelSize: 22; color: Theme.textPrimary
+                iconSize: 20
+                source: "../assets/icons/" + (vinylContainer.dragDx > 0 ? "prev.svg" : "next.svg")
+                color: Theme.textPrimary
             }
         }
 
@@ -808,7 +811,7 @@ Item {
             }
 
             TransportButton {
-                icon: Qt.resolvedUrl("../assets/icons/notes.svg")
+                icon: Qt.resolvedUrl("../assets/icons/lyrics.svg")
                 size: 28
                 accent: root.showLyrics
                 enabled: root.hasPlayer

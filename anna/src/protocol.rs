@@ -108,23 +108,6 @@ pub enum Command {
     /// (mode, fps once per second, enable/disable, errors).
     GestureWatch,
 
-    // ── Claude Code sessions (see claude/mod.rs) ──────────────────────────
-    /// Sent by `anna hook`: one trimmed lifecycle event of a `claude`
-    /// process. Answered with `{"ok":true}`.
-    ClaudeHook {
-        pid: Option<u32>,
-        event: crate::claude::HookEvent,
-    },
-    /// The live sessions, once: `[{id, project, cwd, state, since, …}, …]`.
-    ClaudeList,
-    /// Keep connection open; daemon pushes `{"sessions":[…]}` on every
-    /// change.
-    ClaudeWatch,
-    /// Focus the window hosting a session: `{"ok":true}` or
-    /// `{"ok":false,"error":"…"}`.
-    ClaudeFocus {
-        id: String,
-    },
     // ── Pilot (claude/pilot.rs, claude/desk.rs) ───────────────────────────
     /// Send a request to the pilot; `clipboard` joins the clipboard's text.
     /// `{"ok":true}` once sent — the answer arrives on `pilot_watch`.
@@ -155,9 +138,26 @@ pub enum Command {
     },
     /// Keep connection open; daemon pushes `{"voice":{"phase":"idle"|
     /// "listening"|"transcribing","level":0–1,"text":"…","partial":bool,
-    /// "send":bool,"error":"…"}}` — `text` follows the voice while
-    /// `partial`.
+    /// "send":bool,"error":"…","speech":{"mode":"off"|"voice"|"always",
+    /// "voice":"<id>","voices":[{"id","name"}…],"error":"…"}}}` — `text`
+    /// follows the voice while `partial`.
     VoiceWatch,
+    // ── Speech (claude/speech.rs) ─────────────────────────────────────────
+    /// When the pilot's answers are read aloud (`mode`: "off", "voice" —
+    /// spoken requests only — or "always") and with which Piper voice
+    /// (`voice`, an id from `voices`). Absent fields are kept; remembered.
+    SpeechSet {
+        #[serde(default)]
+        mode: Option<String>,
+        #[serde(default)]
+        voice: Option<String>,
+    },
+    /// Read a text aloud now, whatever the mode.
+    SpeechSay {
+        text: String,
+    },
+    /// Stop reading aloud.
+    SpeechStop,
     /// Play a 16-bit WAV through the listening loop as if said into the
     /// microphone (live transcript, end of speech, outcome).
     VoiceSimulate {

@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import "../services"
+import "../widgets"
 
 // Champ de saisie de la carte d'authentification : mot de passe masqué par
 // défaut, flèche d'envoi à droite, points animés pendant que PAM réfléchit,
@@ -112,13 +113,12 @@ Rectangle {
         color: sendButton.armed ? Qt.alpha(Theme.accentColor, sendMouse.containsMouse ? 0.32 : 0.20) : "transparent"
         Behavior on color { ColorAnimation { duration: 120 } }
 
-        Text {
+        NixIcon {
             anchors.centerIn: parent
             visible: !field.busy
-            text: "→"
+            iconSize: 16
+            source: "../assets/icons/arrow-right.svg"
             color: sendButton.armed ? Theme.accentColor : Theme.textDim
-            font.family: "JetBrains Mono"
-            font.pixelSize: 16
         }
 
         Row {

@@ -22,10 +22,9 @@
 //!                        per-second diagnostics (disable the daemon's first:
 //!                        the camera is exclusive); --dry performs no action
 //!   anna mcp             MCP server (stdio) of the pilot's desk tools
-//!   anna hook            Claude Code hook: forward one event (stdin) to the
-//!                        daemon; silent, always exits 0
-//!   anna claude [watch|focus <id>]
-//!                        client: live Claude Code sessions
+//!   anna pilot|voice …   client: the pilot, speaking to it, its answers aloud
+//!   anna say <text> [file.wav]
+//!                        speak a text with the chosen voice, no daemon
 //!
 //! Services exposed over `$XDG_RUNTIME_DIR/anna.sock`:
 //!   - theme    : accent/palette (set/mode/palette-color/get/watch)
@@ -33,7 +32,7 @@
 //!   - servers  : tailnet devices, stats over ssh (servers_watch / servers_list)
 //!   - phone    : KDE Connect phones (phone_watch / phone_action)
 //!   - gesture  : webcam control (gesture_get/set/toggle/watch)
-//!   - claude   : live Claude Code sessions (claude_hook/list/watch/focus)
+//!   - pilot    : the desk pilot, its voice and speech (pilot_*/voice_*/speech_*)
 
 mod appctl;
 mod audio;
@@ -93,24 +92,25 @@ async fn main() {
                 tokio::time::sleep(Duration::from_secs(3600)).await;
             }
         }
-        Some("gesture" | "claude" | "pilot" | "voice" | "servers" | "phone") => {
+        Some("gesture" | "pilot" | "voice" | "servers" | "phone") => {
             client::run(&args);
         }
         // The « Notes » tab: works on its files directly, no daemon needed.
         Some("notes") => {
             notes::run(&args);
         }
-        // Claude Code hook: must stay silent and exit 0 whatever happens.
         // MCP server of the pilot's desk tools (started by Claude Code).
         Some("mcp") => {
             claude::mcp::run();
         }
+        // Speak a text with the chosen voice, without the daemon
+        // (claude/speech.rs).
+        Some("say") => {
+            claude::speech::say_offline(&args);
+        }
         // Scores of the wake word over a WAV, 80 ms apart (claude/wake.rs).
         Some("wake-score") => {
             claude::wake::score_file(args.get(2).map(String::as_str));
-        }
-        Some("hook") => {
-            claude::hook::run();
         }
         // Reflect the accent color onto the MSI RGB keyboard (long-lived).
         Some("msi-rgb-watch") => {
@@ -133,7 +133,7 @@ async fn main() {
         Some(other) => {
             eprintln!("anna: unknown command '{other}'");
             eprintln!(
-                "Usage: anna [daemon|init|set|mode|palette-color|reset|get|watch|gesture|claude|hook|mcp|notes|msi-rgb-watch]"
+                "Usage: anna [daemon|init|set|mode|palette-color|reset|get|watch|gesture|mcp|notes|msi-rgb-watch]"
             );
             std::process::exit(2);
         }
@@ -191,14 +191,12 @@ async fn run_daemon(args: &[String]) {
     let verbose = std::env::var_os("ANNA_GESTURE_DEBUG").is_some();
     let gesture = gesture::Gesture::start(&paths::accent_dir(), verbose, false);
 
-    // Live Claude Code sessions, fed by `anna hook`.
-    let claude = claude::Sessions::new();
-    // The pilot: the conversation bar's requests for the desktop.
-    let pilot = claude::pilot::Pilot::new(Arc::clone(&claude));
+    // The pilot: the conversation bar's requests for the desktop, its
+    // answers read aloud (Piper voices, local).
+    let speech = claude::speech::Speech::new();
+    let pilot = claude::pilot::Pilot::new(speech);
     // Speaking to the pilot (whisper.cpp, local).
     let voice = claude::voice::Voice::new(Arc::clone(&pilot));
-    // The vault's skills, linked where Claude Code looks for them.
-    tokio::task::spawn_blocking(|| claude::skills::link_skills(&claude::skills::skills_dir()));
 
     // Every screenshot also lands in the « Notes » tab.
     tokio::spawn(notes::watch_screenshots());
@@ -211,7 +209,6 @@ async fn run_daemon(args: &[String]) {
         applied: tokio::sync::Mutex::new(0),
         tx,
         gesture,
-        claude,
         pilot,
         voice,
         opts,
@@ -241,7 +238,6 @@ struct Ctx {
     /// Theme Watch subscribers.
     tx: broadcast::Sender<String>,
     gesture: Arc<gesture::Gesture>,
-    claude: Arc<claude::Sessions>,
     pilot: Arc<claude::pilot::Pilot>,
     voice: Arc<claude::voice::Voice>,
     opts: AppCtlOptions,
@@ -522,58 +518,9 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             }
         }
 
-        // ── Claude Code sessions ─────────────────────────────────────────
-        Command::ClaudeHook { pid, event } => {
-            ctx.claude.apply(&event, pid);
-            let _ = write_line(&mut writer, "{\"ok\":true}").await;
-        }
-
-        Command::ClaudeList => {
-            let json = serde_json::to_string(&ctx.claude.list()).unwrap_or_default();
-            let _ = write_line(&mut writer, &json).await;
-        }
-
-        Command::ClaudeWatch => {
-            // Subscribe first so a change racing the snapshot isn't lost.
-            let mut rx = ctx.claude.subscribe();
-            if write_line(&mut writer, &ctx.claude.snapshot_line())
-                .await
-                .is_err()
-            {
-                return;
-            }
-            loop {
-                match rx.recv().await {
-                    Ok(msg) => {
-                        if write_line(&mut writer, &msg).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Closed) => break,
-                    // Each line carries the whole list: lagging loses at most
-                    // an alert, never the state.
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                }
-            }
-        }
-
-        Command::ClaudeFocus { id } => {
-            let result = match ctx.claude.pid_of(&id) {
-                Some(pid) => tokio::task::spawn_blocking(move || claude::focus::focus(pid))
-                    .await
-                    .unwrap_or_else(|e| Err(format!("focus task failed: {e}"))),
-                None => Err("session inconnue ou sans processus".into()),
-            };
-            let reply = match result {
-                Ok(()) => serde_json::json!({ "ok": true }),
-                Err(e) => serde_json::json!({ "ok": false, "error": e }),
-            };
-            let _ = write_line(&mut writer, &reply.to_string()).await;
-        }
-
         // ── Pilot ────────────────────────────────────────────────────────
         Command::PilotAsk { text, clipboard } => {
-            write_result(&mut writer, ctx.pilot.ask(&text, clipboard).await).await;
+            write_result(&mut writer, ctx.pilot.ask(&text, clipboard, false).await).await;
         }
 
         Command::PilotWatch => {
@@ -627,6 +574,27 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
         Command::VoiceWake { on } => {
             let on = on.unwrap_or(!ctx.voice.wake_on());
             ctx.voice.set_wake(on);
+            write_result(&mut writer, Ok(())).await;
+        }
+
+        Command::SpeechSet { mode, voice } => {
+            let result = match mode.as_deref().map(|m| (m, claude::speech::Mode::parse(m))) {
+                Some((m, None)) => Err(format!("mode inconnu : {m} (off, voice, always)")),
+                parsed => {
+                    ctx.pilot.speech().set(parsed.and_then(|(_, m)| m), voice);
+                    Ok(())
+                }
+            };
+            write_result(&mut writer, result).await;
+        }
+
+        Command::SpeechSay { text } => {
+            ctx.pilot.speech().say(&text);
+            write_result(&mut writer, Ok(())).await;
+        }
+
+        Command::SpeechStop => {
+            ctx.pilot.speech().stop();
             write_result(&mut writer, Ok(())).await;
         }
 
@@ -686,37 +654,8 @@ async fn run_desk(ctx: &Arc<Ctx>, tool: &str, args: &serde_json::Value) -> Resul
             .trim()
             .to_string()
     };
-    let sessions_text = || {
-        let list = ctx.claude.list();
-        if list.is_empty() {
-            return "aucune session Claude en cours".to_string();
-        }
-        list.iter()
-            .map(|s| {
-                let state = match s.state {
-                    claude::State::Working => "travaille",
-                    claude::State::Waiting => "attend l'utilisateur",
-                    claude::State::Idle => "au repos",
-                };
-                let what = if s.prompt.is_empty() {
-                    String::new()
-                } else {
-                    format!(" — « {} »", s.prompt)
-                };
-                format!("- {} ({state}){what}", s.project)
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
 
     match tool {
-        "sessions" => Ok(sessions_text()),
-        "etat_bureau" => {
-            let desk_state = tokio::task::spawn_blocking(desk::desktop_state)
-                .await
-                .unwrap_or_default();
-            Ok(format!("{desk_state}\nsessions :\n{}", sessions_text()))
-        }
         "couleur_accent" => {
             let color = s("couleur");
             let result = ctx

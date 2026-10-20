@@ -113,10 +113,10 @@ Rectangle {
             }
             FocusRing { gap: 1 }
 
-            Text {
+            NixIcon {
                 anchors.centerIn: parent
-                text: "×"
-                font.pixelSize: 14
+                iconSize: 11
+                source: "../assets/icons/close.svg"
                 color: closeMa.containsMouse || closeBtn.activeFocus ? Theme.textPrimary : Theme.textDim
             }
 

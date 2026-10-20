@@ -475,6 +475,145 @@ Item {
                     }
                 }
 
+                // Les réponses du pilote lues à voix haute (anna/src/claude/
+                // speech.rs) : jamais, aux demandes dites seulement, ou
+                // toujours. anna s'en souvient.
+                Rectangle {
+                    id: speechRow
+                    readonly property var modes: ["off", "voice", "always"]
+                    readonly property var names: [I18n.tr("settings.voice.speech.off"),
+                                                  I18n.tr("settings.voice.speech.voice"),
+                                                  I18n.tr("settings.voice.speech.always")]
+                    readonly property int at: Math.max(0, modes.indexOf(Pilot.speechMode))
+
+                    function step(d) {
+                        var n = modes.length;
+                        Pilot.speechSetMode(modes[(speechRow.at + d + n) % n]);
+                    }
+
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 46
+                    Layout.topMargin: -10
+                    Layout.bottomMargin: 18
+                    radius: Theme.radius
+                    color: Qt.alpha(Theme.textPrimary, activeFocus ? 0.09 : 0.05)
+
+                    activeFocusOnTab: true
+                    Keys.onLeftPressed: speechRow.step(-1)
+                    Keys.onRightPressed: speechRow.step(1)
+                    Keys.onPressed: (event) => root.activates(event, () => speechRow.step(1))
+                    FocusRing { radius: speechRow.radius + gap }
+
+                    Column {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 12
+                        anchors.right: speechButtons.left
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 1
+
+                        Text {
+                            width: parent.width
+                            text: I18n.tr("settings.voice.speech")
+                            font.family: "Inter"
+                            font.pixelSize: 12
+                            font.weight: Font.Medium
+                            color: Theme.textPrimary
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            width: parent.width
+                            text: speechRow.names[speechRow.at]
+                            font.family: "Inter"
+                            font.pixelSize: 10
+                            color: Theme.textSecondary
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    Row {
+                        id: speechButtons
+                        anchors.right: parent.right
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 4
+                        GlassButton { implicitWidth: 24; implicitHeight: 24; fontSize: 13; text: "‹"; onClicked: speechRow.step(-1) }
+                        GlassButton { implicitWidth: 24; implicitHeight: 24; fontSize: 13; text: "›"; onClicked: speechRow.step(1) }
+                    }
+                }
+
+                // La voix Piper qui lit : une par fichier installé (et par
+                // locuteur pour les voix qui en ont plusieurs).
+                Rectangle {
+                    id: speakerRow
+                    readonly property int at: Math.max(0, Pilot.speechVoices.findIndex(v => v.id === Pilot.speechVoice))
+                    readonly property bool usable: Pilot.speechVoices.length > 0 && Pilot.speechMode !== "off"
+
+                    function step(d) {
+                        var n = Pilot.speechVoices.length;
+                        if (n > 0)
+                            Pilot.speechSetVoice(Pilot.speechVoices[(speakerRow.at + d + n) % n].id);
+                    }
+
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 46
+                    Layout.topMargin: -10
+                    Layout.bottomMargin: 18
+                    radius: Theme.radius
+                    color: Qt.alpha(Theme.textPrimary, activeFocus ? 0.09 : 0.05)
+                    opacity: usable ? 1 : 0.5
+                    Behavior on opacity { NumberAnimation { duration: 160 } }
+
+                    activeFocusOnTab: usable
+                    Keys.onLeftPressed: speakerRow.step(-1)
+                    Keys.onRightPressed: speakerRow.step(1)
+                    Keys.onPressed: (event) => root.activates(event, () => speakerRow.step(1))
+                    FocusRing { radius: speakerRow.radius + gap }
+
+                    Column {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 12
+                        anchors.right: speakerButtons.left
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 1
+
+                        Text {
+                            width: parent.width
+                            text: I18n.tr("settings.voice.speaker")
+                            font.family: "Inter"
+                            font.pixelSize: 12
+                            font.weight: Font.Medium
+                            color: Theme.textPrimary
+                            elide: Text.ElideRight
+                        }
+                        // Une voix qui ne peut pas lire dit pourquoi.
+                        Text {
+                            width: parent.width
+                            text: Pilot.speechError
+                                  ? Pilot.speechError
+                                  : Pilot.speechVoices.length > 0
+                                    ? Pilot.speechVoices[speakerRow.at].name
+                                    : I18n.tr("settings.voice.speaker.none")
+                            font.family: "Inter"
+                            font.pixelSize: 10
+                            color: Theme.textSecondary
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    Row {
+                        id: speakerButtons
+                        anchors.right: parent.right
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 4
+                        visible: Pilot.speechVoices.length > 1
+                        GlassButton { implicitWidth: 24; implicitHeight: 24; fontSize: 13; text: "‹"; onClicked: speakerRow.step(-1) }
+                        GlassButton { implicitWidth: 24; implicitHeight: 24; fontSize: 13; text: "›"; onClicked: speakerRow.step(1) }
+                    }
+                }
+
                 // ── LANGUE section ─────────────────────────────────
                 // Une ligne par fichier de i18n/ : une langue ajoutée là
                 // apparaît ici d'elle-même.
@@ -980,13 +1119,23 @@ Item {
                         border.width: 1
                     }
 
-                    Text {
+                    Row {
                         anchors.centerIn: parent
-                        text: "↺ " + I18n.tr("settings.reset")
-                        font.family: "Inter"
-                        font.pixelSize: 11
-                        font.weight: Font.Medium
-                        color: Theme.textSecondary
+                        spacing: 5
+                        NixIcon {
+                            anchors.verticalCenter: parent.verticalCenter
+                            iconSize: 12
+                            source: "../assets/icons/reset.svg"
+                            color: Theme.textSecondary
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: I18n.tr("settings.reset")
+                            font.family: "Inter"
+                            font.pixelSize: 11
+                            font.weight: Font.Medium
+                            color: Theme.textSecondary
+                        }
                     }
 
                     MouseArea {

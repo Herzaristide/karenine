@@ -28,7 +28,7 @@ The campaign, layer by layer:
 
 | Layer | Where | What it pins down |
 | --- | --- | --- |
-| Daemon | `anna/src/**` (`cargo test`) | theme and palettes, socket protocol (commands parsed, response shapes), client, tuner/chroma DSP, metronome timing, gestures, notes, servers, phone, Claude sessions, i18n |
+| Daemon | `anna/src/**` (`cargo test`) | theme and palettes, socket protocol (commands parsed, response shapes), client, tuner/chroma DSP, metronome timing, gestures, notes, servers, phone, pilot and speech, i18n |
 | QML logic | `tests/tst_*.qml` | `Fuzzy` score tiers; `Search` debounce, stale answers, type bonus, cutoff, web fallback, result cap; `WebSource` address detection and encoding; `DragState` |
 | Contract | `tests/contract-check.sh` | every `{"cmd":…}` the QML sends is a variant of `Command` in `protocol.rs`; every `qmldir` entry exists |
 | Dictionaries | `tests/i18n-check.sh` | every key called by the QML or anna exists in `en.json` |
