@@ -489,21 +489,9 @@ fn shot_places() -> Vec<(PathBuf, &'static str)> {
     ]
 }
 
-/// `XDG_PICTURES_DIR` from `~/.config/user-dirs.dirs`, else `~/Pictures`.
+/// `XDG_PICTURES_DIR`, else `~/Pictures`.
 fn pictures_dir() -> PathBuf {
-    let home = crate::paths::home_dir();
-    std::fs::read_to_string(home.join(".config/user-dirs.dirs"))
-        .ok()
-        .and_then(|text| {
-            text.lines()
-                .find_map(|l| l.trim().strip_prefix("XDG_PICTURES_DIR="))
-                .map(|v| {
-                    v.trim_matches('"')
-                        .replace("$HOME", &home.to_string_lossy())
-                })
-        })
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join("Pictures"))
+    crate::paths::user_dir("PICTURES", "Pictures")
 }
 
 /// Is this file a screenshot of ours, by its name?
@@ -962,7 +950,10 @@ mod tests {
         assert_eq!(n.text, "à droite");
         assert_eq!(n.screen, "LG ULTRAGEAR");
         // Moved to another screen, then back to the interface screen.
-        assert_eq!(place(&mut s, &n.id, "0.5", "0.5", "eDP-1").unwrap().screen, "eDP-1");
+        assert_eq!(
+            place(&mut s, &n.id, "0.5", "0.5", "eDP-1").unwrap().screen,
+            "eDP-1"
+        );
         assert_eq!(place(&mut s, &n.id, "0.5", "0.5", "").unwrap().screen, "");
         // Off the board, it belongs to no screen.
         place(&mut s, &n.id, "0.5", "0.5", "eDP-1").unwrap();

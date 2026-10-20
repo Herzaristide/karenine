@@ -84,6 +84,17 @@ fn build_command(args: &[String]) -> Option<(serde_json::Value, bool)> {
             Some("transcribe") => (json!({"cmd": "voice_transcribe", "path": arg(3)?}), false),
             _ => return None,
         },
+        // Each press of a shortcut starts the recording, or stops it.
+        "record" => match arg(2) {
+            None | Some("status") => (json!({"cmd": "record_get"}), false),
+            Some("watch") => (json!({"cmd": "record_watch"}), true),
+            Some("stop") => (json!({"cmd": "record_stop", "kind": arg(3)}), false),
+            Some(kind @ ("audio" | "screen")) => (
+                json!({"cmd": "record_toggle", "kind": kind, "mode": arg(3).unwrap_or("")}),
+                false,
+            ),
+            _ => return None,
+        },
         "pilot" => match arg(2)? {
             "watch" => (json!({"cmd": "pilot_watch"}), true),
             "reset" => (json!({"cmd": "pilot_reset"}), false),
@@ -150,6 +161,9 @@ fn usage() -> ! {
            voice say <text> | hush                Read a text aloud / stop reading\n\
            voice speech off|voice|always          When the pilot's answers are read aloud\n\
            voice speaker <id>                     The Piper voice reading them\n\
+           record audio [mic|mix]                 Record the mic (mix: with the computer's sound), or stop\n\
+           record screen [area|screen]            Record a region / the focused monitor, or stop\n\
+           record stop [audio|screen] | status | watch\n\
            servers [list] | watch [name]          Tailnet devices / their stats (ssh)\n\
            servers on|off|reboot <name>           Wake-on-LAN / power off, reboot (ssh)\n\
            phone [watch]                          KDE Connect phones: battery, network\n\
@@ -231,6 +245,24 @@ mod tests {
         assert!(matches!(
             serde_json::from_value::<Command>(json!({"cmd": "desk", "tool": "volume"})).unwrap(),
             Command::Desk { .. }
+        ));
+        assert!(matches!(parses(&["record"]), Command::RecordGet));
+        assert!(matches!(parses(&["record", "watch"]), Command::RecordWatch));
+        assert!(matches!(
+            parses(&["record", "stop"]),
+            Command::RecordStop { kind: None }
+        ));
+        assert!(matches!(
+            parses(&["record", "stop", "screen"]),
+            Command::RecordStop { kind: Some(k) } if k == "screen"
+        ));
+        assert!(matches!(
+            parses(&["record", "audio", "mix"]),
+            Command::RecordToggle { kind, mode } if kind == "audio" && mode == "mix"
+        ));
+        assert!(matches!(
+            parses(&["record", "screen"]),
+            Command::RecordToggle { kind, mode } if kind == "screen" && mode.is_empty()
         ));
         assert!(matches!(parses(&["phone"]), Command::PhoneWatch));
         assert!(matches!(

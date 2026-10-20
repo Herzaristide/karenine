@@ -89,6 +89,26 @@ pub enum Command {
     /// events, driving a sample-accurate cpal output stream.
     Metronome,
 
+    // ── recording (recorder.rs) ───────────────────────────────────────────
+    /// Start a recording, or stop the one of that kind: `kind` "audio"
+    /// (`mode` "mic", the default, or "mix": with the computer's sound) or
+    /// "screen" (`mode` "area", the default, or "screen": the focused
+    /// monitor). `{"ok":true}` once started; picking a region waits for it.
+    RecordToggle {
+        kind: String,
+        #[serde(default)]
+        mode: String,
+    },
+    /// Stop the recording of `kind`, or every one without it.
+    RecordStop {
+        #[serde(default)]
+        kind: Option<String>,
+    },
+    /// Print the status once (recorder.rs).
+    RecordGet,
+    /// Keep connection open; daemon pushes the status on every change.
+    RecordWatch,
+
     // ── gesture control (webcam) ──────────────────────────────────────────
     /// Print the gesture status once: `{"enabled","active","mode","fps","error"}`.
     GestureGet,

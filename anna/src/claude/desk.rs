@@ -93,6 +93,19 @@ pub fn tools() -> Value {
         tool("capture_ecran", "Fait une capture (copiée et enregistrée).",
             json!({ "zone": json!({ "type": "string", "enum": ["ecran", "selection", "fenetre"] }) }),
             &["zone"]),
+        tool("enregistrer",
+            "Enregistre le son (fichier FLAC dans le dossier Musique) ou l'écran avec le son de \
+             l'ordinateur (MP4 dans le dossier Vidéos), ou arrête l'enregistrement en cours. \
+             L'enregistrement continue après la réponse, jusqu'à ce qu'on l'arrête.",
+            json!({ "action": json!({ "type": "string", "enum": ["demarrer", "arreter"],
+                                      "description": "défaut : demarrer" }),
+                    "quoi": json!({ "type": "string", "enum": ["son", "ecran"],
+                                    "description": "requis pour demarrer ; pour arreter, vide = tout arrêter" }),
+                    "mode": json!({ "type": "string", "enum": ["micro", "micro_ordi", "selection", "ecran"],
+                                    "description": "son : micro (défaut) ou micro_ordi (micro + ce que joue \
+                                                    l'ordinateur) ; ecran : selection (défaut, l'utilisateur \
+                                                    trace la zone) ou ecran (l'écran entier)" }) }),
+            &[]),
         tool("chercher_notes",
             "Cherche dans les notes de l'utilisateur (coffre Obsidian : recherches, projets, skills, lab).",
             json!({ "requete": s("mots à chercher") }), &["requete"]),
@@ -717,6 +730,7 @@ mod tests {
             .collect();
         assert!(names.contains(&"volume") && names.contains(&"commande"));
         assert!(names.contains(&"creer_note") && names.contains(&"lire_notes"));
+        assert!(names.contains(&"enregistrer"));
         assert!(!names.contains(&"lancer_session"), "the pilot only acts");
         for t in list.as_array().unwrap() {
             assert_eq!(t["inputSchema"]["type"], "object", "{}", t["name"]);

@@ -25,6 +25,7 @@ pin           regular  push-pin
 power         regular  power
 reboot        regular  arrow-clockwise
 screenshot    regular  selection
+screen-record regular  video-camera
 settings      regular  gear-six
 stats         regular  chart-line
 suspend       regular  moon
@@ -51,6 +52,7 @@ disk          regular  hard-drive
 play          fill     play
 pause         fill     pause
 stop          fill     stop
+record        fill     record
 prev          fill     skip-back
 next          fill     skip-forward
 loop          regular  repeat

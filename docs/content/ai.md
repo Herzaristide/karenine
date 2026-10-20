@@ -16,9 +16,9 @@ words.
 
 - **It acts on the desktop** with its tools (`anna/src/claude/desk.rs`):
   windows and workspaces, sound, brightness, media playback, applications,
-  URLs, projects (Zed, terminal), screenshots, accent color, vault notes,
-  quick notes, widgets, desktop state, clipboard, and as a last resort a
-  shell command. It never rebuilds NixOS.
+  URLs, projects (Zed, terminal), screenshots, sound and screen
+  recordings, accent color, vault notes, quick notes, widgets, desktop
+  state, clipboard, and as a last resort a shell command. It never rebuilds NixOS.
 - **It only acts**: it never starts a Claude Code session. A code or
   research task, it suggests opening the project (Zed or a terminal) and
   leaves it to you.

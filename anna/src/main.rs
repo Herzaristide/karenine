@@ -23,6 +23,8 @@
 //!                        the camera is exclusive); --dry performs no action
 //!   anna mcp             MCP server (stdio) of the pilot's desk tools
 //!   anna pilot|voice …   client: the pilot, speaking to it, its answers aloud
+//!   anna record audio [mic|mix] | screen [area|screen] | stop [kind] | watch
+//!                        client: start/stop a recording (recorder.rs)
 //!   anna say <text> [file.wav]
 //!                        speak a text with the chosen voice, no daemon
 //!
@@ -33,6 +35,7 @@
 //!   - phone    : KDE Connect phones (phone_watch / phone_action)
 //!   - gesture  : webcam control (gesture_get/set/toggle/watch)
 //!   - pilot    : the desk pilot, its voice and speech (pilot_*/voice_*/speech_*)
+//!   - record   : microphone and screen recordings (record_toggle/stop/get/watch)
 
 mod appctl;
 mod audio;
@@ -50,6 +53,7 @@ mod notes;
 mod paths;
 mod phone;
 mod protocol;
+mod recorder;
 mod servers;
 mod state;
 mod templates;
@@ -92,7 +96,7 @@ async fn main() {
                 tokio::time::sleep(Duration::from_secs(3600)).await;
             }
         }
-        Some("gesture" | "pilot" | "voice" | "servers" | "phone") => {
+        Some("gesture" | "pilot" | "voice" | "servers" | "phone" | "record") => {
             client::run(&args);
         }
         // The « Notes » tab: works on its files directly, no daemon needed.
@@ -133,7 +137,7 @@ async fn main() {
         Some(other) => {
             eprintln!("anna: unknown command '{other}'");
             eprintln!(
-                "Usage: anna [daemon|init|set|mode|palette-color|reset|get|watch|gesture|mcp|notes|msi-rgb-watch]"
+                "Usage: anna [daemon|init|set|mode|palette-color|reset|get|watch|gesture|record|mcp|notes|msi-rgb-watch]"
             );
             std::process::exit(2);
         }
@@ -197,6 +201,8 @@ async fn run_daemon(args: &[String]) {
     let pilot = claude::pilot::Pilot::new(speech);
     // Speaking to the pilot (whisper.cpp, local).
     let voice = claude::voice::Voice::new(Arc::clone(&pilot));
+    // Recording the microphone and the screen (recorder.rs).
+    let recorder = recorder::Recorder::new();
 
     // Every screenshot also lands in the « Notes » tab.
     tokio::spawn(notes::watch_screenshots());
@@ -211,6 +217,7 @@ async fn run_daemon(args: &[String]) {
         gesture,
         pilot,
         voice,
+        recorder,
         opts,
     });
 
@@ -240,6 +247,7 @@ struct Ctx {
     gesture: Arc<gesture::Gesture>,
     pilot: Arc<claude::pilot::Pilot>,
     voice: Arc<claude::voice::Voice>,
+    recorder: Arc<recorder::Recorder>,
     opts: AppCtlOptions,
 }
 
@@ -477,6 +485,47 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             run_metronome(&mut writer, &mut lines).await;
         }
 
+        // ── recording ────────────────────────────────────────────────────
+        Command::RecordToggle { kind, mode } => {
+            let result = match recorder::Kind::parse(&kind) {
+                Some(k) => ctx.recorder.toggle(k, &mode).await,
+                None => Err(i18n::tr_args("record.bad_kind", &[("kind", &kind)])),
+            };
+            write_result(&mut writer, result).await;
+        }
+
+        Command::RecordStop { kind } => {
+            let result = match kind.as_deref().map(|k| (k, recorder::Kind::parse(k))) {
+                None => {
+                    ctx.recorder.stop_all();
+                    Ok(())
+                }
+                Some((_, Some(k))) => {
+                    ctx.recorder.stop(k);
+                    Ok(())
+                }
+                Some((k, None)) => Err(i18n::tr_args("record.bad_kind", &[("kind", k)])),
+            };
+            write_result(&mut writer, result).await;
+        }
+
+        Command::RecordGet => {
+            let status = ctx.recorder.subscribe().borrow().clone();
+            let json = serde_json::json!({ "record": status }).to_string();
+            let _ = write_line(&mut writer, &json).await;
+        }
+
+        Command::RecordWatch => {
+            let mut rx = ctx.recorder.subscribe();
+            loop {
+                let status = rx.borrow_and_update().clone();
+                let json = serde_json::json!({ "record": status }).to_string();
+                if write_line(&mut writer, &json).await.is_err() || rx.changed().await.is_err() {
+                    break;
+                }
+            }
+        }
+
         // ── gesture control ──────────────────────────────────────────────
         Command::GestureGet => {
             write_gesture_status(&mut writer, &gesture.status()).await;
@@ -667,6 +716,12 @@ async fn run_desk(ctx: &Arc<Ctx>, tool: &str, args: &serde_json::Value) -> Resul
                     let _ = ctx.tx.send(event);
                 });
             result.map(|()| format!("accent {color}"))
+        }
+        // The recordings belong to the daemon (recorder.rs).
+        "enregistrer" => {
+            ctx.recorder
+                .pilot(&s("action"), &s("quoi"), &s("mode"))
+                .await
         }
         _ => {
             let (tool, args) = (tool.to_string(), args.clone());

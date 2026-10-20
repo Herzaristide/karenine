@@ -61,6 +61,12 @@ pkgs.rustPlatform.buildRustPackage {
     #   wpctl (wireplumber), brightnessctl, playerctl, wl-paste (wl-clipboard),
     #   xdg-open (xdg-utils), grimblast
     #     → the pilot's desk tools (claude/desk.rs)
+    #   ffmpeg, slurp, libnotify (notify-send)
+    #     → recording the microphone, picking a screen region, saying where
+    #       the file went (recorder.rs); ffmpeg also reads the webcam
+    #       (gesture/camera.rs). gpu-screen-recorder is left to the ambient
+    #       PATH: it needs its gsr-kms-server wrapper, given a capability by
+    #       the NixOS configuration (programs.gpu-screen-recorder).
     #   whisper-server, whisper-cli (whisper-cpp, Vulkan build), vulkaninfo
     #   (vulkan-tools)
     #     → transcribing what is said to the pilot, live (claude/voice.rs,
@@ -105,6 +111,9 @@ pkgs.rustPlatform.buildRustPackage {
             wl-clipboard
             xdg-utils
             grimblast
+            ffmpeg
+            slurp
+            libnotify
             openssh
             systemd
             (whisper-cpp.override { vulkanSupport = true; })

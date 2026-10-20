@@ -11,18 +11,19 @@ import "../widgets"
 
 // La barre du haut des widgets, la même quel que soit l'onglet. Quatre
 // groupes posés sur le fond, chacun sur son aplat : l'alimentation à
-// gauche, les niveaux (luminosité, volume) au milieu, le Bluetooth et la
-// capture, puis la batterie à droite. Le Bluetooth déplie la liste des
-// appareils (widgets/BluetoothMenu.qml).
+// gauche, les niveaux (luminosité, volume) au milieu, le Bluetooth, la
+// capture et l'enregistrement de l'écran, puis la batterie à droite. Le
+// Bluetooth déplie la liste des appareils (widgets/BluetoothMenu.qml).
 //
-//   ╭ 🔒 ☾ ⇥ ↻ ⏻ ╮   ╭ ☀ ━━●── 80 %  │  🔊 ━━━●─ 64 % ╮  ╭ ᛒ ⌗ ╮  ╭ [87]▸ ╮
+//   ╭ 🔒 ☾ ⇥ ↻ ⏻ ╮   ╭ ☀ ━━●── 80 %  │  🔊 ━━━●─ 64 % ╮  ╭ ᛒ ⌗ ● ╮  ╭ [87]▸ ╮
 //
 // Chaque bouton d'alimentation agit dès le premier clic, sans confirmation.
 // Les curseurs se partagent la place qui reste : la barre peut être étroite.
 //
 // Au clavier : Tab passe d'un bouton à l'autre, Entrée ou Espace l'actionne.
 // Maj+Entrée sur la
-// capture prend l'écran entier, comme le clic droit. Sur un curseur, ← →
+// capture ou l'enregistrement prend l'écran entier, comme le clic droit.
+// Sur un curseur, ← →
 // (ou ↑ ↓) règlent par pas, Début et Fin vont aux bouts.
 Item {
     id: top
@@ -72,6 +73,28 @@ Item {
             // Détaché et sans shell : la sélection dure le temps qu'il faut.
             Quickshell.execDetached(["grimblast", "--notify", "copysave", shotTimer.region, path]);
         }
+    }
+
+    // ── L'enregistrement de l'écran ──────────────────────────────
+    // anna le tient (services/Recorder.qml) : clic, une région ; clic droit,
+    // l'écran qui a le focus ; avec le son de l'ordinateur. Comme pour la
+    // capture, la barre disparaît d'abord pour ne pas être filmée. Pendant
+    // l'enregistrement, le bouton rougit et compte ; un clic l'arrête.
+    function screenRecord(region) {
+        if (Recorder.screenOn) {
+            Recorder.stop("screen");
+            return;
+        }
+        top.bar.dismiss();
+        recTimer.region = region;
+        recTimer.restart();
+    }
+
+    Timer {
+        id: recTimer
+        property string region: "area"
+        interval: 350
+        onTriggered: Recorder.toggleScreen(recTimer.region)
     }
 
     // ── Petits éléments ──────────────────────────────────────────
@@ -413,7 +436,7 @@ Item {
             }
         }
 
-        // Le Bluetooth et la capture.
+        // Le Bluetooth, la capture et l'enregistrement de l'écran.
         Pill {
             Layout.preferredWidth: toolsRow.width + 8
 
@@ -435,6 +458,25 @@ Item {
                 IconButton {
                     icon: "screenshot.svg"
                     onClicked: (button) => top.screenshot(button === Qt.RightButton ? "screen" : "area")
+                }
+                IconButton {
+                    visible: Recorder.available
+                    icon: "screen-record.svg"
+                    alertColor: Recorder.screenOn ? Theme.colorDanger : "transparent"
+                    onClicked: (button) => top.screenRecord(button === Qt.RightButton ? "screen" : "area")
+                }
+                // Le temps écoulé, tant que l'écran est filmé.
+                Text {
+                    visible: Recorder.screenOn
+                    anchors.verticalCenter: parent.verticalCenter
+                    leftPadding: 2
+                    rightPadding: 4
+                    text: Recorder.elapsed(Recorder.screen)
+                    color: Theme.colorDanger
+                    font.family: top.bar.uiFont
+                    font.pixelSize: 11
+                    font.weight: Font.DemiBold
+                    font.features: { "tnum": 1 }
                 }
             }
 

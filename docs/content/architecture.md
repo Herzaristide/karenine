@@ -16,7 +16,7 @@ greeter.qml          Login screen, run by greetd
 services/            Cross-cutting singletons and search sources
   Theme, I18n, Widgets, Display, Tuning, DragState
   Audio, Brightness, Battery, Notifications (notification server)
-  Anna, Pilot, Gesture, CursorProbe, DefaultApps
+  Anna, Pilot, Gesture, CursorProbe, DefaultApps, Recorder
   Search, Fuzzy, AppSource, FileSource, SettingSource, WallpaperSource,
   NoteSource, WebSource
 panels/              Top-level chrome (Wayland windows)
@@ -24,7 +24,7 @@ panels/              Top-level chrome (Wayland windows)
   PolkitPrompt
 widgets/             Panel contents
   FileExplorer, HardwareStats, MachinePicker, PhoneWidget, NotificationCenter,
-  NotificationCard, NotesWidget, MusicPlayerWidget, Metronome, Tuner,
+  NotificationCard, NotesWidget, MusicPlayerWidget, Metronome, Tuner, AudioRecorder,
   ChromaGraph, MiniGraph, GestureControls, Settings, DeviceSettings,
   WifiSettings, BluetoothMenu, GlassButton, FocusRing, NixIcon
 auth/                The card shared by the lock and login screens
@@ -62,6 +62,7 @@ the [Search](#search) page):
 | `CursorProbe.qml` | The cursor position, asked on Hyprland's request socket (the answer of `hyprctl -j cursorpos`, without a process): a layer surface only sees the cursor when it hovers it. |
 | `DefaultApps.qml` | The editor, file manager and terminal used to open a file, resolved from the system's settings (`xdg-mime`, `$TERMINAL`…), never hard-coded. |
 | `Tuning.qml` | The tuner's reference A, persisted in `tuner.json`. |
+| `Recorder.qml` | The microphone and screen recordings, as anna runs them (`record_watch`): what the Music tab and the top bar show and send. |
 | `DragState.qml` | A drag in progress (from the explorer): it necessarily takes the cursor out of the conversation bar, which would close it and destroy the source tile mid-gesture — this flag holds the closing back while dragging. |
 
 ## QML conventions
