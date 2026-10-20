@@ -50,7 +50,12 @@ pub fn refresh(state: &AppState) -> io::Result<bool> {
     let src = base.join(variant);
     let root = paths::home_dir().join(".local/share/icons");
     let dest = root.join(THEME_NAME);
-    let stamp = format!("{} {} {}", state.accent.hex_no_hash(), state.mode, src.display());
+    let stamp = format!(
+        "{} {} {}",
+        state.accent.hex_no_hash(),
+        state.mode,
+        src.display()
+    );
     let manifest = PathBuf::from(paths::runtime_dir()).join("anna-icons.json");
 
     let current = fs::read_to_string(dest.join(".anna-stamp")).unwrap_or_default();
@@ -252,9 +257,15 @@ mod tests {
     #[test]
     fn recolours_paint_positions_only() {
         let accent = Color::from_hex("#459f50").unwrap();
-        let red = Color::from_hex("#f05050").unwrap().mono_toward(&accent).to_hex();
+        let red = Color::from_hex("#f05050")
+            .unwrap()
+            .mono_toward(&accent)
+            .to_hex();
         assert_eq!(recolor(r##"fill="#f05050""##), format!(r#"fill="{red}""#));
-        assert_eq!(recolor("style=\"stop-color:#f05050\""), format!("style=\"stop-color:{red}\""));
+        assert_eq!(
+            recolor("style=\"stop-color:#f05050\""),
+            format!("style=\"stop-color:{red}\"")
+        );
         assert_eq!(recolor("stroke = '#f05050'"), format!("stroke = '{red}'"));
         // Ids, hrefs and unrelated attributes are left alone.
         assert_eq!(recolor(r##"fill="url(#abc)""##), r##"fill="url(#abc)""##);
