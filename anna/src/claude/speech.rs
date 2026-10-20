@@ -68,7 +68,7 @@ impl Mode {
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 // ── Voices ──────────────────────────────────────────────────────────────
@@ -114,12 +114,12 @@ pub fn voices_in(dir: &Path) -> Vec<Choice> {
     let mut out = Vec::new();
     for e in entries.flatten() {
         let model = e.path();
-        if model.extension().and_then(|x| x.to_str()) != Some("onnx") {
+        if model.extension().and_then(std::ffi::OsStr::to_str) != Some("onnx") {
             continue;
         }
         let Some(stem) = model
             .file_stem()
-            .and_then(|s| s.to_str())
+            .and_then(std::ffi::OsStr::to_str)
             .map(str::to_string)
         else {
             continue;

@@ -124,7 +124,9 @@ impl Recorder {
     }
 
     fn slots(&self) -> std::sync::MutexGuard<'_, Slots> {
-        self.slots.lock().unwrap_or_else(|e| e.into_inner())
+        self.slots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Republish the tracks from the slots, `edit` changing the rest.
@@ -187,7 +189,7 @@ impl Recorder {
             Kind::Audio => (paths::user_dir("MUSIC", "Music"), "enregistrement-", "flac"),
             Kind::Screen => (paths::user_dir("VIDEOS", "Videos"), "ecran-", "mp4"),
         };
-        let _ = std::fs::create_dir_all(&dir);
+        let _ = tokio::fs::create_dir_all(&dir).await;
         let path = dir.join(format!("{prefix}{}.{ext}", stamp().await));
 
         let argv = match kind {

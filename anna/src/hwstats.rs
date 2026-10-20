@@ -428,7 +428,8 @@ fn gpu_name_from_lspci() -> String {
                 .find(|n| n.contains("AMD") || n.contains("ATI"))
         })
         .or(names.first())
-        .map(|n| n.to_string())
+        .copied()
+        .map(str::to_string)
         .unwrap_or_else(|| crate::i18n::tr("not_detected"))
 }
 
