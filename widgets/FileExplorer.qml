@@ -284,41 +284,87 @@ Item {
     }
 
     // ── Les icônes ───────────────────────────────────────────────
+    // Celles du thème d'icônes installé (Reversal-Accent, cf. Theme.icon) :
+    // dossiers et lieux recolorés à l'accent par anna, types de fichiers
+    // tels que le thème les dessine. Chaque type donne ses noms du plus
+    // précis au plus générique ; si le thème n'en a aucun (pas d'anna, pas
+    // de thème), l'icône de assets/icons (Phosphor) du même type, teinte.
     readonly property var imageSuffixes: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]
-    // Les icônes de assets/icons (Phosphor), par extension.
     readonly property var suffixIcons: ({
-        pdf: "file-pdf",
-        mp3: "file-audio", flac: "file-audio", wav: "file-audio",
-        ogg: "file-audio", opus: "file-audio", m4a: "file-audio",
-        mp4: "file-video", mkv: "file-video", webm: "file-video",
-        mov: "file-video", avi: "file-video",
-        zip: "file-archive", tar: "file-archive", gz: "file-archive",
-        xz: "file-archive", zst: "file-archive", "7z": "file-archive",
-        rar: "file-archive",
-        png: "file-image", jpg: "file-image", jpeg: "file-image", gif: "file-image",
-        webp: "file-image", bmp: "file-image", svg: "file-image",
-        qml: "file-code", js: "file-code", ts: "file-code",
-        rs: "file-code", py: "file-code", sh: "file-code",
-        nix: "file-code", c: "file-code", cpp: "file-code",
-        h: "file-code", go: "file-code", json: "file-code",
-        toml: "file-code", yaml: "file-code", yml: "file-code",
-        html: "file-html", md: "file-text", txt: "file-text"
+        pdf: [["application-pdf"], "file-pdf"],
+        mp3: [["audio-mpeg", "audio-x-mpeg", "audio-x-generic"], "file-audio"],
+        flac: [["audio-flac", "audio-x-flac", "audio-x-generic"], "file-audio"],
+        wav: [["audio-x-wav", "audio-x-generic"], "file-audio"],
+        ogg: [["audio-x-vorbis+ogg", "audio-x-generic"], "file-audio"],
+        opus: [["audio-x-generic"], "file-audio"],
+        m4a: [["audio-x-m4a", "audio-x-generic"], "file-audio"],
+        mp4: [["video-mp4", "video-x-generic"], "file-video"],
+        mkv: [["video-x-matroska", "video-x-generic"], "file-video"],
+        webm: [["video-webm", "video-x-generic"], "file-video"],
+        mov: [["video-quicktime", "video-x-generic"], "file-video"],
+        avi: [["video-x-msvideo", "video-x-generic"], "file-video"],
+        zip: [["application-zip", "package-x-generic"], "file-archive"],
+        tar: [["application-x-tar", "package-x-generic"], "file-archive"],
+        gz: [["application-gzip", "package-x-generic"], "file-archive"],
+        xz: [["application-x-xz", "package-x-generic"], "file-archive"],
+        zst: [["application-x-zstd-compressed-tar", "package-x-generic"], "file-archive"],
+        "7z": [["application-x-7z-compressed", "package-x-generic"], "file-archive"],
+        rar: [["application-x-rar", "package-x-generic"], "file-archive"],
+        png: [["image-png", "image-x-generic"], "file-image"],
+        jpg: [["image-jpeg", "image-x-generic"], "file-image"],
+        jpeg: [["image-jpeg", "image-x-generic"], "file-image"],
+        gif: [["image-gif", "image-x-generic"], "file-image"],
+        webp: [["image-webp", "image-x-generic"], "file-image"],
+        bmp: [["image-bmp", "image-x-generic"], "file-image"],
+        svg: [["image-svg+xml", "image-x-generic"], "file-image"],
+        qml: [["text-x-qml", "text-x-script"], "file-code"],
+        js: [["application-javascript", "text-x-javascript", "text-x-script"], "file-code"],
+        ts: [["text-x-typescript", "text-x-script"], "file-code"],
+        rs: [["text-x-rust", "text-x-script"], "file-code"],
+        py: [["text-x-python", "text-x-script"], "file-code"],
+        sh: [["application-x-shellscript", "text-x-script"], "file-code"],
+        nix: [["text-x-nix", "text-x-script"], "file-code"],
+        c: [["text-x-csrc", "text-x-script"], "file-code"],
+        cpp: [["text-x-c++src", "text-x-script"], "file-code"],
+        h: [["text-x-chdr", "text-x-script"], "file-code"],
+        go: [["text-x-go", "text-x-script"], "file-code"],
+        json: [["application-json", "text-x-script"], "file-code"],
+        toml: [["application-toml", "text-x-script"], "file-code"],
+        yaml: [["application-x-yaml", "text-x-script"], "file-code"],
+        yml: [["application-x-yaml", "text-x-script"], "file-code"],
+        css: [["text-css", "text-x-script"], "file-code"],
+        html: [["text-html"], "file-html"],
+        md: [["text-markdown", "text-x-markdown", "text-x-generic"], "file-text"],
+        txt: [["text-plain", "text-x-generic"], "file-text"]
     })
 
     function glyph(name) {
         return "../assets/icons/" + name + ".svg";
     }
+    // La première des icônes `names` que le thème connaît, sinon le glyphe
+    // `fallback`.
+    function themed(names, fallback) {
+        for (var i = 0; i < names.length; i++) {
+            var src = Theme.icon(names[i], true);
+            if (src !== "")
+                return src;
+        }
+        return root.glyph(fallback);
+    }
 
-    // Une image se montre elle-même (une URL file://) ; le reste prend une
-    // icône de assets/icons, que la tuile teinte.
-    function iconFor(p, isDir, suffix) {
+    // Une image se montre elle-même (une URL file://) ; le reste prend
+    // l'icône de son type dans le thème. Les dossiers du dossier personnel
+    // gardent celle de leur favori (Documents, Musique…).
+    function iconFor(p, isDir, suffix, name) {
         if (isDir)
-            return root.glyph("folder");
+            return root.parentOf(p) === root.home ? root.placeIcon(name) : root.themed(["folder"], "folder");
         var s = (suffix || "").toLowerCase();
         // À distance, pas de miniature : chaque image traverserait le réseau.
         if (!root.remote && root.imageSuffixes.indexOf(s) !== -1)
             return root.urlOf(p);
-        return root.glyph(root.suffixIcons[s] || "file");
+        var known = root.suffixIcons[s];
+        return known ? root.themed(known[0].concat(["text-x-generic", "unknown"]), known[1])
+                     : root.themed(["text-x-generic", "unknown"], "file");
     }
 
     // ── Les favoris ──────────────────────────────────────────────
@@ -331,25 +377,47 @@ Item {
     readonly property var extraPlaces: !root.remote
         ? [{ label: "nixos", icon: "../assets/nixos.svg", path: "/etc/nixos" }]
         : (root.machine.nixos ? [{ label: "nixos", icon: "../assets/nixos.svg", path: root.rootDir + "/etc/nixos" }] : [])
-    // Les icônes des dossiers XDG, en français ou en anglais.
+    // Les icônes des dossiers XDG, en français ou en anglais : celle du
+    // thème, puis le glyphe Phosphor.
     readonly property var placeIcons: ({
-        Bureau: "place-desktop", Desktop: "place-desktop",
-        Documents: "documents",
-        "Téléchargements": "downloads", Downloads: "downloads",
-        Images: "pictures", Pictures: "pictures",
-        Musique: "music", Music: "music",
-        "Vidéos": "videos", Videos: "videos"
+        Bureau: [["user-desktop", "folder-desktop"], "place-desktop"],
+        Desktop: [["user-desktop", "folder-desktop"], "place-desktop"],
+        Documents: [["folder-documents"], "documents"],
+        "Téléchargements": [["folder-download", "folder-downloads"], "downloads"],
+        Downloads: [["folder-download", "folder-downloads"], "downloads"],
+        Images: [["folder-pictures"], "pictures"],
+        Pictures: [["folder-pictures"], "pictures"],
+        Musique: [["folder-music"], "music"],
+        Music: [["folder-music"], "music"],
+        "Vidéos": [["folder-videos"], "videos"],
+        Videos: [["folder-videos"], "videos"],
+        "Modèles": [["folder-templates"], "folder"],
+        Templates: [["folder-templates"], "folder"],
+        Public: [["folder-publicshare"], "folder"],
+        code: [["folder-code"], "folder"],
+        Projets: [["folder-projects"], "folder"],
+        Projects: [["folder-projects"], "folder"]
     })
+    function placeIcon(name) {
+        var known = root.placeIcons[name];
+        return known ? root.themed(known[0].concat(["folder"]), known[1])
+                     : root.themed(["folder"], "folder");
+    }
     property var places: root.extraPlaces
 
     function rebuildPlaces() {
         var out = [];
         for (var i = 0; i < homeDirs.count; i++) {
             var name = homeDirs.get(i, "fileName");
-            out.push({ label: name, icon: root.glyph(root.placeIcons[name] || "folder"),
+            out.push({ label: name, icon: root.placeIcon(name),
                        path: homeDirs.get(i, "filePath") });
         }
         root.places = out.concat(root.extraPlaces);
+    }
+    // Le thème recoloré (nouvel accent) : les URL des icônes changent.
+    Connections {
+        target: Theme
+        function on_IconsChanged() { root.rebuildPlaces(); }
     }
 
     FolderListModel {
@@ -653,7 +721,52 @@ Item {
         busy: root.connecting
     }
 
+    // Une icône du thème, en couleurs ; un glyphe de assets/icons, teint.
+    component FileIcon: Item {
+        id: fileIcon
+        property string source
+        property color tint: Theme.accentColor
+        property real iconSize: 18
+        // Un glyphe de assets/icons (cf. root.glyph), monochrome.
+        readonly property bool glyph: fileIcon.source.indexOf("../assets/") === 0
+        implicitWidth: fileIcon.iconSize
+        implicitHeight: fileIcon.iconSize
+
+        Image {
+            anchors.fill: parent
+            visible: !fileIcon.glyph
+            source: fileIcon.glyph ? "" : fileIcon.source
+            sourceSize.width: 64
+            sourceSize.height: 64
+            fillMode: Image.PreserveAspectFit
+            asynchronous: true
+            smooth: true
+        }
+        NixIcon {
+            anchors.fill: parent
+            visible: fileIcon.glyph
+            iconSize: fileIcon.iconSize
+            source: fileIcon.glyph ? fileIcon.source : ""
+            color: fileIcon.tint
+        }
+    }
+
     // ── Les favoris, à gauche ────────────────────────────────────
+    // L'onglet entier prend la hauteur de ses favoris (cf. implicitHeight),
+    // entre placesMin et placesMax rangées ; au-delà, la liste défile.
+    readonly property int placeH: 33
+    readonly property int placesMin: 6
+    readonly property int placesMax: 12
+    readonly property int shownPlaces: Math.max(root.placesMin, Math.min(root.placesMax, root.places.length))
+    implicitHeight: root.switchH + 8 + root.shownPlaces * (root.placeH + 1) - 1 + 12 + root.diskSpace
+
+    Binding {
+        target: Widgets
+        property: "explorerHeight"
+        value: root.implicitHeight
+        restoreMode: Binding.RestoreNone
+    }
+
     Rectangle {
         id: placesCard
         y: root.switchH + 8
@@ -678,7 +791,7 @@ Item {
                 readonly property bool here: root.path === placeRow.modelData.path
                                              || root.path.indexOf(placeRow.modelData.path + "/") === 0
                 width: ListView.view.width
-                height: 33
+                height: root.placeH
 
                 Rectangle {
                     anchors.fill: parent
@@ -688,14 +801,13 @@ Item {
                     Behavior on color { ColorAnimation { duration: 140 } }
                 }
 
-                NixIcon {
+                FileIcon {
                     id: placeIcon
                     anchors.left: parent.left
                     anchors.leftMargin: 10
                     anchors.verticalCenter: parent.verticalCenter
                     iconSize: 18
                     source: placeRow.modelData.icon
-                    color: Theme.accentColor
                 }
 
                 Text {
@@ -765,15 +877,14 @@ Item {
                     }
                 }
 
-                // À l'accent, comme les dossiers des lieux.
-                NixIcon {
+                // Celle du thème, comme les dossiers des lieux.
+                FileIcon {
                     id: diskIcon
                     anchors.left: parent.left
                     anchors.leftMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
-                    iconSize: 20
-                    source: "../assets/icons/disk.svg"
-                    color: Theme.accentColor
+                    iconSize: 22
+                    source: root.themed(["drive-harddisk"], "disk")
                 }
 
                 Column {
@@ -1140,8 +1251,9 @@ Item {
 
             readonly property bool current: grid.currentIndex === tile.index
             readonly property bool selected: root.isSelected(tile.filePath)
-            readonly property string icon: root.iconFor(tile.filePath, tile.fileIsDir, tile.fileSuffix)
-            readonly property bool thumb: tile.icon.indexOf("file://") === 0
+            readonly property string icon: root.iconFor(tile.filePath, tile.fileIsDir, tile.fileSuffix, tile.fileName)
+            // Une miniature (l'image elle-même), pas une icône du thème.
+            readonly property bool thumb: tile.icon === root.urlOf(tile.filePath)
             // Ce qu'un glisser parti d'ici emporte.
             readonly property var carried: root.dragPaths(tile.filePath)
 
@@ -1161,8 +1273,8 @@ Item {
                 Behavior on color { ColorAnimation { duration: 120 } }
             }
 
-            // La miniature d'une image, ou l'icône teinte : les dossiers à
-            // l'accent, les fichiers en retrait.
+            // La miniature d'une image, ou l'icône du thème (un glyphe à
+            // défaut : les dossiers à l'accent, les fichiers en retrait).
             Item {
                 id: tileImage
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -1182,12 +1294,12 @@ Item {
                     asynchronous: true
                     smooth: true
                 }
-                NixIcon {
+                FileIcon {
                     anchors.centerIn: parent
                     visible: !tile.thumb
-                    iconSize: 30
+                    iconSize: 36
                     source: tile.thumb ? "" : tile.icon
-                    color: tile.fileIsDir ? Theme.accentColor : Theme.textSecondary
+                    tint: tile.fileIsDir ? Theme.accentColor : Theme.textSecondary
                 }
             }
 

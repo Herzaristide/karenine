@@ -118,6 +118,17 @@ ShellRoot {
         }
     }
 
+    // La petite barre du haut : la luminosité et le volume quand ils
+    // changent ou que la souris approche, l'enregistrement en cours.
+    Variants {
+        model: root.primaryScreens
+
+        LevelsIsland {
+            property var modelData
+            screen: modelData
+        }
+    }
+
     // Les widgets flottants (système, musique, métronome, son, gestes),
     // qu'anna ouvre à la demande.
     Variants {

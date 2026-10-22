@@ -22,6 +22,14 @@ Singleton {
     property string error: ""
     // Le dernier fichier enregistré.
     property string last: ""
+    // Les dernières prises du micro, la plus récente d'abord :
+    // [{ path, at: "20261020_165927", duration (s) }].
+    property var takes: []
+    // Pendant l'enregistrement du micro : les crêtes des dernières secondes
+    // (0–1, vingt par seconde), la plus ancienne d'abord.
+    property var live: []
+    // La prise qu'anna joue : { path, from (s), since (ms Unix) }, ou null.
+    property var playing: null
 
     readonly property bool audioOn: rec.audio !== null
     readonly property bool screenOn: rec.screen !== null
@@ -61,12 +69,46 @@ Singleton {
         rec._send(kind ? { cmd: "record_stop", kind: kind } : { cmd: "record_stop" });
     }
 
+    // La forme d'onde d'une prise : `done(peaks)`, des crêtes 0–1 (200 au
+    // plus), ou `done([])` si anna n'a pas pu la lire.
+    function peaks(path, done) {
+        rec._send({ cmd: "record_peaks", path: path }, (r) => done(r && r.peaks ? r.peaks : []));
+    }
+
+    // Joue une prise depuis `from` secondes, à la place de ce qui jouait :
+    // anna la lit (ffmpeg), le shell n'a besoin d'aucun module multimédia.
+    function play(path, from) {
+        rec._send({ cmd: "record_play", path: path, from: from || 0 });
+    }
+
+    function pause() {
+        rec._send({ cmd: "record_pause" });
+    }
+
+    // Relit les prises du dossier (des fichiers effacés ou déplacés à la
+    // main) ; l'état qui revient est celui du suivi.
+    function refresh() {
+        rec._send({ cmd: "record_get" }, (r) => {
+            if (r && r.record)
+                rec._apply(r.record);
+        });
+    }
+
+    // « 1:05 » : une durée en secondes.
+    function clock(seconds) {
+        var s = Math.max(0, Math.floor(seconds || 0));
+        return Math.floor(s / 60) + ":" + (s % 60 < 10 ? "0" : "") + s % 60;
+    }
+
     function _apply(s) {
         rec.available = true;
         rec.audio = s.audio || null;
         rec.screen = s.screen || null;
         rec.error = s.error || "";
         rec.last = s.last || "";
+        rec.takes = s.takes || [];
+        rec.live = s.live || [];
+        rec.playing = s.playing || null;
         rec.now = Date.now();
     }
 
@@ -104,15 +146,22 @@ Singleton {
     Component.onCompleted: watchSock.connected = true
 
     // ── Les demandes ─────────────────────────────────────────────────
+    // [{ line, done }] : `done(réponse)`, quand la réponse importe.
     property var _queue: []
 
-    function _send(obj) {
-        rec._queue = rec._queue.concat([JSON.stringify(obj)]);
+    function _send(obj, done) {
+        rec._queue = rec._queue.concat([{ line: JSON.stringify(obj), done: done || null }]);
         if (!reqSock.connected)
             reqSock.connected = true;
     }
 
-    function _next() {
+    function _next(line) {
+        var done = rec._queue.length > 0 ? rec._queue[0].done : null;
+        if (done) {
+            var r = null;
+            try { r = JSON.parse(line); } catch (e) { /* réponse illisible */ }
+            done(r);
+        }
         rec._queue = rec._queue.slice(1);
         reqSock.connected = false;
         if (rec._queue.length > 0)
@@ -122,13 +171,14 @@ Singleton {
     Socket {
         id: reqSock
         path: Anna.socketPath
-        // La réponse (`{"ok":…}`) importe peu : l'état arrive par le suivi.
+        // La réponse (`{"ok":…}`) importe peu, l'état arrivant par le suivi,
+        // sauf aux demandes qui l'attendent (les crêtes d'une prise).
         parser: SplitParser {
-            onRead: (line) => rec._next()
+            onRead: (line) => rec._next(line)
         }
         onConnectedChanged: {
             if (connected && rec._queue.length > 0)
-                write(rec._queue[0] + "\n");
+                write(rec._queue[0].line + "\n");
         }
     }
 }

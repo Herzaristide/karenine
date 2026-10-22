@@ -33,6 +33,16 @@ pub fn user_dir(key: &str, fallback: &str) -> PathBuf {
         .unwrap_or_else(|| home.join(fallback))
 }
 
+/// karenine's cache: `$XDG_CACHE_HOME/karenine`, else `~/.cache/karenine`.
+pub fn cache_dir() -> PathBuf {
+    std::env::var("XDG_CACHE_HOME")
+        .ok()
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join(".cache"))
+        .join("karenine")
+}
+
 /// Path to the anna control socket: `$XDG_RUNTIME_DIR/anna.sock`.
 pub fn socket_path() -> String {
     format!("{}/anna.sock", runtime_dir())

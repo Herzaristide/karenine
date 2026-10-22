@@ -108,6 +108,20 @@ pub enum Command {
     RecordGet,
     /// Keep connection open; daemon pushes the status on every change.
     RecordWatch,
+    /// A sound take's waveform: `{"peaks":[0–1…]}`. Only the takes in the
+    /// Music folder (`enregistrement-*.flac`).
+    RecordPeaks {
+        path: String,
+    },
+    /// Play a sound take (the same files only) from `from` seconds, in place
+    /// of what was playing.
+    RecordPlay {
+        path: String,
+        #[serde(default)]
+        from: f64,
+    },
+    /// Stop the playback.
+    RecordPause,
 
     // ── gesture control (webcam) ──────────────────────────────────────────
     /// Print the gesture status once: `{"enabled","active","mode","fps","error"}`.

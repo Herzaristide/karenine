@@ -13,12 +13,24 @@
 //!
 //! Stopping sends SIGINT, which both tools take as « finish the file ». The
 //! status (`record_watch`) is `{"record":{"audio":Track|null,"screen":
-//! Track|null,"error":"…","last":"<path>"}}`, a `Track` being
-//! `{"mode","since":<unix ms>,"path"}`.
+//! Track|null,"error":"…","last":"<path>","takes":[Take…],"live":[…],
+//! "playing":Playing|null}}`, a `Track` being `{"mode","since":<unix ms>,
+//! "path"}`.
+//!
+//! The sound recordings are « takes », played back from the Music tab: the
+//! last few are listed (`takes`, newest first), and each has a waveform, its
+//! peaks (`record_peaks`). While the microphone records, ffmpeg also hands
+//! anna the sound, mono and at a low rate, on its standard output: the peaks
+//! of the last seconds go out live (`live`), and those of the whole take are
+//! cached when it ends — no decoding again. An older take is decoded once.
+//!
+//! anna plays the takes too (`record_play`, `record_pause`): ffmpeg again, from
+//! a given second, to the default output at the pace of the sound. The shell
+//! needs no media module, and pausing is stopping, then playing from there.
 
 use crate::paths;
 use serde::Serialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::process::Command;
@@ -74,7 +86,59 @@ pub struct Status {
     pub error: String,
     /// The last file saved.
     pub last: String,
+    /// The latest sound takes, newest first.
+    pub takes: Vec<Take>,
+    /// While the microphone records: the peaks of the last seconds (0–1,
+    /// `PEAK_RATE` per second), oldest first.
+    pub live: Vec<f32>,
+    /// The take being played, if any.
+    pub playing: Option<Playing>,
 }
+
+/// A take being played: the shell follows the position from `from` and
+/// `since`.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Playing {
+    pub path: String,
+    /// Where it started, in seconds into the take.
+    pub from: f64,
+    /// When, in Unix milliseconds.
+    pub since: u64,
+}
+
+/// The ffmpeg playing a take: its pid, and a number telling one playback from
+/// the next (the end of a stopped one must not clear its successor).
+#[derive(Default)]
+struct Player {
+    pid: Option<u32>,
+    turn: u64,
+}
+
+/// A sound take, in the Music folder.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Take {
+    pub path: String,
+    /// When it was recorded, from its name: `20261020_165927`.
+    pub at: String,
+    /// In seconds, from the FLAC header; 0 when unreadable.
+    pub duration: f64,
+}
+
+/// The takes' names: `enregistrement-<stamp>.flac`.
+const TAKE_PREFIX: &str = "enregistrement-";
+const TAKE_EXT: &str = ".flac";
+/// How many takes are listed.
+const TAKES_SHOWN: usize = 8;
+/// The sound anna reads to draw the waveform: mono, 8 kHz, 16 bits.
+const WAVE_RATE: usize = 8000;
+/// Peaks per second: one per 50 ms.
+const PEAK_RATE: usize = 20;
+/// The live waveform: the last ten seconds.
+const LIVE_PEAKS: usize = 10 * PEAK_RATE;
+/// A take's waveform, whatever its length.
+const TAKE_PEAKS: usize = 200;
+/// The bytes of sound behind one peak.
+const PEAK_BYTES: usize = 2 * WAVE_RATE / PEAK_RATE;
 
 /// One kind's slot.
 #[derive(Default)]
@@ -108,15 +172,26 @@ impl Slots {
 
 pub struct Recorder {
     slots: Mutex<Slots>,
+    player: Mutex<Player>,
     status: watch::Sender<Status>,
 }
 
 impl Recorder {
     pub fn new() -> Arc<Recorder> {
-        Arc::new(Recorder {
+        let me = Arc::new(Recorder {
             slots: Mutex::new(Slots::default()),
+            player: Mutex::new(Player::default()),
             status: watch::channel(Status::default()).0,
-        })
+        });
+        me.refresh_takes();
+        me
+    }
+
+    /// Read the takes again from the Music folder: a new one, one deleted,
+    /// or files moved by hand meanwhile.
+    pub fn refresh_takes(&self) {
+        let takes = list_takes(&takes_dir());
+        self.publish(|st| st.takes = takes);
     }
 
     pub fn subscribe(&self) -> watch::Receiver<Status> {
@@ -175,6 +250,11 @@ impl Recorder {
             }
             *slot = Slot::Starting;
         }
+        // The microphone alone: the take being played back would go into
+        // it. With the computer's sound, playing over it is the point.
+        if kind == Kind::Audio && mode == "mic" {
+            self.pause();
+        }
         let result = self.launch(kind, mode).await;
         if let Err(e) = &result {
             *self.slots().get(kind) = Slot::Idle;
@@ -213,7 +293,12 @@ impl Recorder {
         let mut child = Command::new(&argv[0])
             .args(&argv[1..])
             .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
+            // The sound's peaks, for the waveform (`audio_args`).
+            .stdout(if kind == Kind::Audio {
+                std::process::Stdio::piped()
+            } else {
+                std::process::Stdio::null()
+            })
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(false)
             .spawn()
@@ -237,6 +322,7 @@ impl Recorder {
         // The tool's end, whether asked for or not.
         let me = Arc::clone(self);
         let stderr = child.stderr.take();
+        let stdout = child.stdout.take();
         tokio::spawn(async move {
             let err = async {
                 let mut text = String::new();
@@ -246,10 +332,129 @@ impl Recorder {
                 }
                 text
             };
-            let (err, _) = tokio::join!(err, child.wait());
+            let peaks = me.follow_peaks(stdout);
+            let (err, peaks, _) = tokio::join!(err, peaks, child.wait());
+            if !peaks.is_empty() {
+                save_peaks(&path, &bins(&peaks, TAKE_PEAKS));
+            }
             me.finished(kind, &path, &err);
         });
         Ok(())
+    }
+
+    /// Read ffmpeg's sound (mono, `WAVE_RATE`, s16le) until it ends: its
+    /// peaks, published live as they come, then all of them.
+    async fn follow_peaks(&self, out: Option<tokio::process::ChildStdout>) -> Vec<f32> {
+        use tokio::io::AsyncReadExt;
+        let Some(mut out) = out else {
+            return Vec::new();
+        };
+        let mut peaks = Vec::new();
+        let mut buf = vec![0u8; PEAK_BYTES];
+        while out.read_exact(&mut buf).await.is_ok() {
+            peaks.push(peak(&buf));
+            // Ten times a second is enough for the eye.
+            if peaks.len() % 2 == 0 {
+                let live = peaks[peaks.len().saturating_sub(LIVE_PEAKS)..].to_vec();
+                self.publish(|st| st.live = live);
+            }
+        }
+        self.publish(|st| st.live.clear());
+        peaks
+    }
+
+    /// A take's waveform: `TAKE_PEAKS` peaks (fewer for a short take), from
+    /// the cache, or decoded once and cached.
+    pub async fn peaks(&self, path: &str) -> Result<Vec<f32>, String> {
+        let path = take_path(path).ok_or_else(|| crate::i18n::tr("record.not_a_take"))?;
+        if let Some(p) = std::fs::read_to_string(peaks_path(&path))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Vec<f32>>(&t).ok())
+        {
+            return Ok(p);
+        }
+        let out = Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-i"])
+            .arg(&path)
+            .args([
+                "-ac",
+                "1",
+                "-ar",
+                &WAVE_RATE.to_string(),
+                "-f",
+                "s16le",
+                "pipe:1",
+            ])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .await
+            .map_err(|e| format!("ffmpeg: {e}"))?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        let all: Vec<f32> = out.stdout.chunks(PEAK_BYTES).map(peak).collect();
+        let p = bins(&all, TAKE_PEAKS);
+        save_peaks(&path, &p);
+        Ok(p)
+    }
+
+    fn player(&self) -> std::sync::MutexGuard<'_, Player> {
+        self.player
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Play a take from `from` seconds, in place of what was playing.
+    pub fn play(self: &Arc<Self>, path: &str, from: f64) -> Result<(), String> {
+        let path = take_path(path).ok_or_else(|| crate::i18n::tr("record.not_a_take"))?;
+        let from = from.max(0.0);
+        self.pause();
+        let mut child = Command::new("ffmpeg")
+            .args(play_args(&path, from))
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(false)
+            .spawn()
+            .map_err(|e| format!("ffmpeg: {e}"))?;
+        // Published under the player's lock, here and at the end: the end of
+        // a stopped playback can't overwrite the one that follows it.
+        let turn = {
+            let mut p = self.player();
+            p.turn += 1;
+            p.pid = child.id();
+            self.publish(|st| {
+                st.playing = Some(Playing {
+                    path: path.to_string_lossy().into_owned(),
+                    from,
+                    since: now_ms(),
+                })
+            });
+            p.turn
+        };
+        // The end of the take, or a pause: nothing plays any more, unless
+        // another playback has begun meanwhile.
+        let me = Arc::clone(self);
+        tokio::spawn(async move {
+            let _ = child.wait().await;
+            let mut p = me.player();
+            if p.turn == turn {
+                p.pid = None;
+                me.publish(|st| st.playing = None);
+            }
+        });
+        Ok(())
+    }
+
+    /// Stop the playback; the shell keeps where it was, to go on from there.
+    pub fn pause(&self) {
+        let mut p = self.player();
+        if let Some(pid) = p.pid.take() {
+            let _ = std::process::Command::new("kill")
+                .arg(pid.to_string())
+                .status();
+            self.publish(|st| st.playing = None);
+        }
     }
 
     /// The tool has exited: the file is kept if it holds something.
@@ -262,8 +467,12 @@ impl Recorder {
             .map(|m| m.len() > 0)
             .unwrap_or(false);
         let shown = path.to_string_lossy().into_owned();
+        let takes = list_takes(&takes_dir());
         if stopping && saved {
-            self.publish(|st| st.last = shown.clone());
+            self.publish(|st| {
+                st.last = shown.clone();
+                st.takes = takes;
+            });
             notify(&crate::i18n::tr("record.saved"), &shown);
         } else {
             // Stopped by itself: the device went away, the capture was refused…
@@ -282,6 +491,7 @@ impl Recorder {
             eprintln!("anna: record: {why}");
             self.publish(|st| {
                 st.error = why.clone();
+                st.takes = takes;
                 if saved {
                     st.last = shown.clone();
                 }
@@ -363,33 +573,171 @@ fn pilot_mode(mode: &str) -> &str {
 
 /// ffmpeg's command line: the default microphone, alone or mixed with the
 /// default output's monitor, to a FLAC file. `normalize=0`: each source keeps
-/// its level instead of being halved.
+/// its level instead of being halved. The same sound also goes, mono and at
+/// `WAVE_RATE`, to the standard output: anna draws the waveform from it.
 fn audio_args(mode: &str, path: &Path) -> Vec<String> {
     let mut a: Vec<String> = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin"]
         .map(String::from)
         .into();
     a.extend(["-f", "pulse", "-i", "default"].map(String::from));
-    if mode == "mix" {
+    let (wave, file) = if mode == "mix" {
         a.extend(["-f", "pulse", "-i", "@DEFAULT_MONITOR@"].map(String::from));
         a.extend(
             [
                 "-filter_complex",
-                "amix=inputs=2:duration=longest:normalize=0",
+                "amix=inputs=2:duration=longest:normalize=0,asplit=2[wave][file]",
             ]
             .map(String::from),
         );
-    }
-    a.extend(["-c:a", "flac"].map(String::from));
+        ("[wave]", "[file]")
+    } else {
+        ("0:a", "0:a")
+    };
+    a.extend(["-map", wave, "-ac", "1", "-ar"].map(String::from));
+    a.push(WAVE_RATE.to_string());
+    a.extend(["-f", "s16le", "pipe:1"].map(String::from));
+    a.extend(["-map", file, "-c:a", "flac"].map(String::from));
     a.push(path.to_string_lossy().into_owned());
     a
 }
 
+/// ffmpeg's command line to play a take from `from` seconds: read at the
+/// pace of the sound (`-re`), to the default output.
+fn play_args(path: &Path, from: f64) -> Vec<String> {
+    let mut a: Vec<String> = [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-re",
+        "-ss",
+    ]
+    .map(String::from)
+    .into();
+    a.push(format!("{from:.3}"));
+    a.push("-i".into());
+    a.push(path.to_string_lossy().into_owned());
+    a.extend(["-f", "pulse", "karenine"].map(String::from));
+    a
+}
+
+/// Where the takes go: the Music folder.
+fn takes_dir() -> PathBuf {
+    paths::user_dir("MUSIC", "Music")
+}
+
+/// The latest takes in `dir`, newest first: their names hold the date, so
+/// sorting them sorts the takes.
+fn list_takes(dir: &Path) -> Vec<Take> {
+    let mut takes: Vec<Take> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            let at = name.strip_prefix(TAKE_PREFIX)?.strip_suffix(TAKE_EXT)?;
+            Some(Take {
+                path: e.path().to_string_lossy().into_owned(),
+                at: at.to_string(),
+                duration: 0.0,
+            })
+        })
+        .collect();
+    takes.sort_by(|a, b| b.at.cmp(&a.at));
+    takes.truncate(TAKES_SHOWN);
+    for t in &mut takes {
+        t.duration = flac_duration(Path::new(&t.path)).unwrap_or(0.0);
+    }
+    takes
+}
+
+/// `path` when it names a take in the Music folder, else `None`: the
+/// commands that read or delete a file reach nothing else.
+fn take_path(path: &str) -> Option<PathBuf> {
+    let p = std::fs::canonicalize(path).ok()?;
+    let name = p.file_name()?.to_str()?;
+    let is_take = name.starts_with(TAKE_PREFIX) && name.ends_with(TAKE_EXT);
+    let dir = std::fs::canonicalize(takes_dir()).ok()?;
+    (is_take && p.parent() == Some(dir.as_path()) && p.is_file()).then_some(p)
+}
+
+/// A take's duration, from the STREAMINFO block that opens a FLAC file.
+fn flac_duration(path: &Path) -> Option<f64> {
+    use std::io::Read;
+    let mut head = [0u8; 26];
+    std::fs::File::open(path).ok()?.read_exact(&mut head).ok()?;
+    flac_head_duration(&head)
+}
+
+/// `fLaC`, the block header (type 0: STREAMINFO), then, further on, the
+/// sample rate on 20 bits and the total of samples on 36.
+fn flac_head_duration(h: &[u8; 26]) -> Option<f64> {
+    if &h[..4] != b"fLaC" || h[4] & 0x7f != 0 {
+        return None;
+    }
+    let rate = (u32::from(h[18]) << 12) | (u32::from(h[19]) << 4) | (u32::from(h[20]) >> 4);
+    let total = (u64::from(h[21] & 0x0f) << 32)
+        | (u64::from(h[22]) << 24)
+        | (u64::from(h[23]) << 16)
+        | (u64::from(h[24]) << 8)
+        | u64::from(h[25]);
+    (rate > 0).then(|| total as f64 / f64::from(rate))
+}
+
+/// The loudest sample of a chunk of s16le sound, 0–1, to the hundredth.
+fn peak(chunk: &[u8]) -> f32 {
+    let max = chunk
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|s| i16::from_le_bytes(*s).unsigned_abs())
+        .max()
+        .unwrap_or(0);
+    (f32::from(max) / 32768.0 * 100.0).round() / 100.0
+}
+
+/// `peaks` brought down to `n`, each the loudest of its share.
+fn bins(peaks: &[f32], n: usize) -> Vec<f32> {
+    if peaks.len() <= n {
+        return peaks.to_vec();
+    }
+    (0..n)
+        .map(|i| {
+            peaks[i * peaks.len() / n..(i + 1) * peaks.len() / n]
+                .iter()
+                .copied()
+                .fold(0.0, f32::max)
+        })
+        .collect()
+}
+
+/// A take's cached waveform: `~/.cache/karenine/peaks/<name>.json`.
+fn peaks_path(take: &Path) -> PathBuf {
+    let name = take.file_name().unwrap_or_default().to_string_lossy();
+    paths::cache_dir()
+        .join("peaks")
+        .join(format!("{name}.json"))
+}
+
+fn save_peaks(take: &Path, peaks: &[f32]) {
+    let file = peaks_path(take);
+    if let Some(dir) = file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(json) = serde_json::to_string(peaks) {
+        let _ = std::fs::write(file, json);
+    }
+}
+
 /// gpu-screen-recorder's command line: `target` (`-w …`) at 60 images per
-/// second, with the computer's sound.
+/// second, with the computer's sound. The processor encodes when the card
+/// can't: a monitor on the NVIDIA card whose driver is older than the NVENC
+/// API FFmpeg was built for gets no codec at all otherwise.
 fn screen_args(target: Vec<String>, path: &Path) -> Vec<String> {
     let mut a = vec!["gpu-screen-recorder".to_string()];
     a.extend(target);
-    a.extend(["-f", "60", "-a", "default_output", "-c", "mp4", "-o"].map(String::from));
+    a.extend(["-f", "60", "-a", "default_output", "-c", "mp4"].map(String::from));
+    a.extend(["-fallback-cpu-encoding", "yes", "-o"].map(String::from));
     a.push(path.to_string_lossy().into_owned());
     a
 }
@@ -485,9 +833,76 @@ mod tests {
     }
 
     #[test]
+    fn the_sound_also_goes_to_the_waveform() {
+        for mode in ["mic", "mix"] {
+            let a = audio_args(mode, Path::new("/tmp/x.flac"));
+            let pipe = a.iter().position(|x| x == "pipe:1").unwrap();
+            // Each output takes its own stream, the waveform's first.
+            let maps: Vec<usize> = (0..a.len()).filter(|&i| a[i] == "-map").collect();
+            assert_eq!(maps.len(), 2, "{mode}");
+            assert!(maps[0] < pipe && pipe < maps[1], "{mode}");
+            assert!(a[maps[0]..pipe].windows(2).any(|w| w == ["-ar", "8000"]));
+        }
+    }
+
+    #[test]
+    fn a_take_plays_from_where_it_was() {
+        let a = play_args(Path::new("/tmp/x.flac"), 42.5);
+        assert!(a.windows(2).any(|w| w == ["-ss", "42.500"]));
+        // The seek comes before the input: ffmpeg jumps instead of decoding.
+        let ss = a.iter().position(|x| x == "-ss").unwrap();
+        let input = a.iter().position(|x| x == "-i").unwrap();
+        assert!(a.contains(&"-re".to_string()) && ss < input);
+        assert!(a.windows(2).any(|w| w == ["-f", "pulse"]));
+    }
+
+    #[test]
+    fn the_flac_header_gives_the_duration() {
+        // 44 100 Hz, 88 200 samples: two seconds of sine, written by ffmpeg.
+        let h: [u8; 26] = [
+            0x66, 0x4c, 0x61, 0x43, 0x00, 0x00, 0x00, 0x22, 0x04, 0x00, 0x04, 0x00, 0x00, 0x00,
+            0x6e, 0x00, 0x01, 0x87, 0x0a, 0xc4, 0x40, 0xf0, 0x00, 0x01, 0x58, 0x88,
+        ];
+        assert_eq!(flac_head_duration(&h), Some(2.0));
+        let mut not_flac = h;
+        not_flac[0] = b'X';
+        assert_eq!(flac_head_duration(&not_flac), None);
+    }
+
+    #[test]
+    fn peaks_are_the_loudest_samples() {
+        let chunk: Vec<u8> = [0i16, -16384, 8192, i16::MIN]
+            .iter()
+            .flat_map(|s| s.to_le_bytes())
+            .collect();
+        assert_eq!(peak(&chunk), 1.0);
+        assert_eq!(peak(&chunk[..4]), 0.5);
+        assert_eq!(bins(&[0.1, 0.9, 0.2, 0.3], 2), vec![0.9, 0.3]);
+        assert_eq!(bins(&[0.1, 0.2], 200), vec![0.1, 0.2]);
+    }
+
+    #[test]
+    fn takes_are_listed_newest_first() {
+        let dir = std::env::temp_dir().join(format!("anna-takes-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for i in 0..10 {
+            let name = format!("enregistrement-2026102{i}_120000.flac");
+            std::fs::write(dir.join(name), b"").unwrap();
+        }
+        std::fs::write(dir.join("morceau.flac"), b"").unwrap();
+        let takes = list_takes(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(takes.len(), TAKES_SHOWN);
+        assert_eq!(takes[0].at, "20261029_120000");
+        assert_eq!(takes[0].duration, 0.0);
+    }
+
+    #[test]
     fn the_screen_keeps_the_computers_sound() {
         let a = screen_args(vec!["-w".into(), "DP-1".into()], Path::new("/tmp/x.mp4"));
         assert_eq!(&a[..3], ["gpu-screen-recorder", "-w", "DP-1"]);
         assert!(a.windows(2).any(|w| w == ["-a", "default_output"]));
+        assert!(a.windows(2).any(|w| w == ["-fallback-cpu-encoding", "yes"]));
+        assert_eq!(a.last().unwrap(), "/tmp/x.mp4");
     }
 }

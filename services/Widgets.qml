@@ -57,6 +57,10 @@ Singleton {
     // monté par sshfs (cf. FileExplorer.connect). Il rattrape `machine` dès
     // qu'il est affiché.
     property var explorerMachine: null
+    // La hauteur que l'Explorer demande (FileExplorer.implicitHeight, selon
+    // son nombre de favoris), gardée tant qu'il n'est pas affiché : l'onglet
+    // rouvre à la bonne taille.
+    property int explorerHeight: 356
 
     // Le titre de chaque carte flottante.
     readonly property var titles: ({

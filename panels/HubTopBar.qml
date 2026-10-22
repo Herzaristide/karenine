@@ -9,22 +9,20 @@ import Quickshell.Bluetooth
 import "../services"
 import "../widgets"
 
-// La barre du haut des widgets, la même quel que soit l'onglet. Quatre
+// La barre du haut des widgets, la même quel que soit l'onglet. Trois
 // groupes posés sur le fond, chacun sur son aplat : l'alimentation à
-// gauche, les niveaux (luminosité, volume) au milieu, le Bluetooth, la
-// capture et l'enregistrement de l'écran, puis la batterie à droite. Le
-// Bluetooth déplie la liste des appareils (widgets/BluetoothMenu.qml).
+// gauche, puis le Bluetooth, la capture et l'enregistrement de l'écran, et
+// la batterie à droite. Le Bluetooth déplie la liste des appareils
+// (widgets/BluetoothMenu.qml). La luminosité et le volume ont leur propre
+// barre, en haut de l'écran (panels/LevelsIsland.qml).
 //
-//   ╭ 🔒 ☾ ⇥ ↻ ⏻ ╮   ╭ ☀ ━━●── 80 %  │  🔊 ━━━●─ 64 % ╮  ╭ ᛒ ⌗ ● ╮  ╭ [87]▸ ╮
+//   ╭ 🔒 ☾ ⇥ ↻ ⏻ ╮                              ╭ ᛒ ⌗ ● ╮  ╭ [87]▸ ╮
 //
 // Chaque bouton d'alimentation agit dès le premier clic, sans confirmation.
-// Les curseurs se partagent la place qui reste : la barre peut être étroite.
 //
 // Au clavier : Tab passe d'un bouton à l'autre, Entrée ou Espace l'actionne.
-// Maj+Entrée sur la
-// capture ou l'enregistrement prend l'écran entier, comme le clic droit.
-// Sur un curseur, ← →
-// (ou ↑ ↓) règlent par pas, Début et Fin vont aux bouts.
+// Maj+Entrée sur la capture ou l'enregistrement prend l'écran entier, comme
+// le clic droit.
 Item {
     id: top
 
@@ -228,109 +226,6 @@ Item {
         FocusRing { gap: 0 }
     }
 
-    // Un curseur fin : il suit la souris pendant le glisser ; la molette
-    // règle par pas.
-    component LevelSlider: Item {
-        id: sl
-        // 0–1.
-        property real value: 0
-        property real minimum: 0
-        property color fill: Theme.accentColor
-        property real dragValue: -1
-        readonly property bool dragging: dragValue >= 0
-        readonly property real shown: dragging ? dragValue : Math.max(0, Math.min(1, value))
-        signal moved(real v)
-        signal stepped(int dir)
-
-        activeFocusOnTab: true
-        Keys.onPressed: (event) => {
-            var k = event.key;
-            if (k === Qt.Key_Right || k === Qt.Key_Up)
-                sl.stepped(1);
-            else if (k === Qt.Key_Left || k === Qt.Key_Down)
-                sl.stepped(-1);
-            else if (k === Qt.Key_Home || k === Qt.Key_End)
-                sl.moved(k === Qt.Key_Home ? sl.minimum : 1);
-            else
-                return;
-            event.accepted = true;
-        }
-
-        Layout.fillWidth: true
-        Layout.minimumWidth: 44
-        Layout.preferredWidth: 130
-        Layout.maximumWidth: 130
-        Layout.alignment: Qt.AlignVCenter
-        implicitHeight: 16
-
-        Rectangle {
-            id: slTrack
-            anchors.verticalCenter: parent.verticalCenter
-            width: parent.width
-            height: 4
-            radius: 2
-            color: Qt.alpha(Theme.textPrimary, 0.12)
-        }
-        Rectangle {
-            anchors.verticalCenter: parent.verticalCenter
-            width: Math.max(slTrack.height, slTrack.width * sl.shown)
-            height: slTrack.height
-            radius: slTrack.radius
-            color: sl.fill
-            Behavior on width { enabled: !sl.dragging; NumberAnimation { duration: 260; easing.type: Easing.OutQuint } }
-            Behavior on color { ColorAnimation { duration: 180 } }
-        }
-        Rectangle {
-            anchors.verticalCenter: parent.verticalCenter
-            x: sl.shown * (sl.width - width)
-            Behavior on x { enabled: !sl.dragging; NumberAnimation { duration: 260; easing.type: Easing.OutQuint } }
-            width: 10
-            height: 10
-            radius: 5
-            color: Theme.textPrimary
-            // Visible au survol, pendant le glisser et au clavier seulement :
-            // au repos, la barre seule suffit.
-            opacity: slMa.containsMouse || sl.dragging || sl.activeFocus ? 1 : 0
-            Behavior on opacity { NumberAnimation { duration: 160 } }
-            scale: slMa.pressed ? 1.2 : 1
-            Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-        }
-        MouseArea {
-            id: slMa
-            anchors.fill: parent
-            anchors.topMargin: -10
-            anchors.bottomMargin: -10
-            hoverEnabled: true
-            preventStealing: true
-            cursorShape: Qt.PointingHandCursor
-            function follow(mx) {
-                sl.dragValue = Math.max(sl.minimum, Math.min(1, (mx - 5) / Math.max(1, sl.width - 10)));
-                sl.moved(sl.dragValue);
-            }
-            onPressed: (mouse) => follow(mouse.x)
-            onPositionChanged: (mouse) => { if (pressed) follow(mouse.x); }
-            onReleased: {
-                sl.moved(sl.dragValue);
-                sl.dragValue = -1;
-            }
-        }
-        WheelHandler {
-            onWheel: (event) => sl.stepped(event.angleDelta.y > 0 ? 1 : -1)
-        }
-        FocusRing { anchors.leftMargin: -6; anchors.rightMargin: -6 }
-    }
-
-    component Percent: Text {
-        Layout.preferredWidth: 34
-        Layout.alignment: Qt.AlignVCenter
-        horizontalAlignment: Text.AlignRight
-        font.family: top.bar.uiFont
-        font.pixelSize: 11
-        font.weight: Font.DemiBold
-        font.features: { "tnum": 1 }
-        color: Theme.textSecondary
-    }
-
     // ── Le Bluetooth ─────────────────────────────────────────────
     // Un menu déplié sous son bouton (widgets/BluetoothMenu.qml) ; un clic
     // à côté, ou la capsule qui se referme, le replie.
@@ -372,69 +267,6 @@ Item {
         }
 
         Item { Layout.fillWidth: true }
-
-        // Les niveaux : la luminosité (s'il y a un rétroéclairage), le volume.
-        Pill {
-            Layout.fillWidth: true
-            Layout.preferredWidth: levels.implicitWidth + 16
-            Layout.maximumWidth: levels.implicitWidth + 16
-            Layout.minimumWidth: 200
-
-            RowLayout {
-                id: levels
-                anchors.fill: parent
-                anchors.leftMargin: 4
-                anchors.rightMargin: 12
-                spacing: 6
-
-                IconButton {
-                    visible: Brightness.present
-                    icon: "brightness.svg"
-                    // Un clic : pleine luminosité, ou la moitié si on y est.
-                    onClicked: Brightness.set(Brightness.level > 0.95 ? 0.5 : 1)
-                }
-                LevelSlider {
-                    id: brightSlider
-                    visible: Brightness.present
-                    value: Brightness.level
-                    minimum: 0.05
-                    onMoved: (v) => Brightness.set(v)
-                    onStepped: (dir) => Brightness.set(Brightness.level + dir * 0.05)
-                }
-                Percent {
-                    visible: Brightness.present
-                    text: Math.round(brightSlider.shown * 100) + " %"
-                }
-
-                // Le séparateur.
-                Rectangle {
-                    visible: Brightness.present
-                    Layout.leftMargin: 6
-                    Layout.rightMargin: 2
-                    Layout.preferredWidth: 1
-                    Layout.preferredHeight: 16
-                    Layout.alignment: Qt.AlignVCenter
-                    color: Qt.alpha(Theme.textPrimary, 0.12)
-                }
-
-                IconButton {
-                    icon: Audio.muted ? "volume-mute.svg" : "volume.svg"
-                    alertColor: Audio.muted ? Theme.colorDanger : "transparent"
-                    onClicked: Audio.toggleMute()
-                }
-                LevelSlider {
-                    id: volSlider
-                    value: Audio.level
-                    fill: Audio.muted ? Theme.textDim : Theme.accentColor
-                    onMoved: (v) => Audio.set(v)
-                    onStepped: (dir) => dir > 0 ? Audio.up() : Audio.down()
-                }
-                Percent {
-                    text: Audio.muted ? I18n.tr("volume.muted") : I18n.tr("common.percent", { n: Math.round(volSlider.shown * 100) })
-                    color: Audio.muted ? Theme.textDim : Theme.textSecondary
-                }
-            }
-        }
 
         // Le Bluetooth, la capture et l'enregistrement de l'écran.
         Pill {
