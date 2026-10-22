@@ -81,8 +81,8 @@ FocusScope {
 
     // La hauteur de chaque widget, à l'horizontale.
     readonly property var heights: ({
-        // Les lieux, trois rangées de tuiles, les disques.
-        explorer: 300 + 56,
+        // Selon le nombre de favoris (FileExplorer.implicitHeight).
+        explorer: Widgets.explorerHeight,
         // Le choix de la machine, trois cartes, puis le téléphone.
         stats: 30 + 10 + 150 + 10 + 76,
         notifications: 300,
