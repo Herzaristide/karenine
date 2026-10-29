@@ -21,6 +21,7 @@
 //! links it there).
 
 use super::pilot::Pilot;
+use super::wake::WakeWord;
 use super::whisper;
 use serde_json::json;
 use std::path::PathBuf;
@@ -300,7 +301,7 @@ fn clean_lines(raw: &str) -> String {
     out
 }
 
-/// Lowercase, without accents, « c » written « k »: how « Karénine » is
+/// Lowercase, without accents, « c » written « k »: how the wake word is
 /// compared with whatever Whisper wrote for it.
 fn fold(word: &str) -> String {
     word.to_lowercase()
@@ -334,20 +335,35 @@ fn levenshtein(a: &str, b: &str) -> usize {
     row[b.len()]
 }
 
-/// The request after « Karénine », if the transcript starts with it (as
-/// Whisper writes it: Karénine, Karenin, Carénine…). Its neighbours —
-/// Karine, Catherine, Lénine — don't count.
+/// The request after the wake word of this machine, if the transcript starts
+/// with it.
 pub fn strip_wake(text: &str) -> Option<String> {
+    strip_word(text, WakeWord::current())
+}
+
+/// The request after `wake`, if the transcript starts with it as Whisper
+/// writes it (Karénine, Karenin, Carénine…): within two letters of one of
+/// its `near` forms, but none of its `neighbours` (Karine, Catherine) nor a
+/// word starting otherwise (Lénine).
+fn strip_word(text: &str, wake: &WakeWord) -> Option<String> {
     let t = text.trim_start();
     let end = t
         .find(|c: char| !c.is_alphabetic() && c != '-')
         .unwrap_or(t.len());
     let word = fold(&t[..end]);
-    let near = ["karenine", "karenin"]
+    let shortest = wake
+        .near
         .iter()
-        .any(|w| levenshtein(&word, w) <= 2);
-    let neighbour = ["karine", "karin", "korinne", "katherine", "karen"].contains(&word.as_str());
-    if !(word.starts_with('k') || word.starts_with('g')) || word.len() < 6 || !near || neighbour {
+        .map(|w| w.chars().count())
+        .min()
+        .unwrap_or(0);
+    let near = wake.near.iter().any(|w| levenshtein(&word, w) <= 2);
+    let neighbour = wake.neighbours.contains(&word);
+    let initial = word
+        .chars()
+        .next()
+        .is_some_and(|c| wake.initials.contains(&c));
+    if !initial || word.chars().count() + 1 < shortest || !near || neighbour {
         return None;
     }
     let rest = t[end..].trim_start_matches(|c: char| !c.is_alphanumeric());
@@ -359,14 +375,16 @@ pub fn strip_wake(text: &str) -> Option<String> {
 }
 
 /// Words Whisper can't guess the spelling of: the project names, and the
-/// tools the pilot is asked about. Given as its initial prompt, they steer
-/// "Carnine" back to "karenine" and "Z" to "Zed".
+/// tools the pilot is asked about, and the wake word. Given as its initial
+/// prompt, they steer "Carnine" back to "karenine" and "Z" to "Zed".
 pub fn vocabulary() -> String {
-    let mut words: Vec<String> = super::desk::projects()
-        .into_iter()
-        .map(|p| p.name)
-        .filter(|n| n != "recherche")
-        .collect();
+    let mut words: Vec<String> = vec![WakeWord::current().display.clone()];
+    words.extend(
+        super::desk::projects()
+            .into_iter()
+            .map(|p| p.name)
+            .filter(|n| n != "recherche"),
+    );
     words.extend(
         [
             "Zed",
@@ -444,7 +462,7 @@ pub struct Voice {
     /// Hand the transcript to the pilot (`anna voice`, Super+V), or only
     /// show it (`anna voice dictate`).
     send: AtomicBool,
-    /// Listening for « Karénine » (wake.rs).
+    /// Listening for the wake word (wake.rs).
     wake: AtomicBool,
     /// The current turn was started by the wake word, whose audio is
     /// `preroll` (samples, rate) until the recording takes it.
@@ -524,6 +542,7 @@ impl Voice {
             "partial": self.partial.load(Ordering::SeqCst),
             "send": self.send.load(Ordering::SeqCst),
             "wake": self.wake.load(Ordering::SeqCst),
+            "wakeWord": WakeWord::current().display,
             "error": *lock(&self.error),
             // Reading the answers aloud (speech.rs), for the settings.
             "speech": self.pilot.speech().state(),
@@ -679,7 +698,7 @@ impl Voice {
         self.spawn_record();
     }
 
-    /// « Karénine » was heard (wake.rs): listen to the request, with the
+    /// The wake word was heard (wake.rs): listen to the request, with the
     /// word's audio in front so that Whisper confirms it.
     pub fn woken(self: &Arc<Self>, preroll: Vec<f32>, rate: u32) {
         if !self.begin(true) {
@@ -794,7 +813,7 @@ impl Voice {
         let mut frames = 0usize;
         let mut last_partial = Instant::now();
         // Started by the wake word: its first transcript must begin with
-        // « Karénine », or the detector was wrong and the turn stops there.
+        // the wake word, or the detector was wrong and the turn stops there.
         let woken = self.woken.load(Ordering::SeqCst);
         let mut confirmed = false;
         // Where speech was last heard (samples into `all`), and the last
@@ -982,23 +1001,66 @@ mod tests {
         assert_eq!(clean_transcript(" *Bip*\n"), "");
     }
 
+    /// A wake word as the package ships it (models/wake/<name>.json).
+    fn word(name: &str) -> WakeWord {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("models/wake");
+        WakeWord::load(&dir, name)
+    }
+
     #[test]
     fn the_wake_word_is_confirmed_and_dropped() {
+        let k = word("karenine");
+        assert_eq!(k.display, "Karénine");
         assert_eq!(
-            strip_wake("Karénine, baisse le son.").as_deref(),
+            strip_word("Karénine, baisse le son.", &k).as_deref(),
             Some("Baisse le son.")
         );
         // How Whisper writes it without context.
         assert_eq!(
-            strip_wake("Karenin. ouvre Zed").as_deref(),
+            strip_word("Karenin. ouvre Zed", &k).as_deref(),
             Some("Ouvre Zed")
         );
-        assert_eq!(strip_wake("Carénine !").as_deref(), Some(""));
+        assert_eq!(strip_word("Carénine !", &k).as_deref(), Some(""));
         // Its neighbours, and a request without it.
-        assert_eq!(strip_wake("Karine, tu viens ?"), None);
-        assert_eq!(strip_wake("Catherine arrive."), None);
-        assert_eq!(strip_wake("Lénine"), None);
-        assert_eq!(strip_wake("Arène, baisse le son."), None);
-        assert_eq!(strip_wake("Baisse le son."), None);
+        assert_eq!(strip_word("Karine, tu viens ?", &k), None);
+        assert_eq!(strip_word("Catherine arrive.", &k), None);
+        assert_eq!(strip_word("Lénine", &k), None);
+        assert_eq!(strip_word("Arène, baisse le son.", &k), None);
+        assert_eq!(strip_word("Baisse le son.", &k), None);
+    }
+
+    #[test]
+    fn each_machine_answers_to_its_name() {
+        let b = word("bernanos");
+        assert_eq!(
+            strip_word("Bernanos, ouvre Zed.", &b).as_deref(),
+            Some("Ouvre Zed.")
+        );
+        assert_eq!(
+            strip_word("Bernano ouvre Zed", &b).as_deref(),
+            Some("Ouvre Zed")
+        );
+        assert_eq!(strip_word("Bernard, ouvre Zed.", &b), None);
+        assert_eq!(strip_word("Karénine, ouvre Zed.", &b), None);
+
+        let e = word("exupery");
+        assert_eq!(e.display, "Exupéry");
+        assert_eq!(
+            strip_word("Exupéry, baisse le son.", &e).as_deref(),
+            Some("Baisse le son.")
+        );
+        assert_eq!(
+            strip_word("Saint-Exupéry, baisse le son.", &e).as_deref(),
+            Some("Baisse le son.")
+        );
+        assert_eq!(strip_word("Bernanos, baisse le son.", &e), None);
+
+        // Without its JSON, a word is heard only as its name.
+        let z = word("absent");
+        assert_eq!(z.display, "Absent");
+        assert_eq!(
+            strip_word("Absent, ouvre Zed", &z).as_deref(),
+            Some("Ouvre Zed")
+        );
     }
 }

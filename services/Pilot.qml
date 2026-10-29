@@ -26,8 +26,10 @@ Singleton {
     property string voiceText: ""
     property bool voicePartial: false
     property string voiceError: ""
-    // Le mot d'activation « Karénine » écoute (micro ouvert en continu).
+    // Le mot d'activation écoute (micro ouvert en continu).
     property bool voiceWake: false
+    // Le mot d'éveil de cette machine (« Karénine », « Bernanos »…).
+    property string voiceWakeWord: "Karénine"
 
     // Les réponses lues à voix haute (anna/src/claude/speech.rs).
     // speechMode : "off", "voice" (demandes dites seulement) ou "always".
@@ -75,6 +77,7 @@ Singleton {
                 pilot.voicePartial = !!msg.voice.partial;
                 pilot.voiceError = msg.voice.error || "";
                 pilot.voiceWake = !!msg.voice.wake;
+                pilot.voiceWakeWord = msg.voice.wakeWord || "Karénine";
                 var s = msg.voice.speech;
                 if (s) {
                     pilot.speechMode = s.mode || "voice";

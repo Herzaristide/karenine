@@ -14,6 +14,13 @@ let
     url = "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/embedding_model.onnx";
     hash = "sha256-cNFkKQwdCV0dTuFJvF4AVDJQpzFrWfMdBWz/e9MHXB8=";
   };
+
+  # The wake words trained in lab/wakeword-<word>: one per models/wake/<word>.onnx.
+  # The NixOS configuration picks one per machine (ANNA_WAKE_WORD), and falls
+  # back on « karenine » for a machine without its own.
+  wakeWords = map (lib.removeSuffix ".onnx") (
+    lib.filter (lib.hasSuffix ".onnx") (lib.attrNames (builtins.readDir ./models/wake))
+  );
 in
 pkgs.rustPlatform.buildRustPackage {
   pname = "anna";
@@ -67,6 +74,10 @@ pkgs.rustPlatform.buildRustPackage {
     #       (gesture/camera.rs). gpu-screen-recorder is left to the ambient
     #       PATH: it needs its gsr-kms-server wrapper, given a capability by
     #       the NixOS configuration (programs.gpu-screen-recorder).
+    #   secret-tool (libsecret)
+    #     → the Nextcloud account's app password, kept in the Secret
+    #       Service (cloud/mod.rs); xdg-open opens its login page, date
+    #       (coreutils) gives the pilot's agenda in local time
     #   whisper-server, whisper-cli (whisper-cpp, Vulkan build), vulkaninfo
     #   (vulkan-tools)
     #     → transcribing what is said to the pilot, live (claude/voice.rs,
@@ -75,13 +86,14 @@ pkgs.rustPlatform.buildRustPackage {
     #       model file is provided by the NixOS configuration.
     # The icon theme recoloured to the accent (src/icons.rs): Reversal, read in
     # place from the store through ANNA_ICON_SOURCE.
-    # The wake word « Karénine » (claude/wake.rs): openWakeWord's two shared
-    # models, and the word's own model trained in lab/wakeword-karenine. ONNX
+    # The wake words (claude/wake.rs): openWakeWord's two shared models, and
+    # each word's own model trained in lab/wakeword-<word>, with how it is
+    # written and heard (<word>.json). ONNX
     # Runtime is loaded at run time (ort's load-dynamic).
     mkdir -p "$out/share/anna/wake"
     cp ${melspectrogram} "$out/share/anna/wake/melspectrogram.onnx"
     cp ${embedding} "$out/share/anna/wake/embedding_model.onnx"
-    cp ${./models/wake/karenine.onnx} "$out/share/anna/wake/karenine.onnx"
+    cp ${./models/wake}/*.onnx ${./models/wake}/*.json "$out/share/anna/wake/"
 
     # The pilot's answers read aloud (claude/speech.rs): Piper voices run with
     # ONNX Runtime, their phonemes from libespeak-ng (loaded at run time, its
@@ -118,10 +130,13 @@ pkgs.rustPlatform.buildRustPackage {
             systemd
             (whisper-cpp.override { vulkanSupport = true; })
             vulkan-tools
+            libsecret
           ]
         )
       }
   '';
+
+  passthru = { inherit wakeWords; };
 
   meta = {
     description = "Unified engine daemon for karenine (accent/palette theming + hardware stats)";

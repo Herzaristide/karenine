@@ -14,20 +14,22 @@ import Quickshell
 // Ceux de `hubTabs` vivent dans la capsule de la barre de conversation, que
 // le flocon agrandit vers le haut (panels/WidgetHub.qml) : un onglet chacun,
 // un seul affiché à la fois. « explorer » parcourt les dossiers du PC
-// (widgets/FileExplorer.qml). « camera » reste une carte flottante
+// (widgets/FileExplorer.qml). « agenda » montre les calendriers du compte
+// Nextcloud (widgets/CalendarWidget.qml). « camera » reste une carte flottante
 // (FloatingWidgets).
 Singleton {
     id: widgets
 
-    readonly property var names: ["explorer", "stats", "notifications", "notes", "lecteur", "musique", "son", "camera", "reglages"]
+    readonly property var names: ["explorer", "stats", "notifications", "notes", "agenda", "lecteur", "musique", "son", "camera", "reglages"]
 
     // Les onglets des widgets, dans l'ordre de la barre d'onglets.
-    readonly property var hubTabs: ["explorer", "stats", "notifications", "notes", "lecteur", "musique", "reglages"]
+    readonly property var hubTabs: ["explorer", "stats", "notifications", "notes", "agenda", "lecteur", "musique", "reglages"]
     readonly property var hubLabels: ({
         explorer: I18n.tr("widget.explorer"),
         stats: I18n.tr("widget.stats"),
         notifications: I18n.tr("widget.notifications"),
         notes: I18n.tr("widget.notes"),
+        agenda: I18n.tr("widget.agenda"),
         lecteur: I18n.tr("widget.player"),
         musique: I18n.tr("widget.music"),
         reglages: I18n.tr("widget.settings")
@@ -37,6 +39,7 @@ Singleton {
         stats: "stats.svg",
         notifications: "bell.svg",
         notes: "notes.svg",
+        agenda: "calendar.svg",
         lecteur: "play.svg",
         musique: "music.svg",
         reglages: "settings.svg"

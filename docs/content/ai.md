@@ -17,7 +17,8 @@ words.
 - **It acts on the desktop** with its tools (`anna/src/claude/desk.rs`):
   windows and workspaces, sound, brightness, media playback, applications,
   URLs, projects (Zed, terminal), screenshots, sound and screen
-  recordings, accent color, vault notes, quick notes, widgets, desktop
+  recordings, accent color, vault notes, quick notes, the calendar (read
+  only, `agenda`), widgets, desktop
   state, clipboard, and as a last resort a shell command. It never rebuilds NixOS.
 - **It only acts**: it never starts a Claude Code session. A code or
   research task, it suggests opening the project (Zed or a terminal) and
@@ -116,9 +117,27 @@ down”. Turn it on or off under “Voice” in the settings, or `anna voice wak
 [on|off]`; the choice survives restarts. When on, the microphone stays
 open.
 
+**Each machine answers to its own name.** The word is `ANNA_WAKE_WORD`: the
+NixOS configuration (`modules/common.nix`) sets it to the host name when
+karenine ships a model by that name (“Bernanos” on bernanos, “Exupéry” on
+exupery), and to `karenine` otherwise; anna itself falls back on
+“Karénine” without it. A word is two files in `anna/models/wake/`:
+
+- `<word>.onnx`, its model, trained in `lab/wakeword-<word>/`;
+- `<word>.json`, how it is written and heard: `display` (shown in the bar
+  and the settings, and given to Whisper), `near` (how Whisper may write
+  it, folded: lowercase, no accents, “c” as “k”; within two letters counts),
+  `neighbours` (folded words that don't count even when near), `initials`
+  (the letters it may start with; those of `near` by default) and
+  `threshold`.
+
+The package lists the words that have a model (`anna.wakeWords`), which
+the NixOS configuration reads to choose; adding a word is adding its two
+files.
+
 - Every 80 ms, three small ONNX models (openWakeWord, on the processor,
   about 4 % of a core): a spectrogram, an “embedding” shared by all wake
-  words, then the model specific to “Karénine” (200 KB), which scores the
+  words, then the model specific to the word (~400 KB), which scores the
   last second and a half between 0 and 1.
 - Above the threshold (0.6; `ANNA_WAKE_THRESHOLD`), the last 2.5 seconds go
   before the request. **Whisper must hear “Karénine” at the start** of the

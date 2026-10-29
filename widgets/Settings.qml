@@ -127,6 +127,23 @@ Item {
                     visible: root.showInternalHeader
                 }
 
+                // ── COMPTE section ─────────────────────────────────
+                // Le compte Nextcloud (Murena…) : les notes s'y
+                // synchronisent, l'onglet Agenda y lit les calendriers.
+                Text {
+                    Layout.bottomMargin: 10
+                    text: I18n.tr("settings.account")
+                    font.family: "Inter"
+                    font.pixelSize: 12
+                    font.letterSpacing: 0
+                    color: Theme.accentMuted
+                }
+
+                CloudAccount {
+                    Layout.fillWidth: true
+                    Layout.bottomMargin: 18
+                }
+
                 // ── ÉCRAN section ──────────────────────────────────
                 // Où s'affichent la barre et les panneaux.
                 Text {
@@ -365,7 +382,7 @@ Item {
 
                         Text {
                             width: parent.width
-                            text: I18n.tr("settings.voice.wake")
+                            text: I18n.tr("settings.voice.wake", { word: Pilot.voiceWakeWord })
                             font.family: "Inter"
                             font.pixelSize: 12
                             font.weight: Font.Medium

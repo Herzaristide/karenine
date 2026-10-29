@@ -1,4 +1,7 @@
 //! The wake word: saying « Karénine » starts listening, as Super+V does.
+//! The word is chosen per machine (`ANNA_WAKE_WORD`, set by the NixOS
+//! configuration from the host name): « Bernanos » on bernanos, « Exupéry »
+//! on exupery, « Karénine » wherever no model of its own was trained.
 //!
 //! openWakeWord's pipeline (Apache-2.0), run on the processor every 80 ms:
 //!
@@ -6,13 +9,16 @@
 //!      30 ms of context) → 8 frames of 32 mel bands, scaled `x / 10 + 2`.
 //!   2. `embedding_model.onnx` (Google's speech embedding, shared by every
 //!      wake word): the last 76 mel frames → one vector of 96.
-//!   3. `karenine.onnx`, trained for this word only (lab/wakeword-karenine):
+//!   3. `<word>.onnx`, trained for this word only (lab/wakeword-<word>):
 //!      the last 16 vectors (~1.3 s) → a score between 0 and 1.
+//!
+//! Next to it, `<word>.json` says how the word is written and heard
+//! (`WakeWord`).
 //!
 //! A score over the threshold hands the last seconds of audio to the voice
 //! (voice.rs), which listens to the request with them in front: Whisper must
-//! hear « Karénine » at the start of the transcript, or the turn is dropped
-//! in silence. A false trigger thus costs one transcription, never a request.
+//! hear the word at the start of the transcript, or the turn is dropped in
+//! silence. A false trigger thus costs one transcription, never a request.
 //!
 //! The microphone stays open only while the wake word is on (`anna voice wake
 //! on|off`, remembered across restarts). Nothing leaves the machine.
@@ -22,7 +28,7 @@ use ort::session::Session;
 use ort::value::TensorRef;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use super::voice::{resample, Voice};
@@ -40,19 +46,95 @@ const PREROLL: Duration = Duration::from_millis(2500);
 /// After a turn, the word just said must not trigger again.
 const COOLDOWN: Duration = Duration::from_millis(1500);
 
-/// Where the three models live: the package's share dir, set by the wrapper.
+/// Where the models live: the package's share dir, set by the wrapper.
 pub fn models_dir() -> PathBuf {
     std::env::var_os("ANNA_WAKE_MODELS")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/run/current-system/sw/share/anna/wake"))
 }
 
-/// Score from which « Karénine » counts as said (`ANNA_WAKE_THRESHOLD`).
-fn threshold() -> f32 {
-    std::env::var("ANNA_WAKE_THRESHOLD")
+/// The word listened for, as its model is named (`ANNA_WAKE_WORD`, set by the
+/// NixOS configuration); « Karénine » without one.
+fn word_name() -> String {
+    std::env::var("ANNA_WAKE_WORD")
         .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0.6)
+        .filter(|w| {
+            !w.is_empty()
+                && w.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        })
+        .unwrap_or_else(|| "karenine".into())
+}
+
+/// A wake word, from `<name>.json` next to its model.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(default)]
+pub struct WakeWord {
+    /// Its model: `<name>.onnx`.
+    #[serde(skip)]
+    pub name: String,
+    /// As shown, and given to Whisper: « Karénine ».
+    pub display: String,
+    /// How Whisper may write it, folded (voice.rs `fold`): within two
+    /// letters of one of these, it was heard.
+    pub near: Vec<String>,
+    /// Its neighbours, folded, which don't count even when near.
+    pub neighbours: Vec<String>,
+    /// The letters the heard word may start with; those of `near` if empty.
+    pub initials: Vec<char>,
+    /// Score from which it counts as said (`ANNA_WAKE_THRESHOLD` overrides).
+    pub threshold: f32,
+}
+
+impl Default for WakeWord {
+    fn default() -> Self {
+        WakeWord {
+            name: String::new(),
+            display: String::new(),
+            near: Vec::new(),
+            neighbours: Vec::new(),
+            initials: Vec::new(),
+            threshold: 0.6,
+        }
+    }
+}
+
+impl WakeWord {
+    /// `<name>.json` from `dir`; a missing or broken file leaves the word
+    /// written as its name, heard only as itself.
+    pub fn load(dir: &Path, name: &str) -> Self {
+        let mut w: WakeWord = std::fs::read_to_string(dir.join(format!("{name}.json")))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        w.name = name.to_string();
+        if w.display.is_empty() {
+            let mut c = name.chars();
+            w.display = c
+                .next()
+                .map(|f| f.to_uppercase().chain(c).collect())
+                .unwrap_or_default();
+        }
+        if w.near.is_empty() {
+            w.near.push(name.to_string());
+        }
+        if w.initials.is_empty() {
+            w.initials = w.near.iter().filter_map(|n| n.chars().next()).collect();
+        }
+        if let Some(t) = std::env::var("ANNA_WAKE_THRESHOLD")
+            .ok()
+            .and_then(|v| v.parse().ok())
+        {
+            w.threshold = t;
+        }
+        w
+    }
+
+    /// The word of this machine, read once.
+    pub fn current() -> &'static WakeWord {
+        static WORD: OnceLock<WakeWord> = OnceLock::new();
+        WORD.get_or_init(|| WakeWord::load(&models_dir(), &word_name()))
+    }
 }
 
 fn load(path: &Path) -> Result<Session, String> {
@@ -95,11 +177,11 @@ pub struct Detector {
 }
 
 impl Detector {
-    pub fn new(dir: &Path) -> Result<Self, String> {
+    pub fn new(dir: &Path, word: &str) -> Result<Self, String> {
         let mut d = Detector {
             mel: load(&dir.join("melspectrogram.onnx"))?,
             embedding: load(&dir.join("embedding_model.onnx"))?,
-            word: load(&dir.join("karenine.onnx"))?,
+            word: load(&dir.join(format!("{word}.onnx")))?,
             pending: Vec::new(),
             raw: VecDeque::new(),
             mels: VecDeque::new(),
@@ -183,12 +265,13 @@ pub fn remember(on: bool) {
 /// Listen for the word while `voice.wake_on()`; the microphone is released
 /// whenever it is off. Runs on its own thread for the daemon's lifetime.
 pub fn listen(voice: Arc<Voice>) {
-    let threshold = threshold();
+    let word = WakeWord::current();
+    let threshold = word.threshold;
     loop {
         while !voice.wake_on() {
             std::thread::sleep(Duration::from_millis(300));
         }
-        let mut detector = match Detector::new(&models_dir()) {
+        let mut detector = match Detector::new(&models_dir(), &word.name) {
             Ok(d) => d,
             Err(e) => {
                 voice.wake_failed(format!("mot d'activation : {e}"));
@@ -256,7 +339,7 @@ pub fn score_file(path: Option<&str>) {
         let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
         let (samples, rate) = super::voice::read_wav(&bytes)
             .ok_or_else(|| format!("{path}: WAV 16 bits illisible"))?;
-        let mut d = Detector::new(&models_dir())?;
+        let mut d = Detector::new(&models_dir(), &WakeWord::current().name)?;
         for (i, chunk) in resample(&samples, rate).chunks(CHUNK).enumerate() {
             if let Some(s) = d.feed(chunk)? {
                 println!("{:.2}\t{s:.4}", (i + 1) as f32 * 0.08);

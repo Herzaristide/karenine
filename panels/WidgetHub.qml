@@ -88,6 +88,8 @@ FocusScope {
         notifications: 300,
         // Le champ, puis le mur de cartes, qui défile.
         notes: 340,
+        // Le mois (six semaines), à côté du jour choisi.
+        agenda: 330,
         lecteur: 210,
         // L'accordeur et le métronome, puis s'enregistrer (MusicPanel).
         musique: 196,
@@ -165,6 +167,7 @@ FocusScope {
                                : page.modelData === "stats" ? statsPage
                                : page.modelData === "notifications" ? notificationsPage
                                : page.modelData === "notes" ? notesPage
+                               : page.modelData === "agenda" ? agendaPage
                                : page.modelData === "lecteur" ? playerPage
                                : page.modelData === "musique" ? musicPage
                                : settingsPage
@@ -177,6 +180,7 @@ FocusScope {
     Component { id: statsPage; HardwareStats {} }
     Component { id: notificationsPage; NotificationCenter {} }
     Component { id: notesPage; NotesWidget {} }
+    Component { id: agendaPage; CalendarWidget {} }
     Component { id: playerPage; MusicPlayerWidget {} }
     // L'accordeur, le métronome et l'enregistrement, d'un seul tenant.
     Component { id: musicPage; MusicPanel {} }

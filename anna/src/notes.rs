@@ -1,5 +1,6 @@
-//! The notes of the « Notes » tab: a wall of cards, Keep-like, kept on this
-//! machine only.
+//! The notes of the « Notes » tab: a wall of cards, Keep-like. Kept on this
+//! machine, and, once a Nextcloud account is connected (cloud/), synced with
+//! its Notes app: the text notes only, the images stay here.
 //!
 //! `anna notes <action>` works on the files directly, without the daemon: the
 //! shell runs it for each change and reads one JSON line back.
@@ -11,6 +12,7 @@
 //!   anna notes pin <id>              → pinned ↔ not
 //!   anna notes copy <id>             → back to the clipboard
 //!   anna notes delete <id>
+//!   anna notes sync                  → now, instead of within the minute
 //!
 //! The wallpaper blackboard (panels/Blackboard.qml) shows the notes that have
 //! a place on it, and the chalk strokes drawn around them:
@@ -42,6 +44,13 @@
 //! The daemon also turns every screenshot into an image note
 //! (`watch_screenshots`).
 //!
+//! `notes.json` stays the copy the shell reads, whether an account is
+//! connected or not; `sync.json` next to it is what the sync needs (the
+//! notes deleted here, to delete there too). The daemon syncs within seconds
+//! of a change, and fetches the server's changes every minute
+//! (cloud/notes.rs). The CLI and the daemon both write these files: each
+//! change holds `.lock` (`lock`) while it reads and rewrites them.
+//!
 //! The clipboard is read with `wl-paste`: an image first (a screenshot, an
 //! image copied from a browser), then an image file copied from a file
 //! manager (`text/uri-list`), then text.
@@ -68,6 +77,25 @@ pub struct Note {
     pub board: Option<Spot>,
     /// The screen whose board holds it, "" for the interface screen.
     pub screen: String,
+    /// Its id in the Nextcloud Notes app, 0 while it is only here.
+    pub remote: u64,
+    /// The server's version of it, as last seen.
+    pub etag: String,
+    /// Changed here since it was last sent.
+    pub dirty: bool,
+}
+
+/// What the sync keeps between two runs (cloud/notes.rs).
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct SyncState {
+    /// The account the notes' `remote` ids belong to.
+    pub account: String,
+    /// Notes deleted here, still to delete on the server.
+    pub deleted: Vec<u64>,
+    /// The last sync that went through (Unix seconds), and the last error.
+    pub last: u64,
+    pub error: String,
 }
 
 /// A point of the blackboard, as fractions of its width and height.
@@ -107,26 +135,65 @@ pub fn dir() -> PathBuf {
 pub struct Store {
     dir: PathBuf,
     pub notes: Vec<Note>,
+    pub sync: SyncState,
+}
+
+/// Held while a change reads and rewrites the notes' files; released when
+/// dropped.
+pub struct Lock(#[allow(dead_code)] std::fs::File);
+
+/// Waits for the other writers (the CLI, the daemon's sync) to be done.
+pub fn lock(dir: &Path) -> Result<Lock, String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join(".lock"))
+        .map_err(|e| e.to_string())?;
+    file.lock().map_err(|e| e.to_string())?;
+    Ok(Lock(file))
+}
+
+/// A list rewritten whole: a temporary file, then renamed. A crash never
+/// leaves half of it.
+fn write_json(dir: &Path, name: &str, value: &impl Serialize) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let tmp = dir.join(format!("{name}.tmp"));
+    let text = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, dir.join(name)).map_err(|e| e.to_string())
+}
+
+fn read_json<T: serde::de::DeserializeOwned + Default>(dir: &Path, name: &str) -> T {
+    std::fs::read_to_string(dir.join(name))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
 }
 
 impl Store {
     pub fn open(dir: &Path) -> Store {
-        let notes = std::fs::read_to_string(dir.join("notes.json"))
-            .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_default();
         Store {
             dir: dir.to_path_buf(),
-            notes,
+            notes: read_json(dir, "notes.json"),
+            sync: read_json(dir, "sync.json"),
         }
     }
 
     fn save(&self) -> Result<(), String> {
-        std::fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
-        let tmp = self.dir.join("notes.json.tmp");
-        let text = serde_json::to_string_pretty(&self.notes).map_err(|e| e.to_string())?;
-        std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, self.dir.join("notes.json")).map_err(|e| e.to_string())
+        self.save_notes()?;
+        self.save_sync()
+    }
+
+    /// The notes alone: the shell follows this file, and reloads on every
+    /// write.
+    pub fn save_notes(&self) -> Result<(), String> {
+        write_json(&self.dir, "notes.json", &self.notes)
+    }
+
+    pub fn save_sync(&self) -> Result<(), String> {
+        write_json(&self.dir, "sync.json", &self.sync)
     }
 
     /// Pinned first, then the most recently changed; within the same second,
@@ -144,7 +211,7 @@ impl Store {
     }
 
     /// A new id: the time in milliseconds, in hex, bumped past any taken one.
-    fn new_id(&self) -> String {
+    pub fn new_id(&self) -> String {
         let mut n = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
@@ -207,6 +274,7 @@ impl Store {
         }
         note.text = text.to_string();
         note.updated = now();
+        note.dirty = note.image.is_empty();
         let note = note.clone();
         self.save()?;
         Ok(note)
@@ -215,6 +283,7 @@ impl Store {
     pub fn pin(&mut self, id: &str) -> Result<Note, String> {
         let note = self.find(id)?;
         note.pinned = !note.pinned;
+        note.dirty = note.image.is_empty();
         let note = note.clone();
         self.save()?;
         Ok(note)
@@ -247,6 +316,9 @@ impl Store {
             .position(|n| n.id == id)
             .ok_or_else(|| crate::i18n::tr("notes.unknown"))?;
         let note = self.notes.remove(at);
+        if note.remote != 0 {
+            self.sync.deleted.push(note.remote);
+        }
         // Only an image of our own folder: never a file elsewhere.
         if !note.image.is_empty() && Path::new(&note.image).parent() == Some(self.dir.as_path()) {
             let _ = std::fs::remove_file(&note.image);
@@ -433,6 +505,7 @@ fn mime_of(path: &str) -> &'static str {
 
 /// The pilot's `creer_note` (claude/desk.rs): a text note, pinned if asked.
 pub fn pilot_create(text: &str, pin: bool) -> Result<String, String> {
+    let _held = lock(&dir()).ok();
     let mut store = Store::open(&dir());
     let note = store.add_text(text)?;
     if pin {
@@ -534,6 +607,7 @@ async fn watch(places: Vec<(PathBuf, &'static str)>, notes: PathBuf) {
             let notes = notes.clone();
             let added = tokio::task::spawn_blocking(move || {
                 let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+                let _held = lock(&notes)?;
                 Store::open(&notes).add_image(&bytes, "png")
             })
             .await;
@@ -752,6 +826,17 @@ fn place(store: &mut Store, id: &str, x: &str, y: &str, screen: &str) -> Result<
 /// `anna notes …`: one JSON line on stdout, whatever happens.
 pub fn run(args: &[String]) {
     let arg = |i: usize| args.get(i).map(String::as_str).unwrap_or("");
+    // The sync takes the lock itself, between its requests.
+    if arg(2) == "sync" {
+        let line = match crate::cloud::notes::sync_now(&dir()) {
+            Ok(changed) => json!({ "ok": true, "changed": changed }),
+            Err(e) => json!({ "ok": false, "error": e }),
+        };
+        println!("{line}");
+        return;
+    }
+    // Without the lock (a read-only home), the change still goes through.
+    let _held = lock(&dir()).ok();
     let mut store = Store::open(&dir());
     let note = |r: Result<Note, String>| r.map(|n| json!({ "ok": true, "note": n }));
     let result = match arg(2) {
