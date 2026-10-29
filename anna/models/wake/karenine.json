@@ -1,0 +1,7 @@
+{
+  "display": "Karénine",
+  "near": ["karenine", "karenin"],
+  "neighbours": ["karine", "karin", "korinne", "katherine", "karen"],
+  "initials": ["k", "g"],
+  "threshold": 0.6
+}

@@ -11,6 +11,9 @@
 # ── L'interface ──────────────────────────────────────────────
 bell          regular  bell
 bluetooth     regular  bluetooth
+wifi          regular  wifi-high
+wifi-off      regular  wifi-slash
+calendar      regular  calendar-blank
 brightness    regular  sun
 copy          regular  copy
 eye           regular  eye

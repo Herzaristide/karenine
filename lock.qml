@@ -35,9 +35,19 @@ ShellRoot {
     property bool messageIsError: false
     property bool busy: false
 
-    // Mot de passe en attente d'être remis à PAM lors du prompt.
+    // Mot de passe saisi avant que PAM ne le demande (howdy cherche encore le
+    // visage) : remis à pam_unix dès son prompt.
     property string pendingPassword: ""
 
+    // pam_unix attend le mot de passe et rien n'a encore été saisi.
+    property bool awaitingPassword: false
+
+    // La conversation PAM s'ouvre dès le verrouillage, sans attendre de saisie :
+    // le premier module de security.pam.services.quickshell est howdy
+    // (« sufficient »), qui allume la caméra IR et déverrouille si le visage
+    // correspond. Sinon il passe la main à pam_unix, dont le prompt reste en
+    // suspens jusqu'à ce qu'un mot de passe soit saisi. Sans howdy dans la
+    // pile, pam_unix demande tout de suite : même comportement qu'avant.
     PamContext {
         id: pam
 
@@ -46,17 +56,33 @@ ShellRoot {
         user: root.userName
 
         onPamMessage: {
-            // PAM réclame le mot de passe : on lui donne celui saisi.
-            if (pam.responseRequired)
-                pam.respond(root.pendingPassword);
-            else if (pam.message.length > 0) {
+            if (pam.responseRequired) {
+                faceHint.stop();
+                if (root.pendingPassword.length > 0) {
+                    const password = root.pendingPassword;
+                    root.pendingPassword = "";
+                    pam.respond(password);
+                    return;
+                }
+                root.awaitingPassword = true;
+                if (root.message === I18n.tr("lock.face"))
+                    root.message = "";
+                return;
+            }
+
+            if (pam.message.length > 0) {
                 root.message = pam.message;
-                root.messageIsError = pam.messageIsError;
+                // Un échec de howdy n'est pas une faute de frappe : la carte ne
+                // tremble que pour un mot de passe soumis.
+                root.messageIsError = root.busy && pam.messageIsError;
             }
         }
 
         onCompleted: (result) => {
+            faceHint.stop();
+            const tried = root.busy;
             root.busy = false;
+            root.awaitingPassword = false;
             root.pendingPassword = "";
 
             if (result === PamResult.Success) {
@@ -68,32 +94,87 @@ ShellRoot {
 
             root.messageIsError = true;
             root.message = result === PamResult.MaxTries ? I18n.tr("auth.tooManyTries") : I18n.tr("auth.wrongPassword");
+
+            // Conversation suivante prête pour le prochain essai (et nouveau
+            // passage de howdy). Pas si l'échec est venu sans saisie : on
+            // bouclerait sur PAM.
+            if (tried)
+                root.begin();
         }
 
         onError: (error) => {
+            faceHint.stop();
             root.busy = false;
+            root.awaitingPassword = false;
             root.pendingPassword = "";
             root.messageIsError = true;
             root.message = I18n.tr("auth.pamError", { error: PamError.toString(error) });
         }
     }
 
-    function authenticate(password: string): void {
-        if (root.busy || password.length === 0)
+    // « Reconnaissance faciale… » n'apparaît que si PAM ne réclame pas le mot
+    // de passe aussitôt : sans howdy, le message ne clignote pas.
+    Timer {
+        id: faceHint
+        interval: 400
+        onTriggered: {
+            if (pam.active && !root.awaitingPassword && !root.busy) {
+                root.messageIsError = false;
+                root.message = I18n.tr("lock.face");
+            }
+        }
+    }
+
+    // Ouvre une conversation PAM, donc un essai de visage.
+    function begin(): void {
+        if (pam.active)
             return;
 
-        root.pendingPassword = password;
-        root.messageIsError = false;
-        root.message = "";
-        root.busy = true;
-
+        root.awaitingPassword = false;
         if (!pam.start()) {
             root.busy = false;
             root.pendingPassword = "";
             root.messageIsError = true;
             root.message = I18n.tr("auth.pamStart");
+            return;
         }
+        faceHint.restart();
     }
+
+    // Retour devant l'écran : howdy a abandonné pendant l'absence et PAM attend
+    // le mot de passe, on rouvre une conversation pour retenter le visage.
+    // abort() ne déclenche pas onCompleted.
+    function retryFace(): void {
+        if (!root.awaitingPassword || root.busy)
+            return;
+
+        pam.abort();
+        root.message = "";
+        root.messageIsError = false;
+        root.begin();
+    }
+
+    function authenticate(password: string): void {
+        if (root.busy || password.length === 0)
+            return;
+
+        root.messageIsError = false;
+        root.message = "";
+        root.busy = true;
+        faceHint.stop();
+
+        if (root.awaitingPassword) {
+            root.awaitingPassword = false;
+            pam.respond(password);
+            return;
+        }
+
+        // howdy cherche encore, ou pas de conversation : remis au prompt.
+        root.pendingPassword = password;
+        root.begin();
+    }
+
+    Component.onCompleted: root.begin()
 
     WlSessionLock {
         id: lock
@@ -126,6 +207,8 @@ ShellRoot {
                 busy: root.busy
                 wallpaper: root.wallpaper
                 showWidgets: surfaceWindow.screen !== null && surfaceWindow.screen.name === root.primaryScreen
+
+                onWoke: root.retryFace()
 
                 onSubmitted: (password) => {
                     root.authenticate(password);

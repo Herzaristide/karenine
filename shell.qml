@@ -118,6 +118,19 @@ ShellRoot {
         }
     }
 
+    // La barre tactile, à gauche (en bas en portrait) : la batterie, le
+    // flocon qui fait monter la barre de conversation comme Super, et les
+    // workspaces.
+    Variants {
+        model: root.primaryScreens
+
+        TabletBar {
+            property var modelData
+            screen: modelData
+            onAskRequested: root.barToggled()
+        }
+    }
+
     // La petite barre du haut : la luminosité et le volume quand ils
     // changent ou que la souris approche, l'enregistrement en cours.
     Variants {

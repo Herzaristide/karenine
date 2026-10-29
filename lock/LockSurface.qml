@@ -28,6 +28,9 @@ Item {
     property string wallpaper: ""
 
     signal submitted(password: string)
+    // Activité après la mise en veille de la vidéo : lock.qml en profite pour
+    // retenter la reconnaissance faciale.
+    signal woke()
 
     // La vidéo s'arrête après un moment sans souris ni clavier — hypridle
     // éteint l'écran peu après le verrouillage, inutile de décoder pour un
@@ -35,6 +38,8 @@ Item {
     property bool idle: false
 
     function wake(): void {
+        if (surface.idle)
+            surface.woke();
         surface.idle = false;
         idleTimer.restart();
     }

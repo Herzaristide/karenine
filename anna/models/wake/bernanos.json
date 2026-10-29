@@ -1,0 +1,6 @@
+{
+  "display": "Bernanos",
+  "near": ["bernanos", "bernano"],
+  "neighbours": ["bernard", "bernadette"],
+  "threshold": 0.6
+}

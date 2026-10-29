@@ -1571,7 +1571,7 @@ PanelWindow { // qmllint disable uncreatable-type
                 Behavior on opacity { NumberAnimation { duration: 160 } }
                 Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
                 text: bar.asking && answer.shown ? I18n.tr("bar.yourAnswer")
-                    : Pilot.voiceWake ? I18n.tr("bar.placeholderWake")
+                    : Pilot.voiceWake ? I18n.tr("bar.placeholderWake", { word: Pilot.voiceWakeWord })
                     : I18n.tr("bar.placeholder")
                 font.family: bar.uiFont
                 font.pixelSize: 15

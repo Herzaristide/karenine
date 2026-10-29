@@ -20,7 +20,7 @@ services/            Cross-cutting singletons and search sources
   Search, Fuzzy, AppSource, FileSource, SettingSource, WallpaperSource,
   NoteSource, WebSource
 panels/              Top-level chrome (Wayland windows)
-  ConversationBar, WidgetHub, HubTopBar, FloatingWidgets, WidgetCard,
+  ConversationBar, WidgetHub, HubTopBar, TabletBar, FloatingWidgets, WidgetCard,
   PolkitPrompt
 widgets/             Panel contents
   FileExplorer, HardwareStats, MachinePicker, PhoneWidget, NotificationCenter,
@@ -54,7 +54,7 @@ the [Search](#search) page):
 | `Display.qml` | Which screen carries the interface. A screen is known by its **model**, not its connector (the same monitor is DP-4 on one machine and DP-3 on another). Fallbacks: the user's choice if plugged, else the default connector, else the first screen. The main workspaces (1–5) follow it, and are re-attached after every `hyprctl reload`. |
 | `Audio.qml` | The default output's volume, live from PipeWire (capped at 100 %: above, PipeWire amplifies in software and saturates). |
 | `Brightness.qml` | The laptop backlight (`brightnessctl`), re-read on every udev event — keys, anna or the shell — without polling. |
-| `Battery.qml` | UPower over D-Bus, no polling. On battery, warns once at a low level and once at a critical one (desktop notification); plugging in re-arms them. Created at startup, so it watches even with nothing open. |
+| `Battery.qml` | UPower over D-Bus, no polling. The time left until empty or full: UPower's, else computed from the energy left and the power drawn. On battery, warns once at a low level and once at a critical one (desktop notification); plugging in re-arms them. Created at startup, so it watches even with nothing open. |
 | `Notifications.qml` | The desktop notification server (notify-send, the browser, grimblast, the phone through kdeconnectd…). |
 | `Anna.qml` | Where to reach the anna socket (`$XDG_RUNTIME_DIR`), in one place. |
 | `Pilot.qml` | The pilot and the voice as anna runs them: what the conversation bar sends and shows (see [AI cluster](#ai)). |

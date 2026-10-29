@@ -40,6 +40,28 @@ QtObject {
         }
     }
 
+    // Le temps avant la batterie vide (en décharge) ou pleine (en charge), en
+    // secondes ; 0 tant qu'on ne peut pas l'estimer. UPower le donne ; à
+    // défaut (il lui faut quelques minutes de mesures), on le calcule de
+    // l'énergie restante et de la puissance tirée (Wh et W).
+    readonly property int secondsLeft: {
+        if (!battery.present)
+            return 0;
+        var d = battery.device;
+        if (battery.status === "Discharging") {
+            if (d.timeToEmpty > 0)
+                return d.timeToEmpty;
+            return d.changeRate > 0 ? Math.round(d.energy / d.changeRate * 3600) : 0;
+        }
+        if (battery.status === "Charging") {
+            if (d.timeToFull > 0)
+                return d.timeToFull;
+            return d.changeRate > 0
+                ? Math.round((d.energyCapacity - d.energy) / d.changeRate * 3600) : 0;
+        }
+        return 0;
+    }
+
     onPercentChanged: battery.check()
     onStatusChanged: battery.check()
 

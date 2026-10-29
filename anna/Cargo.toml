@@ -26,3 +26,8 @@ evdev = "0.13"
 # libespeak-ng, loaded at run time (ESPEAK_DYLIB_PATH, set by the wrapper):
 # the phonemes of the voices that read the pilot's answers (claude/speech.rs).
 libloading = "0.9"
+# The Nextcloud account (cloud/): its notes API, CalDAV and the login flow,
+# over HTTPS. rustls with bundled roots: no OpenSSL to link, no system store
+# to find.
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+base64 = "0.22"
