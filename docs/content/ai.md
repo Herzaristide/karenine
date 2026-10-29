@@ -67,44 +67,38 @@ The end of the sentence stops listening (a second press or a click on the
 chip too). The chip shows “listening…” as long as nothing is
 understood, then the text as it comes.
 
-Everything is local: capture by anna (`cpal`), transcription by whisper.cpp
-(“small” model, in the **voice language**, see below). Nothing leaves the
-machine but the text, which goes where a typed request would.
+Everything is local: capture by anna (`cpal`), transcription by Parakeet
+(NVIDIA's Parakeet TDT 0.6B v3, see below). Nothing leaves the machine but
+the text, which goes where a typed request would.
 
 ### The voice language
 
 The voice language is a setting of its own, separate from the interface's
 (“Voice language”, under “Voice” in the settings): you can speak French to
-an interface in English. It is whisper's language (`-l`) and the one the
-pilot answers in. Three kinds of choice:
+an interface in English. It is the one the pilot answers in; the
+transcription does not need it, Parakeet recognizes by itself which of its
+25 European languages is spoken. Three kinds of choice:
 
-| Choice | Whisper | Pilot |
-| --- | --- | --- |
-| Same as interface (default) | the interface language | the interface language |
-| Automatic detection | `-l auto`: whisper detects it | answers in the language of the request |
-| A language (English, Français…) | that language | that language |
-
-The warm whisper server keeps the language it was started with; if the
-setting changes, it is restarted at the next word. Forcing the language
-rather than detecting it is more reliable on short sentences.
+| Choice | Pilot |
+| --- | --- |
+| Same as interface (default) | the interface language |
+| Automatic detection | answers in the language of the request |
+| A language (English, Français…) | that language |
 
 ### Live text
 
-A whisper.cpp server stays loaded while you speak, and what has been said so
-far is transcribed again every half second; the final transcript, over the
-whole recording, replaces the provisional text.
+Parakeet stays loaded while you speak, and what has been said so far is
+transcribed again every half second; the final transcript, over the whole
+recording, replaces the provisional text.
 
-- It runs on the dedicated graphics card (Vulkan), chosen from
-  `vulkaninfo`: about 0.1 s per sentence on the RTX 3070, against nearly 2 s
-  on the processor. Without a dedicated card, the processor takes over and
-  the text follows the voice less closely.
-- It starts with the first word and stops after 10 minutes without use, so
-  that the dedicated card can go to sleep. The very first start of a
-  whisper.cpp version compiles its shaders (a dozen seconds: no live text
-  that time, the final transcript waits for the server); afterwards the
-  graphics driver's cache brings the start under a second.
-- If the server does not start, `whisper-cli` transcribes the recording at
-  the end, without live text.
+- It runs on the processor, in ONNX Runtime (the same as the wake word's
+  and Piper's): about 0.3 s for a sentence on bernanos's i7, six times
+  faster than whisper “small” there, and no graphics card needed. Unlike
+  Whisper, which always encodes 30 s of audio, it only encodes what was
+  said, and its TDT decoder skips silence and long sounds.
+- It is loaded with the first word (about 3 s) and dropped after 10 minutes
+  without use, to give back its memory (about 1 GB). A request said while
+  it loads waits for it at the end, without live text.
 
 To try without speaking: `anna voice simulate file.wav [--send]` runs a
 recording through exactly the same chain as the microphone, in real time
@@ -125,8 +119,9 @@ exupery), and to `karenine` otherwise; anna itself falls back on
 
 - `<word>.onnx`, its model, trained in `lab/wakeword-<word>/`;
 - `<word>.json`, how it is written and heard: `display` (shown in the bar
-  and the settings, and given to Whisper), `near` (how Whisper may write
-  it, folded: lowercase, no accents, “c” as “k”; within two letters counts),
+  and the settings), `near` (how the transcript may write it, one to
+  three words joined, folded: lowercase, no accents, “c” as “k”; within two
+  letters counts),
   `neighbours` (folded words that don't count even when near), `initials`
   (the letters it may start with; those of `near` by default) and
   `threshold`.
@@ -140,9 +135,9 @@ files.
   words, then the model specific to the word (~400 KB), which scores the
   last second and a half between 0 and 1.
 - Above the threshold (0.6; `ANNA_WAKE_THRESHOLD`), the last 2.5 seconds go
-  before the request. **Whisper must hear “Karénine” at the start** of the
-  first transcript; otherwise the turn stops silently (half a second of chip
-  in the bar). Once confirmed, the word is removed from the request.
+  before the request. **The first transcript must start with “Karénine”**;
+  otherwise the turn stops silently (half a second of chip in the bar).
+  Once confirmed, the word is removed from the request.
 - `anna wake-score file.wav` gives the scores step by step, to tune the
   threshold.
 - **The computer's sound is removed from the microphone.** The word and
@@ -175,25 +170,26 @@ clearly exceeds it; 1.2 s of silence after speech ends the request. Without
 speech within 6 s, listening stops on “nothing heard”. Stopped by hand
 before any speech, it transcribes nothing.
 
-Whisper “hears” things in silence and noise: subtitle credits (“Sous-titres
-réalisés par…”, “Thanks for watching”), markers like `[BLANK_AUDIO]`,
-`(musique)` or `*Bip*`. All of that is discarded.
+Parakeet has no prompt, so no list of words to steer it: a name it does
+not know comes out as it sounds. That matters for the wake word (above):
+its `near` forms are how Parakeet writes it, and when it is not confirmed,
+the journal (`anna: mot d'activation non confirmé : « … »`) shows what was
+written, to add to them.
 
-Whisper's initial prompt lists the project names and a few terms (Zed,
-Obsidian, NixOS…), in the voice language: without it, “karenine” becomes
-“Carnine”.
-
-The model: `ANNA_WHISPER_MODEL`, otherwise
-`~/.local/share/anna/whisper/ggml-small.bin`, linked by the NixOS
-configuration (a multilingual model: the `.en` models only know English).
-The dictation built into Claude Code stays available in terminal sessions;
-it is not used here: it only exists in its interface, and goes through a
-private Anthropic service.
+The model: `ANNA_PARAKEET_MODEL`, otherwise `~/.local/share/anna/parakeet/`,
+linked by the NixOS configuration: the int8 ONNX export of
+[onnx-asr](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx),
+four files — `nemo128.onnx` (16 kHz samples → NeMo's 128 log-mel bands),
+`encoder-model.int8.onnx` (FastConformer, 650 MB),
+`decoder_joint-model.int8.onnx` (the TDT decoder: the next token and how
+many frames to skip) and `vocab.txt`. The dictation built into Claude Code
+stays available in terminal sessions; it is not used here: it only exists
+in its interface, and goes through a private Anthropic service.
 
 | File | Role |
 | --- | --- |
 | `anna/src/claude/voice.rs` | Listening, end of sentence, live text, sending to the pilot. |
-| `anna/src/claude/whisper.rs` | The whisper.cpp server: card choice, language, start, stop. |
+| `anna/src/claude/parakeet.rs` | Parakeet: loading, features, encoder, TDT decoding. |
 
 ### Answers read aloud
 
@@ -237,5 +233,5 @@ and gives the synthesis time per sentence.
 ## Relations
 
 - Hosted by the [panels](#panels).
-- Its text follows the interface language, the pilot and whisper the voice
-  language (see [Languages](#languages)).
+- Its text follows the interface language, the pilot the voice language
+  (see [Languages](#languages)).

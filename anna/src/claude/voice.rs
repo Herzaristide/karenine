@@ -4,9 +4,9 @@
 //! bar's 🎙) starts listening; the end of speech stops it — or the same
 //! trigger again. Like Claude Code's own dictation, the transcript shows up
 //! while the user speaks: the recording so far is transcribed again every
-//! half second by a warm whisper.cpp server (whisper.rs). At the end, the
-//! whole is transcribed once more and either handed to the pilot (Super+V)
-//! or only shown (`anna voice dictate`). Nothing leaves the machine but the
+//! half second by Parakeet, kept loaded (parakeet.rs). At the end, the whole
+//! is transcribed once more and either handed to the pilot (Super+V) or only
+//! shown (`anna voice dictate`). Nothing leaves the machine but the
 //! transcript.
 //!
 //!   idle → listening → transcribing → idle
@@ -16,13 +16,13 @@
 //! long-enough silence after speech ends the turn. Simple, and enough for a
 //! request said into a laptop or a desk microphone.
 //!
-//! The model is a whisper.cpp ggml file: `ANNA_WHISPER_MODEL`, else
-//! `~/.local/share/anna/whisper/ggml-small.bin` (the NixOS configuration
-//! links it there).
+//! The model is a directory of ONNX files (parakeet.rs): `ANNA_PARAKEET_MODEL`,
+//! else `~/.local/share/anna/parakeet` (the NixOS configuration links it
+//! there).
 
+use super::parakeet;
 use super::pilot::Pilot;
 use super::wake::WakeWord;
-use super::whisper;
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -42,8 +42,6 @@ const END_SILENCE: f32 = 1.2;
 const NO_SPEECH: f32 = 6.0;
 /// …and never record longer than this.
 const MAX_LEN: f32 = 30.0;
-/// Whisper's input rate.
-const WHISPER_RATE: u32 = 16_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -160,9 +158,9 @@ impl Endpointer {
     }
 }
 
-/// Linear resampling to Whisper's 16 kHz.
+/// Linear resampling to the model's 16 kHz.
 pub fn resample(input: &[f32], from: u32) -> Vec<f32> {
-    resample_rate(input, from, WHISPER_RATE)
+    resample_rate(input, from, parakeet::RATE)
 }
 
 /// Linear resampling between any two rates.
@@ -244,65 +242,25 @@ pub fn read_wav(bytes: &[u8]) -> Option<(Vec<f32>, u32)> {
     None
 }
 
-pub fn model_path() -> PathBuf {
-    std::env::var_os("ANNA_WHISPER_MODEL")
+pub fn model_dir() -> PathBuf {
+    std::env::var_os("ANNA_PARAKEET_MODEL")
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            crate::paths::home_dir().join(".local/share/anna/whisper/ggml-small.bin")
-        })
+        .unwrap_or_else(|| crate::paths::home_dir().join(".local/share/anna/parakeet"))
 }
 
-/// What Whisper is known to "hear" in silence or noise — credits from the
-/// subtitles it was trained on. Never a request.
-const HALLUCINATIONS: [&str; 9] = [
-    "sous-titres réalisés par",
-    "sous-titrage",
-    "amara.org",
-    "merci d'avoir regardé",
-    "abonnez-vous",
-    "vocabulaire :",
-    "vocabulary:",
-    "thanks for watching",
-    "subtitles by",
-];
-
-/// whisper.cpp's text output, joined into one request. Its markers for
-/// non-speech (`[BLANK_AUDIO]`, `(musique)`…) and its known hallucinations
-/// are dropped.
-pub fn clean_transcript(raw: &str) -> String {
-    let text = clean_lines(raw);
-    let low = text.to_lowercase();
-    if HALLUCINATIONS.iter().any(|h| low.contains(h)) {
-        return String::new();
+fn load_model() -> Result<parakeet::Model, String> {
+    let dir = model_dir();
+    if !dir.join("encoder-model.int8.onnx").is_file() {
+        return Err(crate::i18n::tr_args(
+            "voice.no_model",
+            &[("path", &dir.display().to_string())],
+        ));
     }
-    text
-}
-
-fn clean_lines(raw: &str) -> String {
-    let mut out = String::new();
-    for line in raw.lines() {
-        let l = line.trim();
-        let l = if l.starts_with('[') && l.contains(']') && l.contains("-->") {
-            l.split_once(']').map(|x| x.1.trim()).unwrap_or(l)
-        } else {
-            l
-        };
-        let spoken = (l.starts_with('[') && l.ends_with(']'))
-            || (l.starts_with('(') && l.ends_with(')'))
-            || (l.len() > 1 && l.starts_with('*') && l.ends_with('*'));
-        if l.is_empty() || spoken {
-            continue;
-        }
-        if !out.is_empty() {
-            out.push(' ');
-        }
-        out.push_str(l);
-    }
-    out
+    parakeet::Model::load(&dir)
 }
 
 /// Lowercase, without accents, « c » written « k »: how the wake word is
-/// compared with whatever Whisper wrote for it.
+/// compared with whatever the model wrote for it.
 fn fold(word: &str) -> String {
     word.to_lowercase()
         .chars()
@@ -341,31 +299,51 @@ pub fn strip_wake(text: &str) -> Option<String> {
     strip_word(text, WakeWord::current())
 }
 
-/// The request after `wake`, if the transcript starts with it as Whisper
-/// writes it (Karénine, Karenin, Carénine…): within two letters of one of
+/// The request after `wake`, if the transcript starts with it, however the
+/// model wrote it (Karénine, Carénine, Exu Péry…): its first one to three
+/// words, if only spaces part them, joined and within two letters of one of
 /// its `near` forms, but none of its `neighbours` (Karine, Catherine) nor a
 /// word starting otherwise (Lénine).
 fn strip_word(text: &str, wake: &WakeWord) -> Option<String> {
     let t = text.trim_start();
-    let end = t
-        .find(|c: char| !c.is_alphabetic() && c != '-')
-        .unwrap_or(t.len());
-    let word = fold(&t[..end]);
     let shortest = wake
         .near
         .iter()
         .map(|w| w.chars().count())
         .min()
         .unwrap_or(0);
-    let near = wake.near.iter().any(|w| levenshtein(&word, w) <= 2);
-    let neighbour = wake.neighbours.contains(&word);
-    let initial = word
-        .chars()
-        .next()
-        .is_some_and(|c| wake.initials.contains(&c));
-    if !initial || word.chars().count() + 1 < shortest || !near || neighbour {
+    // Where each of the first words ends; punctuation ends the name.
+    let mut ends = Vec::new();
+    let mut at = 0;
+    while ends.len() < 3 {
+        let rest = &t[at..];
+        let len = rest
+            .find(|c: char| !c.is_alphabetic() && c != '-')
+            .unwrap_or(rest.len());
+        if len == 0 {
+            break;
+        }
+        at += len;
+        ends.push(at);
+        let gap = t[at..].len() - t[at..].trim_start_matches(' ').len();
+        if gap == 0 {
+            break;
+        }
+        at += gap;
+    }
+    let first = fold(&t[..*ends.first()?]);
+    if wake.neighbours.contains(&first)
+        || !first
+            .chars()
+            .next()
+            .is_some_and(|c| wake.initials.contains(&c))
+    {
         return None;
     }
+    let end = ends.into_iter().find(|&end| {
+        let word: String = fold(&t[..end]).chars().filter(|c| *c != ' ').collect();
+        word.chars().count() + 1 >= shortest && wake.near.iter().any(|w| levenshtein(&word, w) <= 2)
+    })?;
     let rest = t[end..].trim_start_matches(|c: char| !c.is_alphanumeric());
     let mut chars = rest.chars();
     Some(match chars.next() {
@@ -374,74 +352,12 @@ fn strip_word(text: &str, wake: &WakeWord) -> Option<String> {
     })
 }
 
-/// Words Whisper can't guess the spelling of: the project names, and the
-/// tools the pilot is asked about, and the wake word. Given as its initial
-/// prompt, they steer "Carnine" back to "karenine" and "Z" to "Zed".
-pub fn vocabulary() -> String {
-    let mut words: Vec<String> = vec![WakeWord::current().display.clone()];
-    words.extend(
-        super::desk::projects()
-            .into_iter()
-            .map(|p| p.name)
-            .filter(|n| n != "recherche"),
-    );
-    words.extend(
-        [
-            "Zed",
-            "anna",
-            "Claude",
-            "Obsidian",
-            "Hyprland",
-            "NixOS",
-            "workspace",
-        ]
-        .map(String::from),
-    );
-    crate::i18n::tr_in(
-        &crate::i18n::voice_lang(),
-        "whisper.vocabulary",
-        &[("words", &words.join(", "))],
-    )
-}
-
-/// Transcribe a WAV file with whisper.cpp, in the spoken language.
+/// Transcribe a 16-bit WAV file, loading the model for it.
 pub fn transcribe(wav_path: &std::path::Path) -> Result<String, String> {
-    let model = model_path();
-    if !model.is_file() {
-        return Err(crate::i18n::tr_args(
-            "voice.no_model",
-            &[("path", &model.display().to_string())],
-        ));
-    }
-    let threads = std::thread::available_parallelism()
-        .map(|n| n.get().min(8))
-        .unwrap_or(4)
-        .to_string();
-    let out = std::process::Command::new("whisper-cli")
-        .arg("-m")
-        .arg(&model)
-        .args([
-            "-l",
-            &crate::i18n::voice_lang(),
-            "-nt",
-            "-np",
-            "-t",
-            &threads,
-            "--prompt",
-            &vocabulary(),
-            "-f",
-        ])
-        .arg(wav_path)
-        .output()
-        .map_err(|e| format!("whisper-cli : {e}"))?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr)
-            .lines()
-            .last()
-            .map(str::to_string)
-            .unwrap_or_else(|| crate::i18n::tr("voice.whisper_failed")));
-    }
-    Ok(clean_transcript(&String::from_utf8_lossy(&out.stdout)))
+    let bytes = std::fs::read(wav_path).map_err(|e| format!("{} : {e}", wav_path.display()))?;
+    let (samples, rate) = read_wav(&bytes)
+        .ok_or_else(|| format!("WAV 16 bits illisible : {}", wav_path.display()))?;
+    load_model()?.transcribe(&resample(&samples, rate))
 }
 
 /// While speech goes on, the recording is transcribed again this often.
@@ -472,8 +388,8 @@ pub struct Voice {
     rt: tokio::runtime::Handle,
     /// Set to end the current recording now.
     stop: Arc<AtomicBool>,
-    /// The warm whisper.cpp server, when running (whisper.rs).
-    server: Arc<Mutex<Option<whisper::Server>>>,
+    /// The model, while loaded (parakeet.rs).
+    model: Arc<Mutex<Option<parakeet::Model>>>,
     starting: Arc<AtomicBool>,
     tx: broadcast::Sender<String>,
     pilot: Arc<Pilot>,
@@ -498,22 +414,22 @@ impl Voice {
             preroll: Mutex::new(None),
             rt: tokio::runtime::Handle::current(),
             stop: Arc::new(AtomicBool::new(false)),
-            server: Arc::new(Mutex::new(None)),
+            model: Arc::new(Mutex::new(None)),
             starting: Arc::new(AtomicBool::new(false)),
             tx,
             pilot,
         });
-        // An idle server lets the GPU sleep.
+        // An idle model gives its memory back.
         let weak = Arc::downgrade(&me);
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(60));
             loop {
                 tick.tick().await;
                 let Some(me) = weak.upgrade() else { break };
-                let mut slot = lock(&me.server);
+                let mut slot = lock(&me.model);
                 if slot
                     .as_ref()
-                    .is_some_and(|s| s.last_use.elapsed() > whisper::IDLE)
+                    .is_some_and(|s| s.last_use.elapsed() > parakeet::IDLE)
                 {
                     *slot = None;
                 }
@@ -577,40 +493,27 @@ impl Voice {
         }
     }
 
-    /// Have the warm server running (start it in the background if not).
+    /// Have the model loaded (load it in the background if not).
     fn warm(&self) {
-        let model = model_path();
-        if !model.is_file() || self.starting.swap(true, Ordering::SeqCst) {
+        if lock(&self.model).is_some() || self.starting.swap(true, Ordering::SeqCst) {
             return;
         }
-        {
-            let mut slot = lock(&self.server);
-            // A server started for another language is restarted.
-            if slot
-                .as_mut()
-                .is_some_and(|s| s.alive() && s.lang == crate::i18n::voice_lang())
-            {
-                self.starting.store(false, Ordering::SeqCst);
-                return;
-            }
-            *slot = None;
-        }
-        let server = Arc::clone(&self.server);
+        let slot = Arc::clone(&self.model);
         let starting = Arc::clone(&self.starting);
         std::thread::spawn(move || {
-            match whisper::Server::start(&model, &vocabulary(), &crate::i18n::voice_lang()) {
-                Ok(s) => *lock(&server) = Some(s),
+            match load_model() {
+                Ok(m) => *lock(&slot) = Some(m),
                 Err(e) => eprintln!("anna: voix : {e}"),
             }
             starting.store(false, Ordering::SeqCst);
         });
     }
 
-    /// Transcribe with the warm server if it is up. `None`: it isn't.
+    /// Transcribe with the loaded model. `None`: it isn't loaded.
     fn transcribe_warm(&self, samples: &[f32], rate: u32) -> Option<Result<String, String>> {
-        let mut slot = lock(&self.server);
-        let server = slot.as_mut()?;
-        Some(server.transcribe(&wav(&resample(samples, rate), WHISPER_RATE)))
+        let mut slot = lock(&self.model);
+        let model = slot.as_mut()?;
+        Some(model.transcribe(&resample(samples, rate)))
     }
 
     /// Enter listening (false if a turn is already under way).
@@ -642,7 +545,7 @@ impl Voice {
         handle: &tokio::runtime::Handle,
     ) {
         self.partial.store(false, Ordering::SeqCst);
-        // Started by the wake word: Whisper must have heard it first, or the
+        // Started by the wake word: the model must have heard it first, or the
         // detector was wrong and the turn ends in silence.
         let result = if self.woken.swap(false, Ordering::SeqCst) {
             match result {
@@ -699,7 +602,7 @@ impl Voice {
     }
 
     /// The wake word was heard (wake.rs): listen to the request, with the
-    /// word's audio in front so that Whisper confirms it.
+    /// word's audio in front so that the transcript confirms it.
     pub fn woken(self: &Arc<Self>, preroll: Vec<f32>, rate: u32) {
         if !self.begin(true) {
             return;
@@ -891,8 +794,8 @@ impl Voice {
         }
 
         self.set_phase(Phase::Transcribing);
-        // A server still starting is worth waiting for: it is faster than
-        // a cold whisper-cli run.
+        // A model still loading is waited for; one that failed to load is
+        // tried once more, here.
         let deadline = Instant::now() + Duration::from_secs(45);
         while self.starting.load(Ordering::SeqCst) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(50));
@@ -900,11 +803,9 @@ impl Voice {
         if let Some(result) = self.transcribe_warm(&all, rate) {
             return result.map(Some);
         }
-        let path = std::env::temp_dir().join(format!("anna-voix-{}.wav", std::process::id()));
-        std::fs::write(&path, wav(&resample(&all, rate), WHISPER_RATE))
-            .map_err(|e| format!("enregistrement : {e}"))?;
-        let text = transcribe(&path);
-        let _ = std::fs::remove_file(&path);
+        let mut model = load_model()?;
+        let text = model.transcribe(&resample(&all, rate));
+        *lock(&self.model) = Some(model);
         text.map(Some)
     }
 }
@@ -982,25 +883,6 @@ mod tests {
         assert_eq!(w.len(), 44 + 6);
     }
 
-    #[test]
-    fn transcripts_drop_non_speech_markers() {
-        assert_eq!(clean_transcript(" Baisse le son.\n"), "Baisse le son.");
-        assert_eq!(clean_transcript("[BLANK_AUDIO]\n"), "");
-        assert_eq!(clean_transcript("(musique)\n Ouvre Zed.\n"), "Ouvre Zed.");
-        assert_eq!(
-            clean_transcript("[00:00:00.000 --> 00:00:02.000]  Bonjour.\n"),
-            "Bonjour."
-        );
-        // What Whisper "hears" in silence is never a request.
-        assert_eq!(
-            clean_transcript(" Sous-titres réalisés par la communauté d'Amara.org\n"),
-            ""
-        );
-        assert_eq!(clean_transcript(" Merci d'avoir regardé !\n"), "");
-        // Noise it names between asterisks.
-        assert_eq!(clean_transcript(" *Bip*\n"), "");
-    }
-
     /// A wake word as the package ships it (models/wake/<name>.json).
     fn word(name: &str) -> WakeWord {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("models/wake");
@@ -1015,7 +897,7 @@ mod tests {
             strip_word("Karénine, baisse le son.", &k).as_deref(),
             Some("Baisse le son.")
         );
-        // How Whisper writes it without context.
+        // How the model writes it without context.
         assert_eq!(
             strip_word("Karenin. ouvre Zed", &k).as_deref(),
             Some("Ouvre Zed")
@@ -1054,6 +936,12 @@ mod tests {
             Some("Baisse le son.")
         );
         assert_eq!(strip_word("Bernanos, baisse le son.", &e), None);
+        // A name the model splits in two.
+        assert_eq!(
+            strip_word("Exu Péry, baisse le son.", &e).as_deref(),
+            Some("Baisse le son.")
+        );
+        assert_eq!(strip_word("Exu, baisse le son.", &e), None);
 
         // Without its JSON, a word is heard only as its name.
         let z = word("absent");

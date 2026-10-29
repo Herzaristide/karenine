@@ -20,7 +20,7 @@ Everything starts from a single bar at the bottom of the screen. Type, and it
 searches **applications, files, settings, wallpapers, notes and the web** in
 one ranked list. Ask a question, and the **pilot** answers. Say “Karénine”,
 and it listens: your voice is transcribed on your own machine by
-whisper.cpp, no audio is sent anywhere.
+Parakeet, no audio is sent anywhere.
 
 Click the snowflake and the bar grows into a capsule of widgets.
 

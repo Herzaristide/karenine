@@ -16,9 +16,9 @@
 //! (`WakeWord`).
 //!
 //! A score over the threshold hands the last seconds of audio to the voice
-//! (voice.rs), which listens to the request with them in front: Whisper must
-//! hear the word at the start of the transcript, or the turn is dropped in
-//! silence. A false trigger thus costs one transcription, never a request.
+//! (voice.rs), which listens to the request with them in front: the word
+//! must start the transcript, or the turn is dropped in silence. A false
+//! trigger thus costs one transcription, never a request.
 //!
 //! The microphone stays open only while the wake word is on (`anna voice wake
 //! on|off`, remembered across restarts). Nothing leaves the machine.
@@ -73,9 +73,9 @@ pub struct WakeWord {
     /// Its model: `<name>.onnx`.
     #[serde(skip)]
     pub name: String,
-    /// As shown, and given to Whisper: « Karénine ».
+    /// As shown: « Karénine ».
     pub display: String,
-    /// How Whisper may write it, folded (voice.rs `fold`): within two
+    /// How the transcript may write it, folded (voice.rs `fold`): within two
     /// letters of one of these, it was heard.
     pub near: Vec<String>,
     /// Its neighbours, folded, which don't count even when near.

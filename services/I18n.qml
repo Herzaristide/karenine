@@ -19,9 +19,9 @@ import Quickshell.Io
 // reçoit sa langue de Nix.
 //
 // La langue de la voix est un réglage à part (on peut parler français à une
-// interface en anglais) : celle de whisper et des réponses du pilote, lue par
-// anna dans le même fichier. Vide : celle de l'interface ; "auto" : whisper la
-// détecte.
+// interface en anglais) : celle des réponses du pilote, lue par anna dans le
+// même fichier (la transcription, Parakeet, reconnaît seule la langue dite).
+// Vide : celle de l'interface ; "auto" : celle de la demande.
 Singleton {
     id: i18n
 
