@@ -2,5 +2,5 @@
   "display": "Bernanos",
   "near": ["bernanos", "bernano"],
   "neighbours": ["bernard", "bernadette"],
-  "threshold": 0.6
+  "threshold": 0.5
 }
