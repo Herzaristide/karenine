@@ -4,9 +4,9 @@
 //! `~/.config/karenine/locale.json` (`{"lang": "en", "voice": "fr"}`):
 //! - `lang`, the interface's: the messages anna shows on screen (errors,
 //!   alerts). English without one; `KARENINE_LANG` overrides it.
-//! - `voice`, the one spoken to the pilot: whisper's language and the one the
-//!   pilot answers in. Empty: the interface's; `auto`: whisper detects it and
-//!   the pilot answers in whatever was said.
+//! - `voice`, the one spoken to the pilot: the one it answers in (the
+//!   transcription, Parakeet, detects what is said by itself). Empty: the
+//!   interface's; `auto`: the pilot answers in whatever was said.
 //!
 //! The messages live in the shell's dictionaries, `i18n/<lang>.json` under
 //! `anna.*` keys: the same files the QML reads, so a language added there
@@ -45,7 +45,7 @@ pub fn lang() -> String {
         .unwrap_or_else(|| FALLBACK.into())
 }
 
-/// The spoken language, as whisper names it: `en`, `fr`… or `auto`.
+/// The spoken language, as ISO 639-1: `en`, `fr`… or `auto`.
 pub fn voice_lang() -> String {
     pref("voice").unwrap_or_else(lang)
 }
@@ -73,16 +73,6 @@ pub fn tr(key: &str) -> String {
 /// `tr`, its `{name}` placeholders replaced from `args`.
 pub fn tr_args(key: &str, args: &[(&str, &str)]) -> String {
     translate(&dir(), &lang(), key, args)
-}
-
-/// `tr_args` in a given language (`auto` meaning the interface's).
-pub fn tr_in(lang_code: &str, key: &str, args: &[(&str, &str)]) -> String {
-    let l = if lang_code == AUTO {
-        lang()
-    } else {
-        lang_code.to_string()
-    };
-    translate(&dir(), &l, key, args)
 }
 
 fn dir() -> PathBuf {

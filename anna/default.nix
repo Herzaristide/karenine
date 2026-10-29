@@ -78,18 +78,15 @@ pkgs.rustPlatform.buildRustPackage {
     #     → the Nextcloud account's app password, kept in the Secret
     #       Service (cloud/mod.rs); xdg-open opens its login page, date
     #       (coreutils) gives the pilot's agenda in local time
-    #   whisper-server, whisper-cli (whisper-cpp, Vulkan build), vulkaninfo
-    #   (vulkan-tools)
-    #     → transcribing what is said to the pilot, live (claude/voice.rs,
-    #       claude/whisper.rs): Vulkan runs on the discrete GPU whatever its
-    #       vendor (NVIDIA here, AMD on gary), and on the CPU without one. The
-    #       model file is provided by the NixOS configuration.
     # The icon theme recoloured to the accent (src/icons.rs): Reversal, read in
     # place from the store through ANNA_ICON_SOURCE.
     # The wake words (claude/wake.rs): openWakeWord's two shared models, and
     # each word's own model trained in lab/wakeword-<word>, with how it is
     # written and heard (<word>.json). ONNX
     # Runtime is loaded at run time (ort's load-dynamic).
+    # What is said to the pilot is transcribed by Parakeet (claude/parakeet.rs),
+    # in the same ONNX Runtime; its files are provided by the NixOS
+    # configuration.
     mkdir -p "$out/share/anna/wake"
     cp ${melspectrogram} "$out/share/anna/wake/melspectrogram.onnx"
     cp ${embedding} "$out/share/anna/wake/embedding_model.onnx"
@@ -128,8 +125,6 @@ pkgs.rustPlatform.buildRustPackage {
             libnotify
             openssh
             systemd
-            (whisper-cpp.override { vulkanSupport = true; })
-            vulkan-tools
             libsecret
           ]
         )

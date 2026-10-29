@@ -213,7 +213,7 @@ async fn run_daemon(args: &[String]) {
     // answers read aloud (Piper voices, local).
     let speech = claude::speech::Speech::new();
     let pilot = claude::pilot::Pilot::new(speech);
-    // Speaking to the pilot (whisper.cpp, local).
+    // Speaking to the pilot (Parakeet, local).
     let voice = claude::voice::Voice::new(Arc::clone(&pilot));
     // Recording the microphone and the screen (recorder.rs).
     let recorder = recorder::Recorder::new();

@@ -430,7 +430,7 @@ Item {
                     }
                 }
 
-                // La langue parlée (whisper, réponses du pilote) : à part de
+                // La langue parlée (réponses du pilote) : à part de
                 // celle de l'interface. ‹ › passent d'un choix à l'autre.
                 Rectangle {
                     id: voiceLangRow

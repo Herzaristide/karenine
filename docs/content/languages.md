@@ -13,7 +13,7 @@ window:
 | Setting | Where | What it changes |
 | --- | --- | --- |
 | **Interface language** | its own section, one row per language | Every text of the shell, the lock screen, and the messages anna shows (errors, notices). Dates follow it. |
-| **Voice language** | under “Voice”, ‹ › to change | Whisper's language and the one the pilot answers in. “Same as interface” by default, or “Automatic detection”, or a given language. |
+| **Voice language** | under “Voice”, ‹ › to change | The one the pilot answers in (Parakeet recognizes the spoken one by itself). “Same as interface” by default, or “Automatic detection”, or a given language. |
 
 They are separate because they often differ: you can speak French to an
 interface in English. The interface is in **English** by default.
@@ -25,7 +25,7 @@ the lock screen and anna:
 { "lang": "en", "voice": "fr" }
 ```
 
-`voice` empty means the interface language; `auto` lets whisper detect it.
+`voice` empty means the interface language; `auto` answers in the language of the request.
 The interface language can also be typed in the bar's search
 (“language”): Enter moves to the next one.
 
@@ -90,14 +90,14 @@ FIFO (`lecteur`, `reglages`, `ouvrir`…), the pilot's tools and system prompt
 ## Adding a language
 
 1. Copy `i18n/en.json` to `i18n/<code>.json` (`de.json`, `es.json`…), using
-   the language's ISO 639-1 code: it is also whisper's code for it.
+   the language's ISO 639-1 code.
 2. Set `_meta.name` (“Deutsch”) and `_meta.locale` (`de_DE`).
 3. Translate the values, keeping keys and `{placeholders}` as they are.
 4. Run `tests/i18n-check.sh`: it lists what is still missing in each
    language (missing keys fall back to English, so this does not fail).
 
 Nothing else: the language shows up by itself in both settings, the shell
-loads it live (the files are watched), and anna and whisper use it too —
+loads it live (the files are watched), and anna uses it too —
 no rebuild.
 
 ## The greeter
