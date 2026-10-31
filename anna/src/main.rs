@@ -39,7 +39,7 @@
 //!   - servers  : tailnet devices, stats over ssh (servers_watch / servers_list)
 //!   - phone    : KDE Connect phones (phone_watch / phone_action)
 //!   - gesture  : webcam control (gesture_get/set/toggle/watch)
-//!   - pilot    : the desk pilot, its voice and speech (pilot_*/voice_*/speech_*)
+//!   - pilot    : the desk pilot and its voice (pilot_*/voice_*)
 //!   - record   : microphone and screen recordings (record_toggle/stop/get/watch)
 //!     and the sound takes (record_peaks/play/pause)
 
@@ -120,11 +120,6 @@ async fn main() {
         // MCP server of the pilot's desk tools (started by Claude Code).
         Some("mcp") => {
             claude::mcp::run();
-        }
-        // Speak a text with the chosen voice, without the daemon
-        // (claude/speech.rs).
-        Some("say") => {
-            claude::speech::say_offline(&args);
         }
         // Scores of the wake word over a WAV, 80 ms apart (claude/wake.rs).
         Some("wake-score") => {
@@ -209,10 +204,8 @@ async fn run_daemon(args: &[String]) {
     let verbose = std::env::var_os("ANNA_GESTURE_DEBUG").is_some();
     let gesture = gesture::Gesture::start(&paths::accent_dir(), verbose, false);
 
-    // The pilot: the conversation bar's requests for the desktop, its
-    // answers read aloud (Piper voices, local).
-    let speech = claude::speech::Speech::new();
-    let pilot = claude::pilot::Pilot::new(speech);
+    // The pilot: the conversation bar's requests for the desktop.
+    let pilot = claude::pilot::Pilot::new();
     // Speaking to the pilot (Parakeet, local).
     let voice = claude::voice::Voice::new(Arc::clone(&pilot));
     // Recording the microphone and the screen (recorder.rs).
@@ -607,7 +600,7 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
 
         // ── Pilot ────────────────────────────────────────────────────────
         Command::PilotAsk { text, clipboard } => {
-            write_result(&mut writer, ctx.pilot.ask(&text, clipboard, false).await).await;
+            write_result(&mut writer, ctx.pilot.ask(&text, clipboard).await).await;
         }
 
         Command::PilotWatch => {
@@ -664,27 +657,6 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             write_result(&mut writer, Ok(())).await;
         }
 
-        Command::SpeechSet { mode, voice } => {
-            let result = match mode.as_deref().map(|m| (m, claude::speech::Mode::parse(m))) {
-                Some((m, None)) => Err(format!("mode inconnu : {m} (off, voice, always)")),
-                parsed => {
-                    ctx.pilot.speech().set(parsed.and_then(|(_, m)| m), voice);
-                    Ok(())
-                }
-            };
-            write_result(&mut writer, result).await;
-        }
-
-        Command::SpeechSay { text } => {
-            ctx.pilot.speech().say(&text);
-            write_result(&mut writer, Ok(())).await;
-        }
-
-        Command::SpeechStop => {
-            ctx.pilot.speech().stop();
-            write_result(&mut writer, Ok(())).await;
-        }
-
         Command::VoiceSimulate { path, send } => {
             let result = match tokio::fs::read(&path)
                 .await
@@ -718,6 +690,17 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             write_result(&mut writer, Ok(())).await;
         }
 
+        // The screen goes back as an image, beside the text (claude/mcp.rs).
+        Command::Desk { tool, .. } if tool == "voir_ecran" => {
+            let result = tokio::task::spawn_blocking(claude::desk::screen_image)
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()));
+            let reply = match result {
+                Ok((text, image)) => serde_json::json!({ "ok": true, "text": text, "image": image }),
+                Err(text) => serde_json::json!({ "ok": false, "text": text }),
+            };
+            let _ = write_line(&mut writer, &reply.to_string()).await;
+        }
         Command::Desk { tool, args } => {
             let result = run_desk(&ctx, &tool, &args).await;
             let reply = match result {

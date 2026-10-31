@@ -29,7 +29,13 @@ tab:
 
 ## Metronome
 
-- Widget: `widgets/Metronome.qml`.
+- Widget: `widgets/Metronome.qml`, the face of `services/Tempo.qml`, which
+  holds the tempo, the measure and the session: it keeps beating with the
+  tab closed.
+- Control without the widget: the pilot's `metronome` tool (« lance le
+  métronome à 90 », « arrête le métronome »), or the [IPC](#shell):
+  `echo "metronome:lancer:120:4" > /tmp/qs-panel.fifo`, `metronome:arreter`,
+  `metronome:basculer` (tempo and beats per bar optional).
 - Backend: `anna`'s `metronome` service — sample-accurate `cpal` output
   stream, driven by `{"action":…}` lines, `{"beat":<n>}` events.
 

@@ -685,10 +685,11 @@ PanelWindow { // qmllint disable uncreatable-type
             answer.shown = false;
             answer.notice = "";
         }
-        // Le temps de lire : plus long pour une longue réponse. Une question
-        // du pilote reste une minute, le temps d'y répondre.
+        // Le temps de lire : plus long pour une longue réponse (une explication
+        // peut tenir quinze lignes). Une question du pilote reste une minute,
+        // le temps d'y répondre.
         function hideLater(length) {
-            hideTimer.interval = bar.asking ? 60000 : Math.min(20000, 5000 + 45 * length);
+            hideTimer.interval = bar.asking ? 60000 : Math.min(45000, 5000 + 45 * length);
             if (!hover.hovered)
                 hideTimer.restart();
         }
@@ -1198,8 +1199,9 @@ PanelWindow { // qmllint disable uncreatable-type
             radius: Theme.radius
             color: Theme.bgDeep
             border.width: 1
-            border.color: bar.glowing ? Qt.alpha(Theme.accentColor, bar.voiceOn ? 0.5 + 0.5 * bar.level : 0.45)
-                                      : Theme.dividerColor
+            border.color: bar.glowing && !Pilot.voiceWaking
+                          ? Qt.alpha(Theme.accentColor, bar.voiceOn ? 0.5 + 0.5 * bar.level : 0.45)
+                          : Theme.dividerColor
             Behavior on border.color { ColorAnimation { duration: 240; easing.type: Easing.OutCubic } }
         }
 
@@ -1243,10 +1245,10 @@ PanelWindow { // qmllint disable uncreatable-type
             width: 28
             height: 28
 
-            // Transcription ou pilote au travail : il tourne doucement. Pas
-            // barre cachée : personne ne le voit.
+            // Écoute, transcription ou pilote au travail : il tourne
+            // doucement. Pas barre cachée : personne ne le voit.
             readonly property bool turning: bar.shown
-                                            && (Pilot.voicePhase === "transcribing" || Pilot.pilotBusy)
+                                            && (Pilot.voicePhase !== "idle" || Pilot.pilotBusy)
             // Revient droit une fois le travail fini.
             onTurningChanged: if (!turning) settle.restart()
 
@@ -1594,26 +1596,6 @@ PanelWindow { // qmllint disable uncreatable-type
                     NumberAnimation { target: ghost; property: "anchors.verticalCenterOffset"; from: 0; to: -22; duration: 380; easing.type: Easing.OutCubic }
                     NumberAnimation { target: ghost; property: "opacity"; from: 1; to: 0; duration: 380; easing.type: Easing.OutCubic }
                 }
-            }
-
-            // Ce qu'anna comprend, en direct ; les derniers mots gagnent
-            // quand ça ne tient plus.
-            Text {
-                anchors.verticalCenter: parent.verticalCenter
-                width: parent.width
-                opacity: bar.voiceOn ? 1 : 0
-                x: bar.voiceOn ? 0 : -10
-                Behavior on opacity { NumberAnimation { duration: 200 } }
-                Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
-                elide: Text.ElideLeft
-                text: Pilot.voiceText.length > 0 ? Pilot.voiceText
-                    : Pilot.voicePhase === "listening" ? I18n.tr("voice.listening") : I18n.tr("voice.transcribing")
-                font.family: bar.uiFont
-                font.pixelSize: 15
-                font.weight: Font.Medium
-                color: Pilot.voicePartial || Pilot.voicePhase === "transcribing"
-                       ? Theme.textSecondary : Theme.textPrimary
-                Behavior on color { ColorAnimation { duration: 200 } }
             }
         }
     }

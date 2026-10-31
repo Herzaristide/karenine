@@ -1,6 +1,6 @@
 {
   "display": "Exupéry",
-  "near": ["exupery", "saint-exupery"],
+  "near": ["exupery", "saint-exupery", "exupe", "expe"],
   "neighbours": [],
   "threshold": 0.5
 }

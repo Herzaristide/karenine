@@ -26,3 +26,4 @@ singleton Chalk 1.0 Chalk.qml
 singleton Recorder 1.0 Recorder.qml
 singleton Cloud 1.0 Cloud.qml
 singleton Agenda 1.0 Agenda.qml
+singleton Tempo 1.0 Tempo.qml

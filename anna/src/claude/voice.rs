@@ -147,6 +147,11 @@ impl Endpointer {
         self.speaking
     }
 
+    /// How long it has been quiet since the last loud frame (seconds).
+    pub fn silence(&self) -> f32 {
+        self.silence
+    }
+
     /// The last frame fed was speech.
     pub fn in_speech(&self) -> bool {
         self.speaking && self.silence == 0.0
@@ -158,30 +163,115 @@ impl Endpointer {
     }
 }
 
-/// Linear resampling to the model's 16 kHz.
+/// Resampling to the model's 16 kHz.
 pub fn resample(input: &[f32], from: u32) -> Vec<f32> {
     resample_rate(input, from, parakeet::RATE)
 }
 
-/// Linear resampling between any two rates.
+/// Resampling between any two rates.
 pub fn resample_rate(input: &[f32], from: u32, to: u32) -> Vec<f32> {
-    if from == to || input.is_empty() {
-        return input.to_vec();
-    }
-    let ratio = from as f64 / to as f64;
-    let n = (input.len() as f64 / ratio) as usize;
-    (0..n)
-        .map(|i| {
-            let x = i as f64 * ratio;
-            let i0 = x.floor() as usize;
-            let i1 = (i0 + 1).min(input.len() - 1);
-            let t = (x - i0 as f64) as f32;
-            input[i0] * (1.0 - t) + input[i1] * t
-        })
-        .collect()
+    let mut r = Resampler::new(from, to);
+    let mut out = Vec::with_capacity((input.len() as u64 * to as u64 / from as u64) as usize);
+    r.push(input, &mut out);
+    r.finish(&mut out);
+    out
 }
 
-/// 16-bit mono PCM WAV.
+/// Zero crossings of the sinc on each side of a resampled point.
+const SINC_ZEROS: f64 = 8.0;
+
+/// Band-limited resampling (Hann-windowed sinc), fed piece by piece: the
+/// microphone's 48 kHz interpolated straight to 16 kHz would fold
+/// everything above 8 kHz back over the voice. Only the input still needed
+/// is kept.
+pub struct Resampler {
+    from: u64,
+    to: u64,
+    /// Cut-off, in cycles per input sample.
+    cutoff: f64,
+    /// Half the kernel, in input samples.
+    half: i64,
+    input: Vec<f32>,
+    /// Index of `input[0]` since the start.
+    base: i64,
+    produced: u64,
+}
+
+impl Resampler {
+    pub fn new(from: u32, to: u32) -> Self {
+        let cutoff = 0.5 * (to as f64 / from as f64).min(1.0) * 0.95;
+        Resampler {
+            from: from as u64,
+            to: to as u64,
+            cutoff,
+            half: (SINC_ZEROS / (2.0 * cutoff)).ceil() as i64,
+            input: Vec::new(),
+            base: 0,
+            produced: 0,
+        }
+    }
+
+    /// Where output sample `j` falls in the input.
+    fn at(&self, j: u64) -> f64 {
+        j as f64 * self.from as f64 / self.to as f64
+    }
+
+    fn sample(&self, j: u64) -> f32 {
+        use std::f64::consts::PI;
+        let x = self.at(j);
+        let c = x.floor() as i64;
+        let (mut acc, mut sum) = (0f64, 0f64);
+        for k in (c - self.half + 1).max(self.base)..=(c + self.half) {
+            let Some(&v) = self.input.get((k - self.base) as usize) else {
+                break;
+            };
+            let t = x - k as f64;
+            let arg = PI * 2.0 * self.cutoff * t;
+            let sinc = if arg == 0.0 { 1.0 } else { arg.sin() / arg };
+            let w = sinc * (0.5 + 0.5 * (PI * t / self.half as f64).cos());
+            acc += v as f64 * w;
+            sum += w;
+        }
+        // Normalised: unity gain, at the edges too.
+        if sum == 0.0 {
+            0.0
+        } else {
+            (acc / sum) as f32
+        }
+    }
+
+    /// Add input; the output samples it completes go to `out`.
+    pub fn push(&mut self, input: &[f32], out: &mut Vec<f32>) {
+        if self.from == self.to {
+            out.extend_from_slice(input);
+            return;
+        }
+        self.input.extend_from_slice(input);
+        let end = self.base + self.input.len() as i64;
+        while (self.at(self.produced).floor() as i64) + self.half < end {
+            out.push(self.sample(self.produced));
+            self.produced += 1;
+        }
+        let keep_from = (self.at(self.produced).floor() as i64 - self.half + 1).max(self.base);
+        self.input.drain(..(keep_from - self.base) as usize);
+        self.base = keep_from;
+    }
+
+    /// The input is over: its last samples, with what there is.
+    pub fn finish(&mut self, out: &mut Vec<f32>) {
+        if self.from == self.to {
+            return;
+        }
+        let total = (self.base as u64 + self.input.len() as u64) * self.to / self.from;
+        while self.produced < total {
+            out.push(self.sample(self.produced));
+            self.produced += 1;
+        }
+    }
+}
+
+/// 16-bit mono PCM WAV, for the tests.
+#[cfg(test)]
 pub fn wav(samples: &[f32], rate: u32) -> Vec<u8> {
     let data_len = (samples.len() * 2) as u32;
     let mut out = Vec::with_capacity(44 + data_len as usize);
@@ -293,25 +383,54 @@ fn levenshtein(a: &str, b: &str) -> usize {
     row[b.len()]
 }
 
+/// Words the transcript may hold before the wake word: the audio kept from
+/// before the detection often starts with the end of something else (« Euh,
+/// Exupéry… »).
+const WAKE_LEAD: usize = 2;
+/// A partial transcript of this many words without the wake word: the
+/// detector was wrong. Shorter, the word may be there but not written yet.
+const WAKE_GIVE_UP: usize = WAKE_LEAD + 3;
+
 /// The request after the wake word of this machine, if the transcript starts
 /// with it.
 pub fn strip_wake(text: &str) -> Option<String> {
     strip_word(text, WakeWord::current())
 }
 
-/// The request after `wake`, if the transcript starts with it, however the
-/// model wrote it (Karénine, Carénine, Exu Péry…): its first one to three
-/// words, if only spaces part them, joined and within two letters of one of
-/// its `near` forms, but none of its `neighbours` (Karine, Catherine) nor a
-/// word starting otherwise (Lénine).
+/// `text` without its first word, capitalised again.
+fn drop_first_word(text: &str) -> String {
+    let rest = text
+        .trim_start()
+        .split_once(char::is_whitespace)
+        .map_or("", |(_, r)| r)
+        .trim_start_matches(|c: char| !c.is_alphanumeric());
+    let mut chars = rest.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+/// The request after `wake`, if it is among the transcript's first words
+/// (`WAKE_LEAD` may come before it).
 fn strip_word(text: &str, wake: &WakeWord) -> Option<String> {
-    let t = text.trim_start();
-    let shortest = wake
-        .near
-        .iter()
-        .map(|w| w.chars().count())
-        .min()
-        .unwrap_or(0);
+    let mut t = text.trim_start();
+    for _ in 0..=WAKE_LEAD {
+        if let Some(rest) = strip_first(t, wake) {
+            return Some(rest);
+        }
+        // The next word, past its punctuation.
+        let end = t.find(char::is_whitespace)?;
+        t = t[end..].trim_start();
+    }
+    None
+}
+
+/// The request after `wake`, if `t` starts with it, however the model wrote
+/// it (Karénine, Carénine, Exu Péry…): its first one to three words, if only
+/// spaces part them, joined and close to one of its `near` forms, but none of its `neighbours` (Karine, Catherine) nor a word
+/// starting otherwise (Lénine).
+fn strip_first(t: &str, wake: &WakeWord) -> Option<String> {
     // Where each of the first words ends; punctuation ends the name.
     let mut ends = Vec::new();
     let mut at = 0;
@@ -342,7 +461,12 @@ fn strip_word(text: &str, wake: &WakeWord) -> Option<String> {
     }
     let end = ends.into_iter().find(|&end| {
         let word: String = fold(&t[..end]).chars().filter(|c| *c != ' ').collect();
-        word.chars().count() + 1 >= shortest && wake.near.iter().any(|w| levenshtein(&word, w) <= 2)
+        let len = word.chars().count();
+        wake.near.iter().any(|w| {
+            let n = w.chars().count();
+            // Two letters off for a long form, one for a short one (Expé).
+            len + 1 >= n && levenshtein(&word, w) <= if n >= 6 { 2 } else { 1 }
+        })
     })?;
     let rest = t[end..].trim_start_matches(|c: char| !c.is_alphanumeric());
     let mut chars = rest.chars();
@@ -366,6 +490,48 @@ const PARTIAL_EVERY: Duration = Duration::from_millis(500);
 /// soft ending stays under the threshold) already holds the whole request:
 /// it is kept as the final one instead of transcribing everything again.
 const FINAL_MARGIN: f32 = 0.4;
+/// A transcript that ends a sentence (. ? !) ends the turn after this much
+/// silence, instead of END_SILENCE: Parakeet punctuates, and a request said
+/// in one go needn't wait as long as one left hanging (« ouvre… euh… »).
+const QUICK_END: f32 = 0.5;
+/// After this much silence the request is likely over: the pilot's context
+/// block is built then, while the transcript is finished.
+const CONTEXT_AT: f32 = 0.3;
+
+/// The partial transcript `last` covers the recording up to `end`.
+fn covers(last: &Option<(usize, String)>, end: usize) -> bool {
+    last.as_ref().is_some_and(|(covered, _)| *covered >= end)
+}
+
+/// The request a partial transcript holds ends a sentence.
+fn ends_sentence(text: &str) -> bool {
+    text.trim_end().ends_with(['.', '?', '!', '…'])
+}
+
+/// A partial transcript: how many samples it covered, and the text (`None`:
+/// no model yet).
+type Partial = (usize, Option<Result<String, String>>);
+
+/// The recording so far, transcribed on a thread of its own: the end of
+/// speech is still watched while a pass runs.
+fn spawn_partials(
+    model: Arc<Mutex<Option<parakeet::Model>>>,
+) -> (
+    std::sync::mpsc::Sender<Vec<f32>>,
+    std::sync::mpsc::Receiver<Partial>,
+) {
+    let (req_tx, req_rx) = std::sync::mpsc::channel::<Vec<f32>>();
+    let (res_tx, res_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        while let Ok(samples) = req_rx.recv() {
+            let text = lock(&model).as_mut().map(|m| m.transcribe(&samples));
+            if res_tx.send((samples.len(), text)).is_err() {
+                break;
+            }
+        }
+    });
+    (req_tx, res_rx)
+}
 
 pub struct Voice {
     phase: Mutex<Phase>,
@@ -383,6 +549,9 @@ pub struct Voice {
     /// The current turn was started by the wake word, whose audio is
     /// `preroll` (samples, rate) until the recording takes it.
     woken: AtomicBool,
+    /// The transcript has heard the wake word: until then the bar shows the
+    /// turn as `waking`, a word heard but not yet confirmed.
+    confirmed: AtomicBool,
     preroll: Mutex<Option<(Vec<f32>, u32)>>,
     /// For handing transcripts to the pilot from plain threads.
     rt: tokio::runtime::Handle,
@@ -411,6 +580,7 @@ impl Voice {
             send: AtomicBool::new(true),
             wake: AtomicBool::new(super::wake::remembered()),
             woken: AtomicBool::new(false),
+            confirmed: AtomicBool::new(false),
             preroll: Mutex::new(None),
             rt: tokio::runtime::Handle::current(),
             stop: Arc::new(AtomicBool::new(false)),
@@ -419,13 +589,17 @@ impl Voice {
             tx,
             pilot,
         });
-        // An idle model gives its memory back.
+        // An idle model gives its memory back — unless the wake word is on:
+        // a turn it starts must be transcribed at once, not after loading.
         let weak = Arc::downgrade(&me);
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(60));
             loop {
                 tick.tick().await;
                 let Some(me) = weak.upgrade() else { break };
+                if me.wake_on() {
+                    continue;
+                }
                 let mut slot = lock(&me.model);
                 if slot
                     .as_ref()
@@ -435,24 +609,24 @@ impl Voice {
                 }
             }
         });
-        // The speech's settings and errors are shown with the voice's.
-        let weak = Arc::downgrade(&me);
-        let mut changed = me.pilot.speech().subscribe();
-        tokio::spawn(async move {
-            while let Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) = changed.recv().await {
-                let Some(me) = weak.upgrade() else { break };
-                me.publish();
-            }
-        });
+        if me.wake_on() {
+            me.warm();
+        }
         // The wake word, for the daemon's lifetime (idle while off).
         let w = Arc::clone(&me);
         std::thread::spawn(move || super::wake::listen(w));
         me
     }
 
+    /// A turn started by the wake word, not confirmed yet.
+    fn unconfirmed(&self) -> bool {
+        self.woken.load(Ordering::SeqCst) && !self.confirmed.load(Ordering::SeqCst)
+    }
+
     pub fn snapshot_line(&self) -> String {
         json!({ "voice": {
             "phase": lock(&self.phase).as_str(),
+            "waking": self.unconfirmed(),
             "level": *lock(&self.level),
             "text": *lock(&self.text),
             "partial": self.partial.load(Ordering::SeqCst),
@@ -460,8 +634,6 @@ impl Voice {
             "wake": self.wake.load(Ordering::SeqCst),
             "wakeWord": WakeWord::current().display,
             "error": *lock(&self.error),
-            // Reading the answers aloud (speech.rs), for the settings.
-            "speech": self.pilot.speech().state(),
         }})
         .to_string()
     }
@@ -488,6 +660,13 @@ impl Voice {
         let phase = *lock(&self.phase);
         match phase {
             Phase::Idle => self.start(send),
+            // The word is not confirmed yet: asked by hand, the turn is
+            // the user's from now on, wake word or not.
+            Phase::Listening if self.unconfirmed() => {
+                self.woken.store(false, Ordering::SeqCst);
+                self.send.store(send, Ordering::SeqCst);
+                self.publish();
+            }
             Phase::Listening => self.stop.store(true, Ordering::SeqCst),
             Phase::Transcribing => {}
         }
@@ -509,15 +688,17 @@ impl Voice {
         });
     }
 
-    /// Transcribe with the loaded model. `None`: it isn't loaded.
-    fn transcribe_warm(&self, samples: &[f32], rate: u32) -> Option<Result<String, String>> {
+    /// Transcribe 16 kHz samples with the loaded model. `None`: it isn't
+    /// loaded.
+    fn transcribe_warm(&self, samples: &[f32]) -> Option<Result<String, String>> {
         let mut slot = lock(&self.model);
         let model = slot.as_mut()?;
-        Some(model.transcribe(&resample(samples, rate)))
+        Some(model.transcribe(samples))
     }
 
-    /// Enter listening (false if a turn is already under way).
-    fn begin(&self, send: bool) -> bool {
+    /// Enter listening (false if a turn is already under way). `woken`:
+    /// started by the wake word, to be confirmed.
+    fn begin(&self, send: bool, woken: bool) -> bool {
         {
             let mut p = lock(&self.phase);
             if *p != Phase::Idle {
@@ -525,8 +706,8 @@ impl Voice {
             }
             *p = Phase::Listening;
         }
-        // Speaking over the answer being read cuts it short.
-        self.pilot.speech().stop();
+        self.woken.store(woken, Ordering::SeqCst);
+        self.confirmed.store(false, Ordering::SeqCst);
         self.stop.store(false, Ordering::SeqCst);
         self.send.store(send, Ordering::SeqCst);
         self.partial.store(false, Ordering::SeqCst);
@@ -534,6 +715,12 @@ impl Voice {
         lock(&self.text).clear();
         self.publish();
         self.warm();
+        // The pilot is started (or renewed) while the user speaks, not
+        // after: its start-up takes seconds.
+        if send {
+            let pilot = Arc::clone(&self.pilot);
+            self.rt.spawn(async move { pilot.prewarm().await });
+        }
         true
     }
 
@@ -546,11 +733,20 @@ impl Voice {
     ) {
         self.partial.store(false, Ordering::SeqCst);
         // Started by the wake word: the model must have heard it first, or the
-        // detector was wrong and the turn ends in silence.
+        // detector was wrong and the turn ends in silence. Confirmed while
+        // listening, the turn stands even if the final transcript writes the
+        // word otherwise (Exupéri, then Exupé): its first word goes.
         let result = if self.woken.swap(false, Ordering::SeqCst) {
+            let confirmed = self.confirmed.swap(true, Ordering::SeqCst);
             match result {
                 Ok(Some(text)) => match strip_wake(&text) {
-                    Some(rest) => Ok(Some(rest)),
+                    Some(rest) => {
+                        if !confirmed {
+                            eprintln!("anna: mot d'activation confirmé : « {text} »");
+                        }
+                        Ok(Some(rest))
+                    }
+                    None if confirmed => Ok(Some(drop_first_word(&text))),
                     None => {
                         eprintln!("anna: mot d'activation non confirmé : « {text} »");
                         lock(&self.text).clear();
@@ -575,7 +771,7 @@ impl Voice {
                 if self.send.load(Ordering::SeqCst) {
                     let me = Arc::clone(self);
                     handle.spawn(async move {
-                        if let Err(e) = me.pilot.ask(&text, false, true).await {
+                        if let Err(e) = me.pilot.ask(&text, false).await {
                             *lock(&me.error) = e;
                             me.publish();
                         }
@@ -595,7 +791,7 @@ impl Voice {
     }
 
     pub fn start(self: &Arc<Self>, send: bool) {
-        if !self.begin(send) {
+        if !self.begin(send, false) {
             return;
         }
         self.spawn_record();
@@ -604,10 +800,9 @@ impl Voice {
     /// The wake word was heard (wake.rs): listen to the request, with the
     /// word's audio in front so that the transcript confirms it.
     pub fn woken(self: &Arc<Self>, preroll: Vec<f32>, rate: u32) {
-        if !self.begin(true) {
+        if !self.begin(true, true) {
             return;
         }
-        self.woken.store(true, Ordering::SeqCst);
         *lock(&self.preroll) = Some((preroll, rate));
         self.spawn_record();
     }
@@ -634,6 +829,9 @@ impl Voice {
     pub fn set_wake(&self, on: bool) {
         self.wake.store(on, Ordering::SeqCst);
         super::wake::remember(on);
+        if on {
+            self.warm();
+        }
         lock(&self.error).clear();
         self.publish();
     }
@@ -650,7 +848,7 @@ impl Voice {
     /// into the microphone: the same end-of-speech detection, live
     /// transcript and outcome. For trying the whole path without speaking.
     pub fn simulate(self: &Arc<Self>, samples: Vec<f32>, rate: u32, send: bool) {
-        if !self.begin(send) {
+        if !self.begin(send, false) {
             return;
         }
         let me = Arc::clone(self);
@@ -686,7 +884,7 @@ impl Voice {
         // The wake word's audio, if it started the turn.
         let preroll = lock(&self.preroll)
             .take()
-            .map(|(p, from)| resample_rate(&p, from, rate))
+            .map(|(p, from)| resample(&p, from))
             .unwrap_or_default();
         let result = self.listen(rate, preroll, || {
             match rx.recv_timeout(Duration::from_millis(200)) {
@@ -701,8 +899,8 @@ impl Voice {
 
     /// The listening loop, fed by `next` — the microphone, or a file played
     /// in real time (`simulate`). `Ok(None)` from `next` means "nothing yet".
-    /// `preroll`: audio from before the turn (the wake word), transcribed
-    /// with the rest but kept out of the end-of-speech detection.
+    /// `preroll`: audio from before the turn (the wake word), at 16 kHz,
+    /// transcribed with the rest but kept out of the end-of-speech detection.
     fn listen(
         &self,
         rate: u32,
@@ -711,31 +909,77 @@ impl Voice {
     ) -> Result<Option<String>, String> {
         let frame_len = (rate as f32 * FRAME) as usize;
         let mut ep = Endpointer::default();
+        // Everything heard, at the model's 16 kHz.
         let mut all: Vec<f32> = preroll;
+        let start = all.len();
+        let mut resampler = Resampler::new(rate, parakeet::RATE);
+        // Microphone samples received, and those not yet cut into frames.
+        let mut received = 0usize;
         let mut pending: Vec<f32> = Vec::new();
         let mut frames = 0usize;
         let mut last_partial = Instant::now();
-        // Started by the wake word: its first transcript must begin with
-        // the wake word, or the detector was wrong and the turn stops there.
+        let (partial_tx, partials) = spawn_partials(Arc::clone(&self.model));
+        let mut in_flight = false;
+        // Started by the wake word: the transcript must soon hold it, or
+        // the detector was wrong and the turn stops there.
         let woken = self.woken.load(Ordering::SeqCst);
-        let mut confirmed = false;
-        // Where speech was last heard (samples into `all`), and the last
-        // partial transcript with how much of `all` it covered.
+        // Where speech was last heard (samples into `all`), the last partial
+        // transcript with how much of `all` it covered, and whether the
+        // request it holds ends a sentence.
         let mut speech_end = 0usize;
         let mut last_partial_text: Option<(usize, String)> = None;
+        let mut request_ends = false;
+        let margin = (parakeet::RATE as f32 * FINAL_MARGIN) as usize;
+        let mut context_ready = false;
+        let send = self.send.load(Ordering::SeqCst);
         let outcome = 'listen: loop {
             if self.stop.load(Ordering::SeqCst) {
                 // Stopped by hand: only what followed real speech counts.
-                break if ep.heard_speech() && all.len() > rate as usize / 2 {
+                break if ep.heard_speech() && all.len() > parakeet::RATE as usize / 2 {
                     Endpoint::Done
                 } else {
                     Endpoint::Nothing
                 };
             }
+
+            // The transcript so far, as the partials come back.
+            while let Ok((covered, text)) = partials.try_recv() {
+                in_flight = false;
+                let Some(Ok(text)) = text else { continue };
+                last_partial_text = Some((covered, text.clone()));
+                // The wake word isn't part of the request. A transcript
+                // still short may not have it written yet (the word alone,
+                // the model hears it as something else): only a longer one
+                // without it ends the turn.
+                let still_woken = self.woken.load(Ordering::SeqCst);
+                let (text, request) = match (still_woken, strip_wake(&text)) {
+                    (true, Some(rest)) => {
+                        if !self.confirmed.swap(true, Ordering::SeqCst) {
+                            eprintln!("anna: mot d'activation confirmé : « {text} »");
+                        }
+                        (rest, true)
+                    }
+                    (true, None) if self.confirmed.load(Ordering::SeqCst) => (text, true),
+                    (true, None) if text.split_whitespace().count() >= WAKE_GIVE_UP => {
+                        eprintln!("anna: mot d'activation non confirmé : « {text} »");
+                        return Ok(None);
+                    }
+                    // Shown as heard, for the user to see why.
+                    (true, None) => (text, false),
+                    _ => (text, true),
+                };
+                request_ends = request && ends_sentence(&text);
+                if !text.is_empty() {
+                    *lock(&self.text) = text;
+                    self.partial.store(true, Ordering::SeqCst);
+                    self.publish();
+                }
+            }
             let Some(chunk) = next()? else {
                 continue;
             };
-            all.extend_from_slice(&chunk);
+            received += chunk.len();
+            resampler.push(&chunk, &mut all);
             pending.extend_from_slice(&chunk);
             while pending.len() >= frame_len {
                 let frame: Vec<f32> = pending.drain(..frame_len).collect();
@@ -747,47 +991,59 @@ impl Voice {
                 }
                 let fed = ep.feed(&frame);
                 if ep.in_speech() {
-                    speech_end = all.len() - pending.len();
+                    let heard = (received - pending.len()) as u64;
+                    speech_end = start + (heard * parakeet::RATE as u64 / rate as u64) as usize;
+                    context_ready = false;
                 }
                 match fed {
                     Endpoint::More => {}
                     end => break 'listen end,
                 }
             }
-            // The transcript so far. Audio arriving meanwhile waits in the
-            // capture channel: nothing is lost, the pass is just late.
-            if (woken || ep.heard_speech()) && last_partial.elapsed() >= PARTIAL_EVERY {
-                if let Some(Ok(text)) = self.transcribe_warm(&all, rate) {
-                    last_partial_text = Some((all.len(), text.clone()));
-                    // The wake word isn't part of the request.
-                    let text = match (woken, strip_wake(&text)) {
-                        (true, Some(rest)) => {
-                            confirmed = true;
-                            rest
-                        }
-                        (true, None) if !confirmed && !text.is_empty() => {
-                            eprintln!("anna: mot d'activation non confirmé : « {text} »");
-                            return Ok(None);
-                        }
-                        _ => text,
-                    };
-                    if !text.is_empty() {
-                        *lock(&self.text) = text;
-                        self.partial.store(true, Ordering::SeqCst);
-                        self.publish();
-                    }
+
+            if ep.heard_speech() {
+                // A sentence said and finished: no need to wait longer.
+                if ep.silence() >= QUICK_END
+                    && request_ends
+                    && covers(&last_partial_text, speech_end + margin)
+                {
+                    break Endpoint::Done;
                 }
+                // The request is likely over: the pilot's context, now.
+                if send && !context_ready && ep.silence() >= CONTEXT_AT {
+                    context_ready = true;
+                    let pilot = Arc::clone(&self.pilot);
+                    self.rt.spawn(async move { pilot.prepare() });
+                }
+            }
+
+            // Another pass, every PARTIAL_EVERY — and right after the end
+            // of speech, for the final transcript to be ready early.
+            let due = last_partial.elapsed() >= PARTIAL_EVERY
+                || (ep.heard_speech()
+                    && ep.silence() >= FINAL_MARGIN + FRAME
+                    && !covers(&last_partial_text, speech_end + margin));
+            if (woken || ep.heard_speech()) && !in_flight && due {
+                in_flight = partial_tx.send(all.clone()).is_ok();
                 last_partial = Instant::now();
             }
         };
         if outcome == Endpoint::Nothing {
             return Ok(None);
         }
+        resampler.finish(&mut all);
 
+        // A pass still running may cover the end: the model is busy with it
+        // anyway.
+        drop(partial_tx);
+        if in_flight {
+            if let Ok((covered, Some(Ok(text)))) = partials.recv() {
+                last_partial_text = Some((covered, text));
+            }
+        }
         // The last partial came after the end of speech: it is the final
         // transcript already.
         if let Some((covered, text)) = last_partial_text {
-            let margin = (rate as f32 * FINAL_MARGIN) as usize;
             if !text.is_empty() && covered >= speech_end + margin {
                 return Ok(Some(text));
             }
@@ -800,11 +1056,11 @@ impl Voice {
         while self.starting.load(Ordering::SeqCst) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(50));
         }
-        if let Some(result) = self.transcribe_warm(&all, rate) {
+        if let Some(result) = self.transcribe_warm(&all) {
             return result.map(Some);
         }
         let mut model = load_model()?;
-        let text = model.transcribe(&resample(&all, rate));
+        let text = model.transcribe(&all);
         *lock(&self.model) = Some(model);
         text.map(Some)
     }
@@ -862,6 +1118,50 @@ mod tests {
         let one_second: Vec<f32> = vec![0.1; 48_000];
         assert_eq!(resample(&one_second, 48_000).len(), 16_000);
         assert_eq!(resample(&[0.5; 160], 16_000).len(), 160);
+        assert_eq!(resample(&vec![0.1; 44_100], 44_100).len(), 16_000);
+    }
+
+    fn tone(freq: f32, rate: u32) -> Vec<f32> {
+        (0..rate as usize)
+            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / rate as f32).sin() * 0.5)
+            .collect()
+    }
+
+    /// Middle of the signal, away from the edges.
+    fn level(s: &[f32]) -> f32 {
+        rms(&s[s.len() / 4..s.len() * 3 / 4])
+    }
+
+    #[test]
+    fn resampling_keeps_the_voice_and_drops_what_would_fold_over_it() {
+        // 1 kHz stays…
+        let kept = level(&resample(&tone(1_000.0, 48_000), 48_000));
+        assert!((kept - 0.5 / 2f32.sqrt()).abs() < 0.01, "{kept}");
+        // …12 kHz, which would come back as 4 kHz, is gone.
+        let folded = level(&resample(&tone(12_000.0, 48_000), 48_000));
+        assert!(folded < 0.01, "{folded}");
+    }
+
+    #[test]
+    fn resampling_piece_by_piece_is_resampling_at_once() {
+        let input = tone(440.0, 48_000);
+        let whole = resample(&input, 48_000);
+        let mut r = Resampler::new(48_000, 16_000);
+        let mut pieces = Vec::new();
+        for chunk in input.chunks(480) {
+            r.push(chunk, &mut pieces);
+        }
+        r.finish(&mut pieces);
+        assert_eq!(pieces.len(), whole.len());
+        assert!(pieces.iter().zip(&whole).all(|(a, b)| (a - b).abs() < 1e-6));
+    }
+
+    #[test]
+    fn a_finished_sentence_is_seen() {
+        assert!(ends_sentence("Baisse le son."));
+        assert!(ends_sentence("Quelle heure est-il ? "));
+        assert!(!ends_sentence("Ouvre le projet"));
+        assert!(!ends_sentence(""));
     }
 
     #[test]
@@ -887,6 +1187,15 @@ mod tests {
     fn word(name: &str) -> WakeWord {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("models/wake");
         WakeWord::load(&dir, name)
+    }
+
+    #[test]
+    fn a_confirmed_turn_drops_the_word_however_written() {
+        assert_eq!(
+            drop_first_word("Exupé, change de workspace."),
+            "Change de workspace."
+        );
+        assert_eq!(drop_first_word("Exupéry."), "");
     }
 
     #[test]
@@ -942,6 +1251,27 @@ mod tests {
             Some("Baisse le son.")
         );
         assert_eq!(strip_word("Exu, baisse le son.", &e), None);
+        // How Parakeet writes it, heard in use.
+        for heard in ["Exupéri", "Expéri,", "Exupé,", "Expé.", "Exupérie"] {
+            assert_eq!(
+                strip_word(&format!("{heard} change de workspace."), &e).as_deref(),
+                Some("Change de workspace."),
+                "{heard}"
+            );
+        }
+        // A short form is matched closely: « Elle » is not « Expé ».
+        assert_eq!(strip_word("Elle change de workspace.", &e), None);
+        // The end of something said before it, kept with the word's audio.
+        assert_eq!(
+            strip_word("Euh, Exupéry, baisse le son.", &e).as_deref(),
+            Some("Baisse le son.")
+        );
+        assert_eq!(
+            strip_word("Oui donc Exupéri mets de la musique", &e).as_deref(),
+            Some("Mets de la musique")
+        );
+        // Further in, it is only a name in a sentence.
+        assert_eq!(strip_word("Je crois que Exupéry a écrit ça.", &e), None);
 
         // Without its JSON, a word is heard only as its name.
         let z = word("absent");

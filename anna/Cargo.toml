@@ -23,9 +23,6 @@ rustfft = "6"
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "api-24"] }
 # uinput virtual pointer (absolute axes + left button).
 evdev = "0.13"
-# libespeak-ng, loaded at run time (ESPEAK_DYLIB_PATH, set by the wrapper):
-# the phonemes of the voices that read the pilot's answers (claude/speech.rs).
-libloading = "0.9"
 # The Nextcloud account (cloud/): its notes API, CalDAV and the login flow,
 # over HTTPS. rustls with bundled roots: no OpenSSL to link, no system store
 # to find.

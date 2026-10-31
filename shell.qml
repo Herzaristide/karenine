@@ -35,6 +35,9 @@ ShellRoot {
     //         reglages, tout
     //   ACTION : ouvrir, fermer, basculer (le défaut)
     //   « widget:N » reste compris : 0=stats 3=musique 4=lecteur
+    //   echo "metronome:ACTION[:BPM[:TEMPS]]" > /tmp/qs-panel.fifo → lance, arrête ou
+    //        bascule le métronome (services/Tempo.qml), onglet ouvert ou non
+    //        ACTION : lancer, arreter, basculer ; BPM 20–300 ; TEMPS par mesure
     Process {
         id: ipcListener
         command: [
@@ -53,6 +56,9 @@ ShellRoot {
                     if (/^[0-9]+$/.test(name))
                         name = root.legacyWidgets[parseInt(name)] || "";
                     Widgets.apply(name, parts[1] || "basculer");
+                } else if (msg.startsWith("metronome")) {
+                    var m = msg.split(":");
+                    Tempo.apply(m[1] || "basculer", m[2], m[3]);
                 } else if (msg === "dock") {
                     root.barToggled();
                 } else if (msg === "voix") {
