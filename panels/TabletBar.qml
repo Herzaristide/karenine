@@ -557,11 +557,11 @@ Scope {
     }
 
     // Le flocon de la barre de conversation, nu : à 75 % au repos, il grossit
-    // un peu au survol ; il tourne pendant que le pilote transcrit ou
-    // travaille et passe alors à l'accent, comme le filet de la barre.
+    // un peu au survol ; il tourne pendant que le pilote écoute, transcrit
+    // ou travaille et passe alors à l'accent, comme le filet de la barre.
     component Flake: Item {
         id: logo
-        readonly property bool turning: Pilot.voicePhase === "transcribing" || Pilot.pilotBusy
+        readonly property bool turning: Pilot.voicePhase !== "idle" || Pilot.pilotBusy
         readonly property bool glowing: Pilot.voicePhase !== "idle" || Pilot.pilotBusy
 
         implicitWidth: tablet.hit

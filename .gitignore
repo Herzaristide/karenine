@@ -30,3 +30,6 @@ anna/target/
 
 # Index CodeGraph (local)
 .codegraph/
+
+# direnv
+.direnv/

@@ -17,8 +17,9 @@
 //!
 //! A score over the threshold hands the last seconds of audio to the voice
 //! (voice.rs), which listens to the request with them in front: the word
-//! must start the transcript, or the turn is dropped in silence. A false
-//! trigger thus costs one transcription, never a request.
+//! must be among the transcript's first, or the turn is dropped in silence
+//! (the bar shows it as `waking` until then). A false trigger thus costs a
+//! few transcriptions, never a request.
 //!
 //! The microphone stays open only while the wake word is on (`anna voice wake
 //! on|off`, remembered across restarts). Nothing leaves the machine.
@@ -31,7 +32,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use super::voice::{resample, Voice};
+use super::voice::{resample, Resampler, Voice};
 
 /// 80 ms at 16 kHz: one step of the pipeline.
 const CHUNK: usize = 1280;
@@ -290,6 +291,8 @@ pub fn listen(voice: Arc<Voice>) {
         let mut recent: VecDeque<f32> = VecDeque::with_capacity(keep + 4096);
         let mut quiet_until = Instant::now();
         let mut was_busy = false;
+        let mut resampler = Resampler::new(rate, super::parakeet::RATE);
+        let mut samples = Vec::new();
         while voice.wake_on() {
             let chunk = match rx.recv_timeout(Duration::from_millis(300)) {
                 Ok(c) => c,
@@ -310,8 +313,11 @@ pub fn listen(voice: Arc<Voice>) {
                 was_busy = false;
                 detector.reset();
                 quiet_until = Instant::now() + COOLDOWN;
+                resampler = Resampler::new(rate, super::parakeet::RATE);
             }
-            let score = match detector.feed(&resample(&chunk, rate)) {
+            samples.clear();
+            resampler.push(&chunk, &mut samples);
+            let score = match detector.feed(&samples) {
                 Ok(s) => s,
                 Err(e) => {
                     voice.wake_failed(format!("mot d'activation : {e}"));

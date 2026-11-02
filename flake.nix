@@ -122,13 +122,19 @@
       );
 
       devShells = forAllSystems (
-        { pkgs, ... }:
+        { pkgs, system, ... }:
         {
           default = pkgs.mkShell {
+            # Les dépendances de compilation d'anna (pkg-config, alsa-lib…),
+            # pour `cargo build` / `cargo test` dans anna/.
+            inputsFrom = [ self.packages.${system}.anna ];
             # qtdeclarative fournit qmllint + qmlls + les modules QtQuick/QtQml.
             packages = [
               pkgs.qt6.qtdeclarative
               pkgs.quickshell
+              pkgs.clippy
+              pkgs.rustfmt
+              pkgs.rust-analyzer
             ];
             # Pour `qmllint -E` / `qmlls -E` et le confort en ligne de commande.
             QML_IMPORT_PATH = "${pkgs.qt6.qtdeclarative}/lib/qt-6/qml:${pkgs.quickshell}/lib/qt-6/qml:${pkgs.qt6.qtmultimedia}/lib/qt-6/qml";

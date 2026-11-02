@@ -16,7 +16,11 @@ const PROTOCOL: &str = "2025-06-18";
 /// A desk call may wait for the user's yes in the bar.
 const CALL_TIMEOUT: Duration = Duration::from_secs(180);
 
-fn call_daemon(tool: &str, args: &Value) -> (bool, String) {
+/// A desk call's answer: success, its text, and an image (JPEG, base64)
+/// for `voir_ecran`.
+pub type Answer = (bool, String, Option<String>);
+
+fn call_daemon(tool: &str, args: &Value) -> Answer {
     let attempt = || -> std::io::Result<Value> {
         let mut sock = UnixStream::connect(crate::paths::socket_path())?;
         sock.set_read_timeout(Some(CALL_TIMEOUT))?;
@@ -33,13 +37,14 @@ fn call_daemon(tool: &str, args: &Value) -> (bool, String) {
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string(),
+            r.get("image").and_then(Value::as_str).map(str::to_string),
         ),
-        Err(e) => (false, format!("anna injoignable : {e}")),
+        Err(e) => (false, format!("anna injoignable : {e}"), None),
     }
 }
 
 /// The answer to one JSON-RPC message, or `None` for a notification.
-pub fn handle(msg: &Value, call: impl Fn(&str, &Value) -> (bool, String)) -> Option<Value> {
+pub fn handle(msg: &Value, call: impl Fn(&str, &Value) -> Answer) -> Option<Value> {
     let id = msg.get("id")?.clone();
     let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
     let result = match method {
@@ -65,11 +70,12 @@ pub fn handle(msg: &Value, call: impl Fn(&str, &Value) -> (bool, String)) -> Opt
                 .pointer("/params/arguments")
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            let (ok, text) = call(name, &args);
-            json!({
-                "content": [{ "type": "text", "text": text }],
-                "isError": !ok,
-            })
+            let (ok, text, image) = call(name, &args);
+            let mut content = vec![json!({ "type": "text", "text": text })];
+            if let Some(data) = image {
+                content.push(json!({ "type": "image", "data": data, "mimeType": "image/jpeg" }));
+            }
+            json!({ "content": content, "isError": !ok })
         }
         _ => {
             return Some(json!({
@@ -137,12 +143,25 @@ mod tests {
             ),
             |tool, args| {
                 assert_eq!((tool, args["pourcentage"].as_i64()), ("volume", Some(30)));
-                (true, "Volume: 0.30".into())
+                (true, "Volume: 0.30".into(), None)
             },
         )
         .unwrap();
         assert_eq!(r["result"]["content"][0]["text"], "Volume: 0.30");
         assert_eq!(r["result"]["isError"], false);
+    }
+
+    #[test]
+    fn the_screen_comes_back_as_an_image() {
+        let r = handle(
+            &rpc("tools/call", json!({"name": "voir_ecran", "arguments": {}})),
+            |_, _| (true, "écran DP-1".into(), Some("/9j/AA==".into())),
+        )
+        .unwrap();
+        assert_eq!(
+            r["result"]["content"][1],
+            json!({ "type": "image", "data": "/9j/AA==", "mimeType": "image/jpeg" })
+        );
     }
 
     #[test]

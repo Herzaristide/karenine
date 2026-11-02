@@ -91,6 +91,11 @@ pub fn tools() -> Value {
             json!({ "projet": s("nom du projet, ex. karenine"),
                     "outil": json!({ "type": "string", "enum": ["zed", "terminal"] }) }),
             &["projet", "outil"]),
+        tool("voir_ecran",
+            "Te montre l'écran que regarde l'utilisateur (le moniteur actif, en image), pour répondre \
+             à une question sur ce qui y est affiché : « c'est quoi cette erreur ? », « explique-moi ce \
+             schéma », « résume cette page ». Rien n'est enregistré.",
+            json!({}), &[]),
         tool("capture_ecran", "Fait une capture (copiée et enregistrée).",
             json!({ "zone": json!({ "type": "string", "enum": ["ecran", "selection", "fenetre"] }) }),
             &["zone"]),
@@ -138,6 +143,13 @@ pub fn tools() -> Value {
                     "action": json!({ "type": "string", "enum": ["ouvrir", "fermer", "basculer"],
                                       "description": "défaut : ouvrir" }) }),
             &["nom"]),
+        tool("metronome",
+            "Lance, arrête ou bascule le métronome, sans ouvrir son widget (il bat même onglet Musique fermé). \
+             « lancer » prend un tempo et une mesure facultatifs ; sans eux, il garde les derniers.",
+            json!({ "action": json!({ "type": "string", "enum": ["lancer", "arreter", "basculer"] }),
+                    "bpm": i("tempo, 20 à 300 battements par minute"),
+                    "temps": i("temps par mesure, 1 à 16 (4 pour du 4/4, 3 pour une valse)") }),
+            &["action"]),
         tool("couleur_accent", "Change la couleur d'accent de tout le bureau.",
             json!({ "couleur": s("#rrggbb") }), &["couleur"]),
         tool("presse_papiers", "Lit le texte du presse-papiers.", json!({}), &[]),
@@ -162,6 +174,33 @@ fn widget_line(name: &str, action: &str) -> Result<String, String> {
         return Err("« tout » ne fait que se fermer".into());
     }
     Ok(format!("widget:{name}:{action}\n"))
+}
+
+/// The FIFO line that starts, stops or toggles the metronome
+/// (services/Tempo.qml), and what to tell the pilot.
+fn metronome_line(
+    action: &str,
+    bpm: Option<i64>,
+    beats: Option<i64>,
+) -> Result<(String, String), String> {
+    if let Some(b) = bpm.filter(|b| !(20..=300).contains(b)) {
+        return Err(format!("tempo hors limites : {b} (20 à 300)"));
+    }
+    if let Some(t) = beats.filter(|t| !(1..=16).contains(t)) {
+        return Err(format!("mesure hors limites : {t} temps (1 à 16)"));
+    }
+    let said = match action {
+        "lancer" => match bpm {
+            Some(b) => format!("métronome lancé à {b} bpm"),
+            None => "métronome lancé".into(),
+        },
+        "arreter" => "métronome arrêté".into(),
+        "basculer" => "métronome basculé".into(),
+        a => return Err(format!("action inconnue : « {a} »")),
+    };
+    let n = |v: Option<i64>| v.map(|v| v.to_string()).unwrap_or_default();
+    let line = format!("metronome:{action}:{}:{}", n(bpm), n(beats));
+    Ok((line.trim_end_matches(':').to_string() + "\n", said))
 }
 
 fn shell_send(line: &str) -> Result<(), String> {
@@ -495,6 +534,53 @@ pub fn project_dir(name: &str) -> Result<String, String> {
         })
 }
 
+/// Longest side of the image `voir_ecran` hands the model (pixels): what it
+/// reads best, larger is scaled down on its side anyway.
+const SCREEN_MAX: f64 = 1568.0;
+
+/// The focused monitor, as `voir_ecran` shows it: a line saying which, and
+/// the JPEG in base64. Nothing is written to disk.
+pub fn screen_image() -> Result<(String, String), String> {
+    use base64::Engine;
+    let monitors = hypr_json("monitors");
+    let mon = monitors
+        .as_array()
+        .and_then(|m| {
+            m.iter()
+                .find(|m| m.get("focused").and_then(Value::as_bool) == Some(true))
+        })
+        .ok_or("aucun écran actif")?;
+    let name = mon.get("name").and_then(Value::as_str).unwrap_or("");
+    let f = |k: &str| mon.get(k).and_then(Value::as_f64).unwrap_or(0.0);
+    let (w, h, scale) = (f("width"), f("height"), f("scale").max(1e-3));
+    // grim's scale applies to the logical size (pixels / monitor scale).
+    let logical = w.max(h) / scale;
+    let factor = if logical > 0.0 {
+        (SCREEN_MAX / logical).min(scale)
+    } else {
+        1.0
+    };
+    let out = Command::new("grim")
+        .args(["-o", name, "-s", &format!("{factor:.3}"), "-t", "jpeg", "-q", "80", "-"])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("grim : {e}"))?;
+    if !out.status.success() || out.stdout.is_empty() {
+        return Err(format!(
+            "capture impossible : {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    let active = hypr_json("activewindow");
+    let window = |k: &str| active.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    let text = format!(
+        "écran {name} ({w}×{h}) ; fenêtre active : {} — {}. La barre de conversation est en bas.",
+        window("class"),
+        window("title")
+    );
+    Ok((text, base64::engine::general_purpose::STANDARD.encode(&out.stdout)))
+}
+
 /// The desktop state, as `etat_bureau` reports it.
 pub fn desktop_state() -> String {
     let mut out = Vec::new();
@@ -675,6 +761,11 @@ pub fn run_tool(tool: &str, args: &Value) -> Result<String, String> {
                 _ => format!("{name} ouvert"),
             })
         }
+        "metronome" => {
+            let (line, said) = metronome_line(&s("action"), n("bpm"), n("temps"))?;
+            shell_send(&line)?;
+            Ok(said)
+        }
         "chercher_notes" => Ok(search_notes(&s("requete"))),
         "creer_note" => crate::notes::pilot_create(
             &s("texte"),
@@ -782,5 +873,26 @@ mod tests {
         assert!(widget_line("tout", "ouvrir").is_err());
         assert!(widget_line("console", "").is_err());
         assert!(widget_line("stats", "rm").is_err());
+    }
+
+    #[test]
+    fn metronome_lines_match_the_shell() {
+        let line = |a, b, t| metronome_line(a, b, t).map(|(l, _)| l);
+        assert_eq!(
+            line("lancer", Some(120), None).unwrap(),
+            "metronome:lancer:120\n"
+        );
+        assert_eq!(
+            line("lancer", None, Some(3)).unwrap(),
+            "metronome:lancer::3\n"
+        );
+        assert_eq!(
+            line("lancer", Some(90), Some(3)).unwrap(),
+            "metronome:lancer:90:3\n"
+        );
+        assert_eq!(line("arreter", None, None).unwrap(), "metronome:arreter\n");
+        assert!(line("lancer", Some(500), None).is_err());
+        assert!(line("lancer", None, Some(0)).is_err());
+        assert!(line("jouer", None, None).is_err());
     }
 }

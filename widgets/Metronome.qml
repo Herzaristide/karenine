@@ -1,25 +1,21 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
-import Quickshell
-import Quickshell.Io
 import "../services"
 
 Item {
     id: metroPanel
 
     // ── State ─────────────────────────────────────────────────────────────
-    property bool metroRunning:      false
-    property int  bpm:               120
-    property int  beatsPerBar:       4
-    property int  beatIndex:         -1
+    // Le métronome vit dans services/Tempo.qml : il bat onglet fermé, et le
+    // pilote le lance sans l'ouvrir. Ici, sa façade et le tap tempo.
     property var  tapHistory:        []
-    // True when this widget is the one currently shown in the panel. The audio
-    // backend (persistent aplay stream) only runs while the metronome is
-    // visible or actively ticking — no idle stream when it's not in use.
+    // L'onglet est à l'écran : Tempo ouvre sa session d'avance.
     property bool active:            false
 
-    function clampBpm(v) { return Math.max(20, Math.min(300, v)) }
+    onActiveChanged: Tempo.shown = active
+    Component.onCompleted: Tempo.shown = active
+    Component.onDestruction: Tempo.shown = false
 
     function tapTempo() {
         var now = Date.now()
@@ -31,66 +27,9 @@ Item {
         if (h.length >= 2) {
             var sum = 0
             for (var i = 1; i < h.length; i++) sum += h[i] - h[i - 1]
-            metroPanel.bpm = metroPanel.clampBpm(Math.round(60000 / (sum / (h.length - 1))))
+            Tempo.bpm = Tempo.clampBpm(Math.round(60000 / (sum / (h.length - 1))))
         }
     }
-
-    // ── Backend ───────────────────────────────────────────────────────────
-    // Native `anna` daemon owns timing + audio via a cpal output callback that
-    // mixes clicks at exact sample offsets, so beats are perfectly evenly
-    // spaced — no scheduler jitter. We open a metronome session over the Unix
-    // socket, send control lines ({"action":…}), and receive {"beat":<n>}.
-    Socket {
-        id: metroSock
-        path: Anna.socketPath
-        parser: SplitParser {
-            onRead: (line) => {
-                try {
-                    var msg = JSON.parse(line)
-                    if (typeof msg.beat === "number") {
-                        metroPanel.beatIndex = msg.beat
-                    } else if (msg.ready === true) {
-                        // Push current state now the session is established.
-                        metroPanel.metroCmd({ action: "beats", value: metroPanel.beatsPerBar })
-                        metroPanel.metroCmd({ action: "bpm",   value: metroPanel.bpm })
-                        if (metroPanel.metroRunning)
-                            metroPanel.metroCmd({ action: "start", bpm: metroPanel.bpm })
-                    }
-                } catch (e) { /* ignore malformed / partial line */ }
-            }
-        }
-        onConnectedChanged: {
-            if (connected) write('{"cmd":"metronome"}\n')
-        }
-    }
-
-    // Connect while the metronome is visible or ticking; retry every 2 s.
-    Timer {
-        interval: 2000
-        running: metroPanel.active || metroPanel.metroRunning
-        repeat: true
-        triggeredOnStart: true
-        onTriggered: if (!metroSock.connected) metroSock.connected = true
-    }
-
-    onActiveChanged: if (!active && !metroRunning) metroSock.connected = false
-
-    function metroCmd(obj) {
-        if (metroSock.connected)
-            metroSock.write(JSON.stringify(obj) + "\n")
-    }
-
-    onMetroRunningChanged: {
-        if (metroRunning) {
-            beatIndex = -1
-            metroSock.connected = true
-            metroCmd({ action: "start", bpm: bpm })
-        } else {
-            metroCmd({ action: "stop" })
-        }
-    }
-    onBpmChanged:               metroCmd({ action: "bpm",   value: bpm })
-    onBeatsPerBarChanged:       metroCmd({ action: "beats", value: beatsPerBar })
 
     // ── UI : en colonne, à droite du panneau Musique ──────────────────────
     //   ( − ) 120 ( + )
@@ -115,14 +54,14 @@ Item {
                 implicitHeight: 28
                 fontSize: 15
                 text: "−"
-                onClicked: metroPanel.bpm = metroPanel.clampBpm(metroPanel.bpm - 1)
+                onClicked: Tempo.bpm = Tempo.clampBpm(Tempo.bpm - 1)
             }
             ColumnLayout {
                 spacing: -4
                 TextInput {
                     id: bpmInput
                     Layout.preferredWidth: 76
-                    text: metroPanel.bpm.toString()
+                    text: Tempo.bpm.toString()
                     font.family: "Inter"
                     font.pixelSize: 34
                     font.weight: Font.DemiBold
@@ -137,20 +76,20 @@ Item {
                     Keys.onUpPressed: (event) => bpmInput.nudge(event.modifiers & Qt.ShiftModifier ? 10 : 1)
                     Keys.onDownPressed: (event) => bpmInput.nudge(event.modifiers & Qt.ShiftModifier ? -10 : -1)
                     function nudge(d) {
-                        metroPanel.bpm = metroPanel.clampBpm(metroPanel.bpm + d)
-                        text = metroPanel.bpm.toString()
+                        Tempo.bpm = Tempo.clampBpm(Tempo.bpm + d)
+                        text = Tempo.bpm.toString()
                     }
                     FocusRing { radius: 10; gap: 2 }
                     onEditingFinished: {
                         var v = parseInt(text)
-                        if (!isNaN(v)) metroPanel.bpm = metroPanel.clampBpm(v)
-                        text = metroPanel.bpm.toString()
+                        if (!isNaN(v)) Tempo.bpm = Tempo.clampBpm(v)
+                        text = Tempo.bpm.toString()
                     }
                     Connections {
-                        target: metroPanel
+                        target: Tempo
                         function onBpmChanged() {
                             if (!bpmInput.activeFocus)
-                                bpmInput.text = metroPanel.bpm.toString()
+                                bpmInput.text = Tempo.bpm.toString()
                         }
                     }
                     // La molette règle le tempo, comme un bouton rotatif.
@@ -171,7 +110,7 @@ Item {
                 implicitHeight: 28
                 fontSize: 15
                 text: "+"
-                onClicked: metroPanel.bpm = metroPanel.clampBpm(metroPanel.bpm + 1)
+                onClicked: Tempo.bpm = Tempo.clampBpm(Tempo.bpm + 1)
             }
         }
 
@@ -181,14 +120,14 @@ Item {
             Layout.topMargin: 2
             spacing: 9
             Repeater {
-                model: metroPanel.beatsPerBar
+                model: Tempo.beatsPerBar
                 Rectangle {
                     id: beatDot
                     required property int index
                     width: 12
                     height: 12
                     radius: 6
-                    property bool isActive: metroPanel.metroRunning && metroPanel.beatIndex === index
+                    property bool isActive: Tempo.running && Tempo.beatIndex === index
                     color: isActive
                            ? (index === 0 ? Theme.colorSuccess : Theme.glow(0))
                            : Qt.alpha(Theme.textPrimary, 0.1)
@@ -213,13 +152,8 @@ Item {
                 Layout.fillWidth: true
                 implicitHeight: 26
                 fontSize: 11
-                text: metroPanel.beatsPerBar + "/4"
-                onClicked: {
-                    var n = metroPanel.beatsPerBar + 1
-                    if (n > 6) n = 2
-                    metroPanel.beatsPerBar = n
-                    metroPanel.beatIndex = -1
-                }
+                text: Tempo.beatsPerBar + "/4"
+                onClicked: Tempo.setBeats(Tempo.beatsPerBar >= 6 ? 2 : Tempo.beatsPerBar + 1)
             }
             GlassButton {
                 Layout.fillWidth: true
@@ -236,11 +170,11 @@ Item {
         GlassButton {
             Layout.fillWidth: true
             implicitHeight: 32
-            accent: metroPanel.metroRunning
+            accent: Tempo.running
             fontSize: 12
-            icon: Qt.resolvedUrl("../assets/icons/" + (metroPanel.metroRunning ? "stop.svg" : "play.svg"))
-            text: metroPanel.metroRunning ? I18n.tr("common.stop") : I18n.tr("metronome.start")
-            onClicked: metroPanel.metroRunning = !metroPanel.metroRunning
+            icon: Qt.resolvedUrl("../assets/icons/" + (Tempo.running ? "stop.svg" : "play.svg"))
+            text: Tempo.running ? I18n.tr("common.stop") : I18n.tr("metronome.start")
+            onClicked: Tempo.running = !Tempo.running
         }
     }
 }

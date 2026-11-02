@@ -172,26 +172,9 @@ pub enum Command {
     },
     /// Keep connection open; daemon pushes `{"voice":{"phase":"idle"|
     /// "listening"|"transcribing","level":0–1,"text":"…","partial":bool,
-    /// "send":bool,"error":"…","speech":{"mode":"off"|"voice"|"always",
-    /// "voice":"<id>","voices":[{"id","name"}…],"error":"…"}}}` — `text`
-    /// follows the voice while `partial`.
+    /// "send":bool,"error":"…"}}` — `text` follows the voice while
+    /// `partial`.
     VoiceWatch,
-    // ── Speech (claude/speech.rs) ─────────────────────────────────────────
-    /// When the pilot's answers are read aloud (`mode`: "off", "voice" —
-    /// spoken requests only — or "always") and with which Piper voice
-    /// (`voice`, an id from `voices`). Absent fields are kept; remembered.
-    SpeechSet {
-        #[serde(default)]
-        mode: Option<String>,
-        #[serde(default)]
-        voice: Option<String>,
-    },
-    /// Read a text aloud now, whatever the mode.
-    SpeechSay {
-        text: String,
-    },
-    /// Stop reading aloud.
-    SpeechStop,
     /// Play a 16-bit WAV through the listening loop as if said into the
     /// microphone (live transcript, end of speech, outcome).
     VoiceSimulate {

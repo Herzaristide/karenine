@@ -73,14 +73,6 @@ fn build_command(args: &[String]) -> Option<(serde_json::Value, bool)> {
                 false,
             ),
             Some("watch") => (json!({"cmd": "voice_watch"}), true),
-            // Reading the answers aloud.
-            Some("say") => (
-                json!({"cmd": "speech_say", "text": args[3..].join(" ")}),
-                false,
-            ),
-            Some("hush") => (json!({"cmd": "speech_stop"}), false),
-            Some("speech") => (json!({"cmd": "speech_set", "mode": arg(3)?}), false),
-            Some("speaker") => (json!({"cmd": "speech_set", "voice": arg(3)?}), false),
             Some("transcribe") => (json!({"cmd": "voice_transcribe", "path": arg(3)?}), false),
             _ => return None,
         },
@@ -158,9 +150,6 @@ fn usage() -> ! {
            voice dictate                          Same, but only show the transcript\n\
            voice wake [on|off]                    Wake word « Karénine » (toggle)\n\
            voice transcribe <file.wav>            Transcribe a 16 kHz mono WAV\n\
-           voice say <text> | hush                Read a text aloud / stop reading\n\
-           voice speech off|voice|always          When the pilot's answers are read aloud\n\
-           voice speaker <id>                     The Piper voice reading them\n\
            record audio [mic|mix]                 Record the mic (mix: with the computer's sound), or stop\n\
            record screen [area|screen]            Record a region / the focused monitor, or stop\n\
            record stop [audio|screen] | status | watch\n\
