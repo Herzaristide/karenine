@@ -14,8 +14,8 @@ import Quickshell
 // Ceux de `hubTabs` vivent dans la capsule de la barre de conversation, que
 // le flocon agrandit vers le haut (panels/WidgetHub.qml) : un onglet chacun,
 // un seul affiché à la fois. « explorer » parcourt les dossiers du PC
-// (widgets/FileExplorer.qml). « agenda » montre les calendriers du compte
-// Nextcloud (widgets/CalendarWidget.qml). « notifications » n'a pas d'onglet :
+// (widgets/FileExplorer.qml). « agenda » montre les agendas et les tâches du
+// compte Google (widgets/CalendarWidget.qml). « notifications » n'a pas d'onglet :
 // la cloche de la barre du haut (TopIsland), qui en montre le nombre, les
 // déplie. « camera » reste une carte flottante (FloatingWidgets).
 Singleton {

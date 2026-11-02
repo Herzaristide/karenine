@@ -123,14 +123,14 @@ pub fn tools() -> Value {
              les images y figurent par leur chemin.",
             json!({ "recherche": s("mots que la note doit contenir ; vide : toutes") }), &[]),
         tool("agenda",
-            "Les événements de l'agenda de l'utilisateur (son compte Nextcloud, le même que l'onglet Agenda), \
-             à l'heure locale, avec leur calendrier. Pour « qu'est-ce que j'ai demain », « suis-je libre jeudi ».",
+            "Les événements de l'agenda de l'utilisateur (son compte Google, le même que l'onglet Agenda), \
+             à l'heure locale, avec leur calendrier, puis les tâches Google à faire qui tombent dans ces jours. Pour « qu'est-ce que j'ai demain », « suis-je libre jeudi ».",
             json!({ "debut": s("premier jour, AAAA-MM-JJ ; défaut : aujourd'hui"),
                     "fin": s("lendemain du dernier jour, AAAA-MM-JJ (exclu) ; défaut : début + 7 jours") }),
             &[]),
         tool("widget",
             "Ouvre, ferme ou bascule un widget de l'interface : « explorer » (les dossiers du PC), « stats » (processeur, mémoire et carte graphique, de ce PC ou \
-             d'un serveur du réseau Tailscale par ssh, avec terminal, redémarrage, extinction et réveil, et en dessous le téléphone), « telephone » (ouvre « stats », où est la carte du téléphone relié par KDE Connect : batterie, réseau, le faire sonner), « notifications » (les notifications reçues, ne pas déranger), « notes » (les notes façon Keep : texte et images collés), « agenda » (le calendrier du mois et les événements du jour), « lecteur » (lecteur en cours, paroles), « musique » (métronome et accordeur), \
+             d'un serveur du réseau Tailscale par ssh, avec terminal, redémarrage, extinction et réveil, et en dessous le téléphone), « telephone » (ouvre « stats », où est la carte du téléphone relié par KDE Connect : batterie, réseau, le faire sonner), « notifications » (les notifications reçues, ne pas déranger), « notes » (les notes façon Keep : texte et images collés), « agenda » (le calendrier Google, vue mois ou semaine, et les tâches), « lecteur » (lecteur en cours, paroles), « musique » (métronome et accordeur), \
              « son » (ouvre les réglages), « camera » (contrôle gestuel), « reglages » \
              (sorties et entrées audio, webcam, luminosité, écran, thème). « tout » avec \
              « fermer » referme tout.",
@@ -683,7 +683,7 @@ pub fn run_tool(tool: &str, args: &Value) -> Result<String, String> {
                 .unwrap_or(false),
         ),
         "lire_notes" => Ok(cut(&crate::notes::pilot_read(&s("recherche")))),
-        "agenda" => crate::cloud::caldav::pilot_read(&s("debut"), &s("fin")).map(|t| cut(&t)),
+        "agenda" => crate::google::calendar::pilot_read(&s("debut"), &s("fin")).map(|t| cut(&t)),
         "ouvrir_note" => {
             let rel = s("chemin");
             let p = vault().join(&rel);

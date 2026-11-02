@@ -75,8 +75,8 @@ pkgs.rustPlatform.buildRustPackage {
     #       PATH: it needs its gsr-kms-server wrapper, given a capability by
     #       the NixOS configuration (programs.gpu-screen-recorder).
     #   secret-tool (libsecret)
-    #     → the Nextcloud account's app password, kept in the Secret
-    #       Service (cloud/mod.rs); xdg-open opens its login page, date
+    #     → the Google account's refresh token, kept in the Secret
+    #       Service (google/mod.rs); xdg-open opens its consent page, date
     #       (coreutils) gives the pilot's agenda in local time
     # The icon theme recoloured to the accent (src/icons.rs): Reversal, read in
     # place from the store through ANNA_ICON_SOURCE.

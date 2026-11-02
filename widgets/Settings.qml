@@ -128,8 +128,8 @@ Item {
                 }
 
                 // ── COMPTE section ─────────────────────────────────
-                // Le compte Nextcloud (Murena…) : les notes s'y
-                // synchronisent, l'onglet Agenda y lit les calendriers.
+                // Le compte Google : l'onglet Agenda y lit les agendas et
+                // les tâches.
                 Text {
                     Layout.bottomMargin: 10
                     text: I18n.tr("settings.account")
@@ -139,7 +139,7 @@ Item {
                     color: Theme.accentMuted
                 }
 
-                CloudAccount {
+                GoogleAccount {
                     Layout.fillWidth: true
                     Layout.bottomMargin: 18
                 }

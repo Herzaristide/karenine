@@ -87,8 +87,8 @@ FocusScope {
         stats: 30 + 10 + 150 + 10 + 76,
         // Le champ, puis le mur de cartes, qui défile.
         notes: 340,
-        // Le mois (six semaines), à côté du jour choisi.
-        agenda: 330,
+        // La grille du mois (six semaines), ou la semaine heure par heure.
+        agenda: 440,
         lecteur: 210,
         // L'accordeur et le métronome, puis s'enregistrer (MusicPanel).
         musique: 196,

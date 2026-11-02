@@ -28,10 +28,12 @@
 //!   anna say <text> [file.wav]
 //!                        speak a text with the chosen voice, no daemon
 //!   anna notes …         the « Notes » tab, on its files (notes.rs)
-//!   anna cloud status|connect|cancel|disconnect
-//!                        the Nextcloud account (cloud/)
+//!   anna google status|client|connect|cancel|disconnect
+//!                        the Google account (google/)
 //!   anna agenda <from> <to>
-//!                        its calendars' events (cloud/caldav.rs)
+//!                        its calendars' events (google/calendar.rs)
+//!   anna tasks [list] | done <list> <id> [no]
+//!                        its tasks (google/tasks.rs)
 //!
 //! Services exposed over `$XDG_RUNTIME_DIR/anna.sock`:
 //!   - theme    : accent/palette (set/mode/palette-color/get/watch)
@@ -48,9 +50,9 @@ mod audio;
 mod chroma;
 mod claude;
 mod client;
-mod cloud;
 mod color;
 mod gesture;
+mod google;
 mod hwstats;
 mod i18n;
 mod icons;
@@ -110,12 +112,16 @@ async fn main() {
         Some("notes") => {
             notes::run(&args);
         }
-        // The Nextcloud account, and its calendars: no daemon needed either.
-        Some("cloud") => {
-            cloud::run(&args);
+        // The Google account, its calendars and its tasks: no daemon needed
+        // either.
+        Some("google") => {
+            google::run(&args);
         }
         Some("agenda") => {
-            cloud::caldav::run(&args);
+            google::calendar::run(&args);
+        }
+        Some("tasks") => {
+            google::tasks::run(&args);
         }
         // MCP server of the pilot's desk tools (started by Claude Code).
         Some("mcp") => {
@@ -151,7 +157,7 @@ async fn main() {
         Some(other) => {
             eprintln!("anna: unknown command '{other}'");
             eprintln!(
-                "Usage: anna [daemon|init|set|mode|palette-color|reset|get|watch|gesture|record|mcp|notes|cloud|agenda|msi-rgb-watch]"
+                "Usage: anna [daemon|init|set|mode|palette-color|reset|get|watch|gesture|record|mcp|notes|google|agenda|tasks|msi-rgb-watch]"
             );
             std::process::exit(2);
         }
@@ -220,8 +226,6 @@ async fn run_daemon(args: &[String]) {
 
     // Every screenshot also lands in the « Notes » tab.
     tokio::spawn(notes::watch_screenshots());
-    // And the notes follow the Nextcloud account, when one is connected.
-    tokio::spawn(cloud::notes::sync_loop());
 
     let ctx = Arc::new(Ctx {
         theme: Mutex::new(Versioned {
