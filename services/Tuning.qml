@@ -3,8 +3,8 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 
-// La référence de l'accordeur (le la, A4), persistée : réglée dans les
-// réglages, lue par le Tuner.
+// La référence de l'accordeur (le la, A4), persistée : réglée sous la
+// jauge du Tuner, qui la lit.
 Singleton {
     id: tuning
 

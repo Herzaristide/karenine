@@ -4,9 +4,9 @@ import QtQuick.Layouts
 import Quickshell
 import "../services"
 
-// L'onglet « Notifications » : celles qu'on n'a pas encore fermées, la plus
-// récente en haut (services/Notifications.qml). En tête, leur nombre et de
-// quoi tout effacer.
+// Les notifications, dépliées sous la cloche de la barre du haut (TopIsland) :
+// celles qu'on n'a pas encore fermées, la plus récente en haut
+// (services/Notifications.qml). En tête, leur nombre et de quoi tout effacer.
 //
 //   3 notifications                                      (Tout effacer)
 //   ╭ [ic] Firefox · 14:02 ─────────────────────────────────────── ✕ ╮
@@ -16,12 +16,15 @@ Item {
     id: root
 
     readonly property int count: Notifications.all.length
+    // Juste ce qu'il faut pour la liste ; le menu la borne, et elle défile.
+    implicitHeight: header.implicitHeight + 10 + Math.max(60, list.contentHeight)
 
     ColumnLayout {
         anchors.fill: parent
         spacing: 10
 
         RowLayout {
+            id: header
             Layout.fillWidth: true
             spacing: 8
 

@@ -10,18 +10,19 @@ import "../widgets"
 // luminosité et le volume. Cachée la plupart du temps, elle glisse du bord
 // quand l'un des deux change (touches du clavier, anna, pavucontrol…) ou
 // quand la souris approche du bord droit, au milieu, et repart un instant
-// après.
+// après. Elle reste là tant que les widgets sont ouverts, comme sa sœur du
+// bord du haut (TopIsland, qui tient aussi les enregistrements en cours).
 //
-//          ╭─────┃         Pendant un enregistrement (le micro ou l'écran,
-//          │  ☀  ┃         services/Recorder.qml), elle reste là, réduite à
-//          │  ┃  ┃         l'enregistrement en cours : son icône rouge qui
-//          │  ●  ┃         bat, le temps écoulé, et ■ pour l'arrêter.
+//          ╭─────┃
+//          │  ☀  ┃
+//          │  ┃  ┃
+//          │  ●  ┃
 //          │ 80% ┃
-//          │ ─── ┃                   ╭─────┃
-//          │  🔊 ┃                   │  ⏺  ┃
-//          │  ┃  ┃                   │ 1:05┃
-//          │  ●  ┃                   │  ■  ┃
-//          │ 64% ┃                   ╰─────┃
+//          │ ─── ┃
+//          │  🔊 ┃
+//          │  ┃  ┃
+//          │  ●  ┃
+//          │ 64% ┃
 //          ╰─────┃ bord
 //
 // Cachée, la fenêtre ne garde qu'un fil de quelques pixels contre le bord
@@ -58,14 +59,18 @@ PanelWindow { // qmllint disable uncreatable-type
     }
 
     // ── Quand se montrer ─────────────────────────────────────────
-    readonly property bool recording: Recorder.audioOn || Recorder.screenOn
-    // Les curseurs : la souris dessus (ou qui vient de partir), un niveau
-    // qui vient de changer, un glisser en cours.
-    readonly property bool levelsWanted: island.hoverHold || flash.running
-                                         || brightSlider.dragging || volSlider.dragging
-    readonly property bool shown: island.levelsWanted || island.recording
-    // Seulement l'enregistrement : la barre réduite.
-    readonly property bool compact: island.recording && !island.levelsWanted
+    // La souris dessus (ou qui vient de partir), un niveau qui vient de
+    // changer, un glisser en cours, ou les widgets ouverts.
+    readonly property bool shown: island.hoverHold || flash.running
+                                  || brightSlider.dragging || volSlider.dragging
+                                  || Widgets.hubOpen
+
+    // La souris dessus : la barre de conversation ne la croit pas partie.
+    Binding {
+        target: Widgets
+        property: "levelsIslandHovered"
+        value: island.hovered && island.shown
+    }
 
     // Au démarrage, les niveaux arrivent (−1 → la valeur lue, PipeWire qui
     // se renseigne) : ce n'est pas un changement à montrer.
@@ -159,9 +164,8 @@ PanelWindow { // qmllint disable uncreatable-type
             radius: Theme.radius
             color: Theme.bgDeep
             border.width: 1
-            border.color: island.recording ? Qt.alpha(Theme.colorDanger, 0.45) : Theme.dividerColor
+            border.color: Theme.dividerColor
             Behavior on height { NumberAnimation { duration: 260; easing.type: Easing.OutQuint } }
-            Behavior on border.color { ColorAnimation { duration: 200 } }
             clip: true
 
             ColumnLayout {
@@ -173,60 +177,41 @@ PanelWindow { // qmllint disable uncreatable-type
 
                 // ── La luminosité ──
                 IconButton {
-                    visible: !island.compact && Brightness.present
+                    visible: Brightness.present
                     icon: "brightness.svg"
                     // Un clic : pleine luminosité, ou la moitié si on y est.
                     onClicked: Brightness.set(Brightness.level > 0.95 ? 0.5 : 1)
                 }
                 LevelSlider {
                     id: brightSlider
-                    visible: !island.compact && Brightness.present
+                    visible: Brightness.present
                     value: Brightness.level
                     minimum: 0.05
                     onMoved: (v) => Brightness.set(v)
                     onStepped: (dir) => Brightness.set(Brightness.level + dir * 0.05)
                 }
                 Percent {
-                    visible: !island.compact && Brightness.present
+                    visible: Brightness.present
                     text: I18n.tr("common.percent", { n: Math.round(brightSlider.shown * 100) })
                 }
-                Separator { visible: !island.compact && Brightness.present }
+                Separator { visible: Brightness.present }
 
                 // ── Le volume ──
                 IconButton {
-                    visible: !island.compact
                     icon: Audio.muted ? "volume-mute.svg" : "volume.svg"
                     alertColor: Audio.muted ? Theme.colorDanger : "transparent"
                     onClicked: Audio.toggleMute()
                 }
                 LevelSlider {
                     id: volSlider
-                    visible: !island.compact
                     value: Audio.level
                     fill: Audio.muted ? Theme.textDim : Theme.accentColor
                     onMoved: (v) => Audio.set(v)
                     onStepped: (dir) => dir > 0 ? Audio.up() : Audio.down()
                 }
                 Percent {
-                    visible: !island.compact
                     text: Audio.muted ? I18n.tr("volume.muted") : I18n.tr("common.percent", { n: Math.round(volSlider.shown * 100) })
                     color: Audio.muted ? Theme.textDim : Theme.textSecondary
-                }
-
-                // ── Les enregistrements en cours ──
-                Separator { visible: !island.compact && island.recording }
-                RecordingTag {
-                    visible: Recorder.screenOn
-                    kind: "screen"
-                    icon: "screen-record.svg"
-                    track: Recorder.screen
-                }
-                Separator { visible: Recorder.screenOn && Recorder.audioOn }
-                RecordingTag {
-                    visible: Recorder.audioOn
-                    kind: "audio"
-                    icon: "mic.svg"
-                    track: Recorder.audio
                 }
             }
         }
@@ -360,43 +345,5 @@ PanelWindow { // qmllint disable uncreatable-type
         font.weight: Font.DemiBold
         font.features: { "tnum": 1 }
         color: Theme.textSecondary
-    }
-
-    // Un enregistrement en cours : son icône rouge qui bat, le temps
-    // écoulé, et ■ pour l'arrêter.
-    component RecordingTag: ColumnLayout {
-        id: tag
-        property string kind
-        property string icon
-        property var track: null
-
-        Layout.alignment: Qt.AlignHCenter
-        spacing: 4
-
-        NixIcon {
-            Layout.alignment: Qt.AlignHCenter
-            iconSize: 16
-            source: "../assets/icons/" + tag.icon
-            color: Theme.colorDanger
-            SequentialAnimation on opacity {
-                running: tag.visible
-                loops: Animation.Infinite
-                NumberAnimation { to: 0.3; duration: 700; easing.type: Easing.InOutSine }
-                NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutSine }
-            }
-        }
-        Text {
-            Layout.alignment: Qt.AlignHCenter
-            text: Recorder.elapsed(tag.track)
-            font.family: island.uiFont
-            font.pixelSize: 10
-            font.weight: Font.DemiBold
-            font.features: { "tnum": 1 }
-            color: Theme.colorDanger
-        }
-        IconButton {
-            icon: "stop.svg"
-            onClicked: Recorder.stop(tag.kind)
-        }
     }
 }

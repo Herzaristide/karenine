@@ -17,7 +17,7 @@ Item {
     property string noteName: "—"
     property int    octave:   0
     property int    cents:    0
-    // A4 reference (concert pitch) in Hz, set in the settings (Tuning).
+    // A4 reference (concert pitch) in Hz, set under the meter (Tuning).
     readonly property real refFreq: Tuning.refFreq
     readonly property bool inTune: freq > 0 && Math.abs(cents) <= 5
 
@@ -177,8 +177,8 @@ Item {
                 Behavior on color { ColorAnimation { duration: 160 } }
             }
 
-            // Sous la jauge : la fréquence entendue, et la référence (elle
-            // se règle dans les réglages).
+            // Sous la jauge : la fréquence entendue, et la référence, qui se
+            // règle ici (− +, la molette, ou ↑ ↓ au clavier).
             Text {
                 anchors.left: parent.left
                 y: meter.mid + 16
@@ -189,14 +189,72 @@ Item {
                 font.features: { "tnum": 1 }
                 color: Theme.textDim
             }
-            Text {
+            Item {
+                id: refRow
                 anchors.right: parent.right
-                y: meter.mid + 16
-                text: "A4 = " + tuner.refFreq.toFixed(0) + " Hz"
-                font.family: "Inter"
-                font.pixelSize: 10
-                color: Theme.textDim
+                y: meter.mid + 12
+                width: refInner.width
+                height: refInner.height
+
+                readonly property bool hovered: refMa.containsMouse || minus.hot
+                                                || plus.hot || refRow.activeFocus
+
+                activeFocusOnTab: true
+                Keys.onUpPressed: Tuning.setRefFreq(Tuning.refFreq + 1)
+                Keys.onDownPressed: Tuning.setRefFreq(Tuning.refFreq - 1)
+                FocusRing { gap: 2 }
+
+                Row {
+                    id: refInner
+                    spacing: 2
+
+                    Nudge { id: minus; step: -1; text: "−"; shown: refRow.hovered }
+                    Text {
+                        height: 18
+                        verticalAlignment: Text.AlignVCenter
+                        text: "A4 = " + tuner.refFreq.toFixed(0) + " Hz"
+                        font.family: "Inter"
+                        font.pixelSize: 10
+                        font.features: { "tnum": 1 }
+                        color: refRow.hovered ? Theme.textSecondary : Theme.textDim
+                        MouseArea {
+                            id: refMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            // Un clic revient au diapason standard.
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: Tuning.setRefFreq(440)
+                            onWheel: (wheel) => Tuning.setRefFreq(Tuning.refFreq + (wheel.angleDelta.y > 0 ? 1 : -1))
+                        }
+                    }
+                    Nudge { id: plus; step: 1; text: "+"; shown: refRow.hovered }
+                }
             }
+        }
+    }
+
+    // Un − ou un + de la référence, qui n'apparaît qu'au survol.
+    component Nudge: Text {
+        id: nudge
+        property int step
+        property bool shown
+        readonly property bool hot: nudgeMa.containsMouse
+        width: 14
+        height: 18
+        horizontalAlignment: Text.AlignHCenter
+        verticalAlignment: Text.AlignVCenter
+        font.family: "Inter"
+        font.pixelSize: 12
+        font.weight: Font.DemiBold
+        color: nudge.hot ? Theme.textPrimary : Theme.textSecondary
+        opacity: nudge.shown ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 140 } }
+        MouseArea {
+            id: nudgeMa
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: Tuning.setRefFreq(Tuning.refFreq + nudge.step)
         }
     }
 }

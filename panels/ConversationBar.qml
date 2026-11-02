@@ -201,9 +201,14 @@ PanelWindow { // qmllint disable uncreatable-type
         // source au milieu du geste. Il repart de zéro au lâcher.
         running: bar.typing && !Gesture.active && !DragState.active
         onRunningChanged: bar.closest = -1
+        // Sur la barre du haut ou celle des niveaux, qui viennent avec les
+        // widgets, la souris n'est pas partie : la mesure repart de là où
+        // elle les quitte.
         onTriggered: {
             if (bar.pointerInside)
                 bar.closest = 0;
+            else if (Widgets.islandHovered)
+                bar.closest = -1;
             else
                 cursorProbe.probe();
         }
@@ -217,7 +222,7 @@ PanelWindow { // qmllint disable uncreatable-type
     // En coordonnées logiques, comme celles de l'écran.
     function cursorAt(x, y) {
         var s = bar.screen;
-        if (!s || !bar.typing || DragState.active)
+        if (!s || !bar.typing || DragState.active || Widgets.islandHovered)
             return;
 
         // Le rectangle de la capsule (widgets compris) seule : y ajouter les

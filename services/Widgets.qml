@@ -15,19 +15,19 @@ import Quickshell
 // le flocon agrandit vers le haut (panels/WidgetHub.qml) : un onglet chacun,
 // un seul affiché à la fois. « explorer » parcourt les dossiers du PC
 // (widgets/FileExplorer.qml). « agenda » montre les calendriers du compte
-// Nextcloud (widgets/CalendarWidget.qml). « camera » reste une carte flottante
-// (FloatingWidgets).
+// Nextcloud (widgets/CalendarWidget.qml). « notifications » n'a pas d'onglet :
+// la cloche de la barre du haut (TopIsland), qui en montre le nombre, les
+// déplie. « camera » reste une carte flottante (FloatingWidgets).
 Singleton {
     id: widgets
 
     readonly property var names: ["explorer", "stats", "notifications", "notes", "agenda", "lecteur", "musique", "son", "camera", "reglages"]
 
     // Les onglets des widgets, dans l'ordre de la barre d'onglets.
-    readonly property var hubTabs: ["explorer", "stats", "notifications", "notes", "agenda", "lecteur", "musique", "reglages"]
+    readonly property var hubTabs: ["explorer", "stats", "notes", "agenda", "lecteur", "musique", "reglages"]
     readonly property var hubLabels: ({
         explorer: I18n.tr("widget.explorer"),
         stats: I18n.tr("widget.stats"),
-        notifications: I18n.tr("widget.notifications"),
         notes: I18n.tr("widget.notes"),
         agenda: I18n.tr("widget.agenda"),
         lecteur: I18n.tr("widget.player"),
@@ -37,7 +37,6 @@ Singleton {
     readonly property var hubIcons: ({
         explorer: "folder.svg",
         stats: "stats.svg",
-        notifications: "bell.svg",
         notes: "notes.svg",
         agenda: "calendar.svg",
         lecteur: "play.svg",
@@ -48,6 +47,15 @@ Singleton {
     // Les widgets affichés dans la capsule, et l'onglet (gardé quand on les ferme).
     property bool hubOpen: false
     property string hubTab: "stats"
+    // Les notifications, dépliées sous la cloche de la barre du haut
+    // (panels/TopIsland.qml) ; repliées quand la capsule se ferme.
+    property bool notificationsOpen: false
+    onHubOpenChanged: if (!widgets.hubOpen) widgets.notificationsOpen = false
+    // La souris sur la barre du haut ou celle des niveaux, qui viennent avec
+    // la capsule : la barre de conversation ne la croit pas partie.
+    property bool topIslandHovered: false
+    property bool levelsIslandHovered: false
+    readonly property bool islandHovered: widgets.topIslandHovered || widgets.levelsIslandHovered
     // Le dossier ouvert dans l'explorateur, gardé d'un onglet à l'autre ;
     // vide : le dossier personnel.
     property string explorerPath: ""
@@ -89,6 +97,8 @@ Singleton {
 
     function isOpen(name) {
         name = widgets.aliases[name] || name;
+        if (name === "notifications")
+            return widgets.hubOpen && widgets.notificationsOpen;
         if (widgets.isHubTab(name))
             return widgets.hubOpen && widgets.hubTab === name;
         return !!widgets.opened[name];
@@ -101,6 +111,13 @@ Singleton {
 
     function _set(name, on) {
         name = widgets.aliases[name] || name;
+        // Ouvrir les notifications ouvre la capsule, sur l'onglet en cours.
+        if (name === "notifications") {
+            if (on)
+                widgets.hubOpen = true;
+            widgets.notificationsOpen = on;
+            return;
+        }
         if (widgets.isHubTab(name)) {
             if (on) {
                 widgets.hubTab = name;

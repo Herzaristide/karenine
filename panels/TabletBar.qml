@@ -656,8 +656,8 @@ Scope {
     }
 
     // Une ligne d'alimentation, comme celles du menu Bluetooth : elle agit
-    // dès le premier tap, comme les boutons de la barre du haut des widgets
-    // (panels/HubTopBar.qml).
+    // dès le premier tap, comme les boutons de la barre du haut
+    // (panels/TopIsland.qml).
     component PowerRow: Rectangle {
         id: row
         property string icon

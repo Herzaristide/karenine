@@ -20,7 +20,7 @@ services/            Cross-cutting singletons and search sources
   Search, Fuzzy, AppSource, FileSource, SettingSource, WallpaperSource,
   NoteSource, WebSource
 panels/              Top-level chrome (Wayland windows)
-  ConversationBar, WidgetHub, HubTopBar, TabletBar, FloatingWidgets, WidgetCard,
+  ConversationBar, WidgetHub, TopIsland, LevelsIsland, TabletBar, FloatingWidgets, WidgetCard,
   PolkitPrompt
 widgets/             Panel contents
   FileExplorer, HardwareStats, MachinePicker, PhoneWidget, NotificationCenter,
