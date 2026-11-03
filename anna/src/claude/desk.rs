@@ -561,7 +561,17 @@ pub fn screen_image() -> Result<(String, String), String> {
         1.0
     };
     let out = Command::new("grim")
-        .args(["-o", name, "-s", &format!("{factor:.3}"), "-t", "jpeg", "-q", "80", "-"])
+        .args([
+            "-o",
+            name,
+            "-s",
+            &format!("{factor:.3}"),
+            "-t",
+            "jpeg",
+            "-q",
+            "80",
+            "-",
+        ])
         .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("grim : {e}"))?;
@@ -572,13 +582,22 @@ pub fn screen_image() -> Result<(String, String), String> {
         ));
     }
     let active = hypr_json("activewindow");
-    let window = |k: &str| active.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    let window = |k: &str| {
+        active
+            .get(k)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
     let text = format!(
         "écran {name} ({w}×{h}) ; fenêtre active : {} — {}. La barre de conversation est en bas.",
         window("class"),
         window("title")
     );
-    Ok((text, base64::engine::general_purpose::STANDARD.encode(&out.stdout)))
+    Ok((
+        text,
+        base64::engine::general_purpose::STANDARD.encode(&out.stdout),
+    ))
 }
 
 /// The desktop state, as `etat_bureau` reports it.

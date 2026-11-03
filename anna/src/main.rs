@@ -700,7 +700,9 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
                 .await
                 .unwrap_or_else(|e| Err(e.to_string()));
             let reply = match result {
-                Ok((text, image)) => serde_json::json!({ "ok": true, "text": text, "image": image }),
+                Ok((text, image)) => {
+                    serde_json::json!({ "ok": true, "text": text, "image": image })
+                }
                 Err(text) => serde_json::json!({ "ok": false, "text": text }),
             };
             let _ = write_line(&mut writer, &reply.to_string()).await;
