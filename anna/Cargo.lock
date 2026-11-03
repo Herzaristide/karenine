@@ -40,7 +40,6 @@ dependencies = [
  "base64",
  "cpal",
  "evdev",
- "libloading 0.9.0",
  "ort",
  "rustfft",
  "serde",

@@ -20,6 +20,8 @@ tab:
   `widget:accordeur` through the [IPC](#shell)).
 - Backend: `anna`'s `tuner` service (`tuner_watch`) — pitch detection by FFT
   autocorrelation, one `{"pitch":<hz>}` line per frame.
+- Reference A4: under the meter (− +, the mouse wheel, ↑ ↓; a click goes
+  back to 440 Hz), persisted by the `Tuning` singleton in `tuner.json`.
 
 ## Chromagram (ChromaGraph)
 
@@ -29,7 +31,13 @@ tab:
 
 ## Metronome
 
-- Widget: `widgets/Metronome.qml`.
+- Widget: `widgets/Metronome.qml`, the face of `services/Tempo.qml`, which
+  holds the tempo, the measure and the session: it keeps beating with the
+  tab closed.
+- Control without the widget: the pilot's `metronome` tool (« lance le
+  métronome à 90 », « arrête le métronome »), or the [IPC](#shell):
+  `echo "metronome:lancer:120:4" > /tmp/qs-panel.fifo`, `metronome:arreter`,
+  `metronome:basculer` (tempo and beats per bar optional).
 - Backend: `anna`'s `metronome` service — sample-accurate `cpal` output
   stream, driven by `{"action":…}` lines, `{"beat":<n>}` events.
 
@@ -39,9 +47,9 @@ tab:
   (« Mic ») or with what the computer plays (« Mic + computer », to play
   over a track). FLAC in the Music folder.
 - Screen: the button next to the screenshot in the top bar
-  (`panels/HubTopBar.qml`) — click, a region; right click, the focused
+  (`panels/TopIsland.qml`) — click, a region; right click, the focused
   monitor; with the computer's sound. MP4 in the Videos folder. The bar
-  hides first so it is not filmed.
+  hides first so it is not filmed; the top bar stays, shrunk, to stop it.
 - Backend: `anna`'s `record` service (`anna/src/recorder.rs`), followed by
   `services/Recorder.qml`. anna owns the recording, so it goes on when the
   tab or the bar closes; while it runs, the button turns red and shows the

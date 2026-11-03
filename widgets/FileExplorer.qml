@@ -6,7 +6,7 @@ import Quickshell.Io
 import "../services"
 
 // L'onglet « Explorer » : les dossiers du PC, sans quitter la barre. À
-// gauche, les favoris (les dossiers du dossier personnel, et /etc/nixos) ; à
+// gauche, les favoris (le dossier personnel, ses dossiers, et /etc/nixos) ; à
 // droite, le chemin, cliquable segment par segment, et le contenu du
 // dossier en tuiles, les dossiers d'abord.
 //
@@ -368,8 +368,9 @@ Item {
     }
 
     // ── Les favoris ──────────────────────────────────────────────
-    // Les dossiers du dossier personnel (sans les cachés), puis la
-    // configuration NixOS. `get()` n'est pas observable : la liste se relit
+    // Le dossier personnel, ses dossiers (sans les cachés), puis la
+    // configuration NixOS. Le dossier personnel ne s'allume que chez lui
+    // (`exact`) : il engloberait les autres favoris. `get()` n'est pas observable : la liste se relit
     // à chaque changement du modèle.
     // Sur un serveur, sa configuration NixOS s'il en a une. Pas de favori
     // pour la racine : il engloberait tout le reste, donc resterait allumé ;
@@ -406,7 +407,8 @@ Item {
     property var places: root.extraPlaces
 
     function rebuildPlaces() {
-        var out = [];
+        var out = [{ label: I18n.tr("explorer.home"), icon: root.themed(["user-home", "folder-home", "folder"], "folder"),
+                     path: root.home, exact: true }];
         for (var i = 0; i < homeDirs.count; i++) {
             var name = homeDirs.get(i, "fileName");
             out.push({ label: name, icon: root.placeIcon(name),
@@ -789,7 +791,8 @@ Item {
                 required property var modelData
                 // Allumé dans le favori comme dans ses sous-dossiers.
                 readonly property bool here: root.path === placeRow.modelData.path
-                                             || root.path.indexOf(placeRow.modelData.path + "/") === 0
+                                             || (!placeRow.modelData.exact
+                                                 && root.path.indexOf(placeRow.modelData.path + "/") === 0)
                 width: ListView.view.width
                 height: root.placeH
 

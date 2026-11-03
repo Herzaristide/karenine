@@ -15,11 +15,9 @@
 //!
 //! What the bar shows — the user's requests, the tool calls, the answers —
 //! is kept here as a short log, pushed to `pilot_watch` subscribers whole on
-//! every change. The answers are also handed to the speech as they stream
-//! (speech.rs), which reads them aloud or not.
+//! every change.
 
 use super::desk;
-use super::speech::Speech;
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::process::Stdio;
@@ -33,19 +31,26 @@ use tokio::sync::{broadcast, Mutex as AsyncMutex};
 /// Restart after this many requests, or this long without one.
 const MAX_TURNS: u32 = 30;
 const MAX_IDLE: Duration = Duration::from_secs(20 * 60);
+/// Claude Code's web tools, the only ones of its own the pilot has.
+const WEB_TOOLS: &str = "WebSearch,WebFetch";
+/// A context block built ahead (`prepare`) is used if this recent.
+const CONTEXT_FRESH: Duration = Duration::from_secs(5);
 /// Entries kept in the log the bar shows.
 const LOG_MAX: usize = 60;
 
-const PROMPT: &str = r#"Tu es le pilote du bureau de l'utilisateur : un assistant intégré à son interface (Hyprland sur NixOS). Il te parle depuis la barre de conversation en bas de l'écran (au clavier, ou à la voix en disant « Karénine »), souvent en quelques mots. Ta réponse s'affiche juste au-dessus de la barre.
+const PROMPT: &str = r#"Tu es {nom}, l'assistant intégré à l'interface de l'utilisateur (Hyprland sur NixOS). Il te parle depuis la barre de conversation en bas de l'écran (au clavier, ou à la voix en disant « {nom} »), souvent en quelques mots. Ta réponse s'affiche juste au-dessus de la barre.
 
 Ce que tu fais :
-- Tu agis sur le bureau avec tes outils : fenêtres et workspaces, son, luminosité, lecture média, applications, URL, projets, captures, couleur d'accent, notes du coffre Obsidian et notes rapides, agenda (`agenda`, en lecture), et les widgets de l'interface (`widget` : stats, notes, agenda, lecteur, musique (métronome et accordeur), son, caméra, réglages).
-- Tu ne fais pas de travail de code ni de recherche approfondie, et tu ne lances pas de session Claude Code : pour ça, propose d'ouvrir le projet (`ouvrir_projet`, dans Zed ou un terminal) et laisse l'utilisateur s'en charger.
-- Tu réponds directement aux questions courtes. Pour une question sur ce que l'utilisateur a déjà noté ou décidé, cherche d'abord dans ses notes (`chercher_notes`).
+- Tu agis sur le bureau avec tes outils : fenêtres et workspaces, son, luminosité, lecture média, applications, URL, projets, captures, couleur d'accent, notes du coffre Obsidian et notes rapides, agenda (`agenda`, en lecture), le métronome (`metronome` : lancer, arrêter, tempo et mesure, sans ouvrir de widget), et les widgets de l'interface (`widget` : stats, notes, agenda, lecteur, musique (métronome et accordeur), son, caméra, réglages).
+- Tu réponds aussi à toutes ses questions, comme un assistant généraliste : culture, sciences, histoire, langue, définitions, explications, calculs et conversions, conseils, recettes… Réponds de ce que tu sais, sans le renvoyer ailleurs.
+- Pour ce qui change ou est récent (actualité, météo, horaires, prix, résultats, versions, ce que tu ne sais pas avec certitude), cherche sur le web (`WebSearch`, puis `WebFetch` pour lire une page) et donne ta source en fin de réponse.
+- Pour une question sur ce qui est affiché (« c'est quoi ça ? », « explique-moi cette erreur », « que dit cette page ? », « ici », « à l'écran »), regarde l'écran (`voir_ecran`) puis réponds à sa question à partir de ce que tu y vois. Ne décris pas tout l'écran : réponds à ce qu'il demande.
+- Pour une question sur ce que l'utilisateur a déjà noté ou décidé, cherche d'abord dans ses notes (`chercher_notes`).
+- Tu ne fais pas de travail de code sur ses projets et tu ne lances pas de session Claude Code : pour ça, propose d'ouvrir le projet (`ouvrir_projet`, dans Zed ou un terminal) et laisse l'utilisateur s'en charger. Expliquer une notion de programmation reste une question comme une autre.
 
 Comment :
 - Agis d'abord, puis confirme en une phrase courte (« Volume à 30 %. », « Zed ouvert sur karenine. »). Pas de préambule, pas de « bien sûr ».
-- Une réponse à une question : six lignes au plus, en markdown si utile.
+- Une réponse à une question : directe, la réponse d'abord, puis l'essentiel ; quelques lignes suffisent le plus souvent, une quinzaine au plus si le sujet l'exige. Markdown si utile (listes, gras), pas de titres.
 - Ne change pas la fenêtre ou le workspace affichés sauf si on te le demande : l'utilisateur est peut-être en train de travailler.
 - Si la demande est ambiguë (quelle fenêtre ? quel projet ?), pose une seule question courte au lieu de deviner. `etat_bureau` te montre ce qui est ouvert.
 - Fermer une fenêtre et lancer une commande shell s'exécutent sans confirmation : ne le fais que si la demande est claire. Tu ne reconstruis jamais le système NixOS : c'est à l'utilisateur de le faire.
@@ -78,9 +83,10 @@ pub struct Pilot {
     streamed: AtomicBool,
     turns: AtomicU32,
     last: Mutex<Instant>,
+    /// The context block built ahead (`prepare`), and when.
+    context: Mutex<Option<(Instant, tokio::task::JoinHandle<String>)>>,
     log: Mutex<VecDeque<Value>>,
     tx: broadcast::Sender<String>,
-    speech: Arc<Speech>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -109,7 +115,7 @@ fn action_line(name: &str, input: &Value) -> String {
 }
 
 impl Pilot {
-    pub fn new(speech: Arc<Speech>) -> Arc<Self> {
+    pub fn new() -> Arc<Self> {
         let (tx, _) = broadcast::channel(32);
         Arc::new(Pilot {
             proc: AsyncMutex::new(None),
@@ -119,14 +125,10 @@ impl Pilot {
             streamed: AtomicBool::new(false),
             turns: AtomicU32::new(0),
             last: Mutex::new(Instant::now()),
+            context: Mutex::new(None),
             log: Mutex::new(VecDeque::new()),
             tx,
-            speech,
         })
-    }
-
-    pub fn speech(&self) -> &Arc<Speech> {
-        &self.speech
     }
 
     pub fn snapshot_line(&self) -> String {
@@ -152,7 +154,6 @@ impl Pilot {
 
     /// Forget the conversation: the next request starts a fresh process.
     pub async fn reset(&self) {
-        self.speech.stop();
         self.stop().await;
         lock(&self.log).clear();
         self.in_text.store(false, Ordering::SeqCst);
@@ -183,7 +184,7 @@ impl Pilot {
             "args": ["mcp"],
             "env": { "LD_LIBRARY_PATH": "" },
         }}});
-        let mut prompt = PROMPT.to_string();
+        let mut prompt = PROMPT.replace("{nom}", super::wake::WakeWord::current().display.as_str());
         if let Some(p) = preferences() {
             prompt.push_str("\n\nPréférences de l'utilisateur :\n");
             prompt.push_str(&p);
@@ -204,13 +205,15 @@ impl Pilot {
                 &model,
                 "--system-prompt",
                 &prompt,
+                // Of Claude Code's own tools, only the web: for what it
+                // doesn't know or that changes.
                 "--tools",
-                "",
+                WEB_TOOLS,
                 "--mcp-config",
                 &mcp.to_string(),
                 "--strict-mcp-config",
                 "--allowedTools",
-                "mcp__anna",
+                &format!("mcp__anna,{WEB_TOOLS}"),
                 "--setting-sources",
                 "project",
                 "--no-session-persistence",
@@ -248,10 +251,12 @@ impl Pilot {
         }
         *slot = Some(Proc { pid, stdin });
         self.turns.store(0, Ordering::SeqCst);
+        // Idle time counts from its start: one started ahead isn't stale.
+        *lock(&self.last) = Instant::now();
         Ok(())
     }
 
-    fn on_event(&self, line: &str) {
+    fn on_event(self: &Arc<Self>, line: &str) {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             return;
         };
@@ -268,8 +273,6 @@ impl Pilot {
                             let t = b.get("text").and_then(Value::as_str).unwrap_or("").trim();
                             if !t.is_empty() {
                                 self.push("reply", t);
-                                self.speech.feed(t);
-                                self.speech.flush();
                             }
                         }
                         Some("tool_use") => {
@@ -292,9 +295,14 @@ impl Pilot {
                         .unwrap_or_else(|| crate::i18n::tr("failed"));
                     self.push("error", &why);
                 }
-                self.speech.end();
                 self.busy.store(false, Ordering::SeqCst);
                 self.publish();
+                // That was the last turn: the fresh process is started now,
+                // not when the next request comes.
+                if self.turns.load(Ordering::SeqCst) >= MAX_TURNS {
+                    let me = Arc::clone(self);
+                    tokio::spawn(async move { me.prewarm().await });
+                }
             }
             Some("stream_event") => {
                 if let Some(event) = v.get("event") {
@@ -329,7 +337,6 @@ impl Pilot {
                         text.push_str(piece);
                     }
                     drop(log);
-                    self.speech.feed(piece);
                 } else {
                     // Nothing shown before the first words.
                     let piece = piece.trim_start();
@@ -339,7 +346,6 @@ impl Pilot {
                     self.push("reply", piece);
                     self.in_text.store(true, Ordering::SeqCst);
                     self.streamed.store(true, Ordering::SeqCst);
-                    self.speech.feed(piece);
                 }
                 self.publish();
             }
@@ -350,7 +356,6 @@ impl Pilot {
                     text.truncate(end);
                 }
                 drop(log);
-                self.speech.flush();
                 self.publish();
             }
             _ => {}
@@ -367,42 +372,60 @@ impl Pilot {
         *slot = None;
         drop(slot);
         if self.busy.swap(false, Ordering::SeqCst) {
-            self.speech.end();
             self.push("error", &crate::i18n::tr("pilot.stopped"));
             self.publish();
         }
     }
 
-    /// Send one request. Its answer arrives through the log. `spoken`: it
-    /// was said, not typed (the answer may then be read aloud).
-    pub async fn ask(
-        self: &Arc<Self>,
-        text: &str,
-        clipboard: bool,
-        spoken: bool,
-    ) -> Result<(), String> {
+    /// Too long idle or too many turns: the process is to be renewed.
+    fn stale(&self) -> bool {
+        let last = *lock(&self.last);
+        last.elapsed() > MAX_IDLE || self.turns.load(Ordering::SeqCst) >= MAX_TURNS
+    }
+
+    /// Have a fresh process ready for the next request — started, or
+    /// renewed if stale — so that it doesn't wait for the start-up. Called
+    /// when the user starts speaking.
+    pub async fn prewarm(self: &Arc<Self>) {
+        if self.busy.load(Ordering::SeqCst) {
+            return;
+        }
+        if self.stale() {
+            self.stop().await;
+        }
+        let mut slot = self.proc.lock().await;
+        if slot.is_none() {
+            if let Err(e) = self.spawn(&mut slot) {
+                eprintln!("anna: {e}");
+            }
+        }
+    }
+
+    /// Build the context block now, for a request about to come (the voice,
+    /// once the user goes quiet). Must run inside the runtime.
+    pub fn prepare(&self) {
+        let job = tokio::task::spawn_blocking(|| context_block(false));
+        *lock(&self.context) = Some((Instant::now(), job));
+    }
+
+    /// Send one request. Its answer arrives through the log.
+    pub async fn ask(self: &Arc<Self>, text: &str, clipboard: bool) -> Result<(), String> {
         if self.busy.load(Ordering::SeqCst) {
             return Err(crate::i18n::tr("pilot.busy"));
         }
-        // A new request silences the last answer.
-        let aloud = self.speech.begin(spoken);
-        let stale = {
-            let last = *lock(&self.last);
-            last.elapsed() > MAX_IDLE || self.turns.load(Ordering::SeqCst) >= MAX_TURNS
-        };
-        if stale {
+        if self.stale() {
             self.stop().await;
         }
 
-        let context = tokio::task::spawn_blocking(move || context_block(clipboard))
-            .await
-            .unwrap_or_default();
-        let aloud = if aloud {
-            "\nréponse lue à voix haute : phrases courtes, sans markdown, sans liste ni code\n"
-        } else {
-            "\n"
-        };
-        let message = format!("{context}{aloud}[demande]\n{text}");
+        // Built ahead a moment ago, or now.
+        let prepared = lock(&self.context)
+            .take()
+            .filter(|(at, _)| !clipboard && at.elapsed() < CONTEXT_FRESH)
+            .map(|(_, job)| job);
+        let job = prepared
+            .unwrap_or_else(|| tokio::task::spawn_blocking(move || context_block(clipboard)));
+        let context = job.await.unwrap_or_default();
+        let message = format!("{context}\n[demande]\n{text}");
 
         let mut slot = self.proc.lock().await;
         if slot.is_none() {
@@ -474,7 +497,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_streamed_reply_grows_in_one_entry() {
-        let pilot = Pilot::new(Speech::new());
+        let pilot = Pilot::new();
         let delta = |t: &str| {
             json!({ "type": "stream_event", "event": { "type": "content_block_delta",
                 "delta": { "type": "text_delta", "text": t } } })

@@ -20,37 +20,15 @@ Singleton {
     // anna écoute jusqu'à la fin de la phrase, transcrit en local, et
     // transmet au pilote. voicePhase : "idle", "listening" ou "transcribing".
     property string voicePhase: "idle"
+    // Lancée par le mot d'éveil, que la transcription n'a pas encore
+    // confirmé : la barre l'attend sans couleur.
+    property bool voiceWaking: false
     property real voiceLevel: 0
-    // Ce qui a été compris : en direct pendant l'écoute (voicePartial), puis
-    // la phrase finale.
-    property string voiceText: ""
-    property bool voicePartial: false
     property string voiceError: ""
     // Le mot d'activation écoute (micro ouvert en continu).
     property bool voiceWake: false
     // Le mot d'éveil de cette machine (« Karénine », « Bernanos »…).
     property string voiceWakeWord: "Karénine"
-
-    // Les réponses lues à voix haute (anna/src/claude/speech.rs).
-    // speechMode : "off", "voice" (demandes dites seulement) ou "always".
-    // speechVoices : [{ id, name }], les voix Piper installées ; speechVoice
-    // est celle qui lit.
-    property string speechMode: "voice"
-    property string speechVoice: ""
-    property var speechVoices: []
-    property string speechError: ""
-
-    function speechSetMode(mode) {
-        pilot._send({ cmd: "speech_set", mode: mode });
-    }
-
-    function speechSetVoice(id) {
-        pilot._send({ cmd: "speech_set", voice: id });
-    }
-
-    function speechStop() {
-        pilot._send({ cmd: "speech_stop" });
-    }
 
     // Lance l'écoute, ou la termine tout de suite si elle est en cours.
     function voiceToggle(send) {
@@ -73,18 +51,10 @@ Singleton {
                 // La phase en dernier : qui réagit à la fin de l'écoute
                 // trouve déjà le texte final.
                 pilot.voiceLevel = msg.voice.level || 0;
-                pilot.voiceText = msg.voice.text || "";
-                pilot.voicePartial = !!msg.voice.partial;
+                pilot.voiceWaking = !!msg.voice.waking;
                 pilot.voiceError = msg.voice.error || "";
                 pilot.voiceWake = !!msg.voice.wake;
                 pilot.voiceWakeWord = msg.voice.wakeWord || "Karénine";
-                var s = msg.voice.speech;
-                if (s) {
-                    pilot.speechMode = s.mode || "voice";
-                    pilot.speechVoice = s.voice || "";
-                    pilot.speechVoices = s.voices || [];
-                    pilot.speechError = s.error || "";
-                }
                 pilot.voicePhase = msg.voice.phase;
             }
         }

@@ -28,10 +28,12 @@
 //!   anna say <text> [file.wav]
 //!                        speak a text with the chosen voice, no daemon
 //!   anna notes …         the « Notes » tab, on its files (notes.rs)
-//!   anna cloud status|connect|cancel|disconnect
-//!                        the Nextcloud account (cloud/)
+//!   anna google status|client|connect|cancel|disconnect
+//!                        the Google account (google/)
 //!   anna agenda <from> <to>
-//!                        its calendars' events (cloud/caldav.rs)
+//!                        its calendars' events (google/calendar.rs)
+//!   anna tasks [list] | done <list> <id> [no]
+//!                        its tasks (google/tasks.rs)
 //!
 //! Services exposed over `$XDG_RUNTIME_DIR/anna.sock`:
 //!   - theme    : accent/palette (set/mode/palette-color/get/watch)
@@ -39,7 +41,7 @@
 //!   - servers  : tailnet devices, stats over ssh (servers_watch / servers_list)
 //!   - phone    : KDE Connect phones (phone_watch / phone_action)
 //!   - gesture  : webcam control (gesture_get/set/toggle/watch)
-//!   - pilot    : the desk pilot, its voice and speech (pilot_*/voice_*/speech_*)
+//!   - pilot    : the desk pilot and its voice (pilot_*/voice_*)
 //!   - record   : microphone and screen recordings (record_toggle/stop/get/watch)
 //!     and the sound takes (record_peaks/play/pause)
 
@@ -48,9 +50,9 @@ mod audio;
 mod chroma;
 mod claude;
 mod client;
-mod cloud;
 mod color;
 mod gesture;
+mod google;
 mod hwstats;
 mod i18n;
 mod icons;
@@ -110,21 +112,20 @@ async fn main() {
         Some("notes") => {
             notes::run(&args);
         }
-        // The Nextcloud account, and its calendars: no daemon needed either.
-        Some("cloud") => {
-            cloud::run(&args);
+        // The Google account, its calendars and its tasks: no daemon needed
+        // either.
+        Some("google") => {
+            google::run(&args);
         }
         Some("agenda") => {
-            cloud::caldav::run(&args);
+            google::calendar::run(&args);
+        }
+        Some("tasks") => {
+            google::tasks::run(&args);
         }
         // MCP server of the pilot's desk tools (started by Claude Code).
         Some("mcp") => {
             claude::mcp::run();
-        }
-        // Speak a text with the chosen voice, without the daemon
-        // (claude/speech.rs).
-        Some("say") => {
-            claude::speech::say_offline(&args);
         }
         // Scores of the wake word over a WAV, 80 ms apart (claude/wake.rs).
         Some("wake-score") => {
@@ -151,7 +152,7 @@ async fn main() {
         Some(other) => {
             eprintln!("anna: unknown command '{other}'");
             eprintln!(
-                "Usage: anna [daemon|init|set|mode|palette-color|reset|get|watch|gesture|record|mcp|notes|cloud|agenda|msi-rgb-watch]"
+                "Usage: anna [daemon|init|set|mode|palette-color|reset|get|watch|gesture|record|mcp|notes|google|agenda|tasks|msi-rgb-watch]"
             );
             std::process::exit(2);
         }
@@ -209,10 +210,8 @@ async fn run_daemon(args: &[String]) {
     let verbose = std::env::var_os("ANNA_GESTURE_DEBUG").is_some();
     let gesture = gesture::Gesture::start(&paths::accent_dir(), verbose, false);
 
-    // The pilot: the conversation bar's requests for the desktop, its
-    // answers read aloud (Piper voices, local).
-    let speech = claude::speech::Speech::new();
-    let pilot = claude::pilot::Pilot::new(speech);
+    // The pilot: the conversation bar's requests for the desktop.
+    let pilot = claude::pilot::Pilot::new();
     // Speaking to the pilot (Parakeet, local).
     let voice = claude::voice::Voice::new(Arc::clone(&pilot));
     // Recording the microphone and the screen (recorder.rs).
@@ -220,8 +219,6 @@ async fn run_daemon(args: &[String]) {
 
     // Every screenshot also lands in the « Notes » tab.
     tokio::spawn(notes::watch_screenshots());
-    // And the notes follow the Nextcloud account, when one is connected.
-    tokio::spawn(cloud::notes::sync_loop());
 
     let ctx = Arc::new(Ctx {
         theme: Mutex::new(Versioned {
@@ -607,7 +604,7 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
 
         // ── Pilot ────────────────────────────────────────────────────────
         Command::PilotAsk { text, clipboard } => {
-            write_result(&mut writer, ctx.pilot.ask(&text, clipboard, false).await).await;
+            write_result(&mut writer, ctx.pilot.ask(&text, clipboard).await).await;
         }
 
         Command::PilotWatch => {
@@ -664,27 +661,6 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             write_result(&mut writer, Ok(())).await;
         }
 
-        Command::SpeechSet { mode, voice } => {
-            let result = match mode.as_deref().map(|m| (m, claude::speech::Mode::parse(m))) {
-                Some((m, None)) => Err(format!("mode inconnu : {m} (off, voice, always)")),
-                parsed => {
-                    ctx.pilot.speech().set(parsed.and_then(|(_, m)| m), voice);
-                    Ok(())
-                }
-            };
-            write_result(&mut writer, result).await;
-        }
-
-        Command::SpeechSay { text } => {
-            ctx.pilot.speech().say(&text);
-            write_result(&mut writer, Ok(())).await;
-        }
-
-        Command::SpeechStop => {
-            ctx.pilot.speech().stop();
-            write_result(&mut writer, Ok(())).await;
-        }
-
         Command::VoiceSimulate { path, send } => {
             let result = match tokio::fs::read(&path)
                 .await
@@ -718,6 +694,19 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             write_result(&mut writer, Ok(())).await;
         }
 
+        // The screen goes back as an image, beside the text (claude/mcp.rs).
+        Command::Desk { tool, .. } if tool == "voir_ecran" => {
+            let result = tokio::task::spawn_blocking(claude::desk::screen_image)
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()));
+            let reply = match result {
+                Ok((text, image)) => {
+                    serde_json::json!({ "ok": true, "text": text, "image": image })
+                }
+                Err(text) => serde_json::json!({ "ok": false, "text": text }),
+            };
+            let _ = write_line(&mut writer, &reply.to_string()).await;
+        }
         Command::Desk { tool, args } => {
             let result = run_desk(&ctx, &tool, &args).await;
             let reply = match result {
