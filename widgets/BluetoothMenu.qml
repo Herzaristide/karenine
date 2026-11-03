@@ -6,7 +6,7 @@ import Quickshell.Io
 import "../services"
 
 // Le menu Bluetooth, déplié sous son bouton dans la barre du haut des
-// widgets (HubTopBar). En tête, l'interrupteur de l'adaptateur ; puis les
+// widgets (TopIsland). En tête, l'interrupteur de l'adaptateur ; puis les
 // appareils : les connectés d'abord, les appairés, puis ceux qu'on découvre.
 //
 //   ╭ Bluetooth                         recherche…  (●━) ╮

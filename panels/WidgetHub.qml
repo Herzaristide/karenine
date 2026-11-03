@@ -6,14 +6,12 @@ import "../widgets"
 
 // Les widgets, dans la capsule de la barre de conversation : le flocon
 // l'agrandit vers le haut, et la place gagnée au-dessus du champ les montre.
-// En haut, une barre qui ne change pas d'un onglet à l'autre (HubTopBar :
-// l'alimentation, le Bluetooth, la capture) ; puis un widget à
-// la fois, en largeur ; la barre d'onglets, juste au-dessus du champ, passe
-// de l'un à l'autre.
+// Un widget à la fois, en largeur ; la barre d'onglets, juste au-dessus du
+// champ, passe de l'un à l'autre. L'alimentation, les notifications, le
+// Bluetooth et la capture ont leur barre au bord du haut de l'écran
+// (TopIsland), qui descend avec les widgets.
 //
 //   ╭────────────────────────────────────────────────╮
-//   │ (🔒)(☾)(⇥)(↻)(⏻)             (ᛒ)(📷)(●)  [87] │  la barre du haut
-//   │ ────────────────────────────────────────────── │
 //   │                                                │
 //   │      le widget de l'onglet, à l'horizontale     │  fondu croisé et léger
 //   │                                                │  glissement d'un onglet
@@ -28,10 +26,11 @@ import "../widgets"
 // widget ne fait plus tourner ses processus (sondes, lecteur, micro).
 //
 // Au clavier, tout s'atteint : Tab et Maj+Tab passent d'un contrôle à
-// l'autre (la barre du haut, le widget, les onglets, puis le champ), Entrée
-// ou Espace actionne, les flèches règlent ce qui se règle. Ailleurs, et
-// dans le champ vide, ← → changent de widget ; Ctrl+Tab aussi. Échap rend
-// le clavier au champ. Une portée de focus : la barre sait qu'il est ici.
+// l'autre (le widget, les onglets, puis le champ), Entrée ou Espace
+// actionne, les flèches règlent ce qui se règle. Ailleurs, et dans le champ
+// vide, ← → changent de widget ; Ctrl+Tab aussi. Échap replie les
+// notifications, sinon rend le clavier au champ. Une portée de focus : la
+// barre sait qu'il est ici.
 FocusScope {
     id: hub
 
@@ -68,7 +67,10 @@ FocusScope {
             hub.step(event.key === Qt.Key_Left ? -1 : 1);
             event.accepted = true;
         } else if (event.key === Qt.Key_Escape) {
-            hub.leave();
+            if (Widgets.notificationsOpen)
+                Widgets.notificationsOpen = false;
+            else
+                hub.leave();
             event.accepted = true;
         }
     }
@@ -76,8 +78,6 @@ FocusScope {
     readonly property int pad: 14
     readonly property int tabsH: 40
     readonly property int gap: 12
-    // La barre du haut (alimentation, capture), la même pour tous les onglets.
-    readonly property int topH: 38
 
     // La hauteur de chaque widget, à l'horizontale.
     readonly property var heights: ({
@@ -85,11 +85,10 @@ FocusScope {
         explorer: Widgets.explorerHeight,
         // Le choix de la machine, trois cartes, puis le téléphone.
         stats: 30 + 10 + 150 + 10 + 76,
-        notifications: 300,
         // Le champ, puis le mur de cartes, qui défile.
         notes: 340,
-        // Le mois (six semaines), à côté du jour choisi.
-        agenda: 330,
+        // La grille du mois (six semaines), ou la semaine heure par heure.
+        agenda: 440,
         lecteur: 210,
         // L'accordeur et le métronome, puis s'enregistrer (MusicPanel).
         musique: 196,
@@ -97,8 +96,7 @@ FocusScope {
     })
     readonly property int contentH: hub.heights[Widgets.hubTab] || 200
     // Ce que la capsule doit ajouter au-dessus du champ.
-    readonly property int preferredHeight: hub.pad + hub.topH + hub.gap + 1 + hub.gap
-                                           + hub.contentH + hub.gap + hub.tabsH + 6
+    readonly property int preferredHeight: hub.pad + hub.contentH + hub.gap + hub.tabsH + 6
 
     readonly property int current: Math.max(0, Widgets.hubTabs.indexOf(Widgets.hubTab))
     // Les widgets n'apparaissent qu'une fois la capsule bien ouverte, et
@@ -107,32 +105,11 @@ FocusScope {
     visible: hub.expand > 0
     clip: true
 
-    // ── La barre du haut ─────────────────────────────────────────
-    HubTopBar {
-        id: topBar
-        bar: hub.bar
-        // Au-dessus du widget : le menu Bluetooth se déplie par-dessus.
-        z: 2
-        x: hub.pad + 4
-        y: hub.pad
-        width: hub.width - 2 * (hub.pad + 4)
-        height: hub.topH
-    }
-
-    // Le fil sous la barre du haut.
-    Rectangle {
-        x: hub.pad + 10
-        y: hub.pad + hub.topH + hub.gap
-        width: hub.width - 2 * (hub.pad + 10)
-        height: 1
-        color: Theme.dividerColor
-    }
-
     // ── Le widget ────────────────────────────────────────────────
     FocusScope {
         id: content
         x: hub.pad + 4
-        y: hub.pad + hub.topH + 2 * hub.gap + 1
+        y: hub.pad
         width: hub.width - 2 * (hub.pad + 4)
         height: hub.contentH
 
@@ -165,7 +142,6 @@ FocusScope {
 
                 sourceComponent: page.modelData === "explorer" ? explorerPage
                                : page.modelData === "stats" ? statsPage
-                               : page.modelData === "notifications" ? notificationsPage
                                : page.modelData === "notes" ? notesPage
                                : page.modelData === "agenda" ? agendaPage
                                : page.modelData === "lecteur" ? playerPage
@@ -178,7 +154,6 @@ FocusScope {
     // Un fichier ouvert : la barre s'efface pour laisser voir l'application.
     Component { id: explorerPage; FileExplorer { onOpened: hub.bar.dismiss() } }
     Component { id: statsPage; HardwareStats {} }
-    Component { id: notificationsPage; NotificationCenter {} }
     Component { id: notesPage; NotesWidget {} }
     Component { id: agendaPage; CalendarWidget {} }
     Component { id: playerPage; MusicPlayerWidget {} }
@@ -273,7 +248,7 @@ FocusScope {
 
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
-                        // Huit onglets se partagent la largeur : un nom trop
+                        // Sept onglets se partagent la largeur : un nom trop
                         // long s'abrège plutôt que de déborder sur le voisin.
                         width: Math.min(implicitWidth, tabBar.tabW - 16 - 7 - 10)
                         elide: Text.ElideRight

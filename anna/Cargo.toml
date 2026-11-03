@@ -23,8 +23,8 @@ rustfft = "6"
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "api-24"] }
 # uinput virtual pointer (absolute axes + left button).
 evdev = "0.13"
-# The Nextcloud account (cloud/): its notes API, CalDAV and the login flow,
-# over HTTPS. rustls with bundled roots: no OpenSSL to link, no system store
+# The Google account (google/): OAuth, the Calendar and Tasks APIs, over
+# HTTPS. rustls with bundled roots: no OpenSSL to link, no system store
 # to find.
 ureq = { version = "2.12", default-features = false, features = ["tls"] }
 base64 = "0.22"

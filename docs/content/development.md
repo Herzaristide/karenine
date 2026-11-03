@@ -58,7 +58,7 @@ second `quickshell -p` instance, which breaks the IPC FIFO:
   Music and Call.
 - **Audio tools**: the tuner reads a tone, the metronome stays in time when
   the tempo changes.
-- **Notifications**: `notify-send test` lands in the Notifications tab.
+- **Notifications**: `notify-send test` raises the count on the bell of the top bar.
 - **Lock**: `loginctl lock-session`, unlock with the password.
 - **Pilot**: a request typed in the bar (or said after “Karénine”) acts on
   the desktop, and its answer shows above the bar.

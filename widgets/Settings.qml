@@ -128,8 +128,8 @@ Item {
                 }
 
                 // ── COMPTE section ─────────────────────────────────
-                // Le compte Nextcloud (Murena…) : les notes s'y
-                // synchronisent, l'onglet Agenda y lit les calendriers.
+                // Le compte Google : l'onglet Agenda y lit les agendas et
+                // les tâches.
                 Text {
                     Layout.bottomMargin: 10
                     text: I18n.tr("settings.account")
@@ -139,7 +139,7 @@ Item {
                     color: Theme.accentMuted
                 }
 
-                CloudAccount {
+                GoogleAccount {
                     Layout.fillWidth: true
                     Layout.bottomMargin: 18
                 }
@@ -245,112 +245,11 @@ Item {
                     }
                 }
 
-                // ── ACCORDEUR section ──────────────────────────────
-                // Le la de référence du Tuner, gardé d'une session à l'autre.
-                Text {
-                    Layout.topMargin: 6
-                    Layout.bottomMargin: 10
-                    text: I18n.tr("settings.tuner")
-                    font.family: "Inter"
-                    font.pixelSize: 12
-                    font.letterSpacing: 0
-                    color: Theme.accentMuted
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 46
-                    Layout.bottomMargin: 18
-                    radius: Theme.radius
-                    color: Qt.alpha(Theme.textPrimary, 0.05)
-
-                    Column {
-                        anchors.left: parent.left
-                        anchors.leftMargin: 12
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 1
-
-                        Text {
-                            text: I18n.tr("settings.tuner.reference")
-                            font.family: "Inter"
-                            font.pixelSize: 12
-                            font.weight: Font.Medium
-                            color: Theme.textPrimary
-                        }
-                        Text {
-                            text: Tuning.refFreq === 440 ? I18n.tr("settings.tuner.standard") : I18n.tr("settings.tuner.standardIs")
-                            font.family: "Inter"
-                            font.pixelSize: 10
-                            color: Theme.textSecondary
-                        }
-                    }
-
-                    RowLayout {
-                        anchors.right: parent.right
-                        anchors.rightMargin: 8
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 6
-
-                        GlassButton {
-                            implicitWidth: 28
-                            implicitHeight: 28
-                            fontSize: 14
-                            text: "−"
-                            onClicked: Tuning.setRefFreq(Tuning.refFreq - 1)
-                        }
-                        TextInput {
-                            id: refInput
-                            Layout.preferredWidth: 30
-                            text: Tuning.refFreq.toFixed(0)
-                            font.family: "Inter"
-                            font.pixelSize: 13
-                            font.weight: Font.DemiBold
-                            color: Theme.textPrimary
-                            horizontalAlignment: TextInput.AlignHCenter
-                            selectByMouse: true
-                            inputMethodHints: Qt.ImhDigitsOnly
-                            validator: IntValidator { bottom: Tuning.minFreq; top: Tuning.maxFreq }
-                            // ↑ ↓ : un hertz de plus ou de moins.
-                            activeFocusOnTab: true
-                            Keys.onUpPressed: refInput.nudge(1)
-                            Keys.onDownPressed: refInput.nudge(-1)
-                            function nudge(d) {
-                                Tuning.setRefFreq(Tuning.refFreq + d);
-                                text = Tuning.refFreq.toFixed(0);
-                            }
-                            FocusRing { radius: 6; anchors.leftMargin: -4; anchors.rightMargin: -4 }
-                            onEditingFinished: {
-                                Tuning.setRefFreq(parseInt(text));
-                                text = Tuning.refFreq.toFixed(0);
-                            }
-                            Connections {
-                                target: Tuning
-                                function onRefFreqChanged() {
-                                    if (!refInput.activeFocus)
-                                        refInput.text = Tuning.refFreq.toFixed(0);
-                                }
-                            }
-                        }
-                        Text {
-                            text: "Hz"
-                            font.family: "Inter"
-                            font.pixelSize: 11
-                            color: Theme.textSecondary
-                        }
-                        GlassButton {
-                            implicitWidth: 28
-                            implicitHeight: 28
-                            fontSize: 14
-                            text: "+"
-                            onClicked: Tuning.setRefFreq(Tuning.refFreq + 1)
-                        }
-                    }
-                }
-
                 // ── VOIX section ───────────────────────────────────
                 // Le mot d'éveil « Karénine » (anna/src/claude/wake.rs) :
                 // anna le garde d'un redémarrage à l'autre.
                 Text {
+                    Layout.topMargin: 6
                     Layout.bottomMargin: 10
                     text: I18n.tr("settings.voice")
                     font.family: "Inter"

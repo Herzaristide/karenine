@@ -97,17 +97,6 @@ ShellRoot {
 
     // La barre de conversation, en bas au centre : le flocon (la voix) et le
     // champ qui parle au pilote, sa réponse au-dessus.
-    // Le fond d'écran : un tableau noir par écran, chacun avec ses notes et
-    // ses traits (panels/Blackboard.qml).
-    Variants {
-        model: Quickshell.screens
-
-        Blackboard {
-            required property var modelData
-            screen: modelData
-        }
-    }
-
     Variants {
         model: root.primaryScreens
 
@@ -124,27 +113,27 @@ ShellRoot {
         }
     }
 
-    // La barre tactile, à gauche (en bas en portrait) : la batterie, le
-    // flocon qui fait monter la barre de conversation comme Super, et les
-    // workspaces.
-    Variants {
-        model: root.primaryScreens
-
-        TabletBar {
-            property var modelData
-            screen: modelData
-            onAskRequested: root.barToggled()
-        }
-    }
-
-    // La petite barre du haut : la luminosité et le volume quand ils
-    // changent ou que la souris approche, l'enregistrement en cours.
+    // La petite barre du bord droit : la luminosité et le volume quand ils
+    // changent, que la souris approche ou que les widgets sont ouverts.
     Variants {
         model: root.primaryScreens
 
         LevelsIsland {
             property var modelData
             screen: modelData
+        }
+    }
+
+    // Sa sœur du bord du haut, avec les widgets : l'alimentation, les
+    // notifications, le Bluetooth, la capture, la batterie ; seule,
+    // l'enregistrement en cours.
+    Variants {
+        model: root.primaryScreens
+
+        TopIsland {
+            property var modelData
+            screen: modelData
+            onDismissRequested: root.barClosed()
         }
     }
 

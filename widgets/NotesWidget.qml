@@ -6,9 +6,7 @@ import Quickshell.Io
 import "../services"
 
 // L'onglet « Notes » : un mur de cartes, à la Keep (anna/src/notes.rs, dans
-// ~/.local/share/anna/notes). Avec un compte Nextcloud connecté (réglages),
-// les notes de texte s'y synchronisent : le daemon réécrit notes.json, et le
-// mur suit. Les images restent sur ce PC. Une note
+// ~/.local/share/anna/notes), sur ce PC seulement. Une note
 // s'écrit dans la barre : on la tape, puis « Créer une note » parmi les
 // résultats (services/NoteSource.qml, qui y met aussi les notes trouvées).
 // Ici, on colle du texte ou une image (une capture, une image copiée du
