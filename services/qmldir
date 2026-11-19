@@ -10,20 +10,16 @@ FileSource 1.0 FileSource.qml
 WebSource 1.0 WebSource.qml
 SettingSource 1.0 SettingSource.qml
 WallpaperSource 1.0 WallpaperSource.qml
-NoteSource 1.0 NoteSource.qml
-CursorProbe 1.0 CursorProbe.qml
 singleton Pilot 1.0 Pilot.qml
 singleton DefaultApps 1.0 DefaultApps.qml
 singleton DragState 1.0 DragState.qml
 singleton Display 1.0 Display.qml
-singleton Gesture 1.0 Gesture.qml
 singleton Widgets 1.0 Widgets.qml
 singleton Tuning 1.0 Tuning.qml
 singleton I18n 1.0 I18n.qml
 singleton Notifications 1.0 Notifications.qml
-singleton Board 1.0 Board.qml
-singleton Chalk 1.0 Chalk.qml
 singleton Recorder 1.0 Recorder.qml
 singleton Google 1.0 Google.qml
 singleton Agenda 1.0 Agenda.qml
 singleton Tempo 1.0 Tempo.qml
+singleton ClaudeSessions 1.0 ClaudeSessions.qml

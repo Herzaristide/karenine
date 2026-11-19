@@ -9,8 +9,8 @@ import "services"
 ShellRoot {
     id: root
 
-    // Super montre ou renvoie la barre de conversation ; c'est elle qui sait
-    // si elle est là (cf. ConversationBar.toggle).
+    // Super donne le clavier au champ de la barre du bas, ou le lui reprend
+    // (cf. Bar.toggle).
     signal barToggled()
     signal barClosed()
 
@@ -25,14 +25,12 @@ ShellRoot {
 
     // ── IPC externe via FIFO /tmp/qs-panel.fifo ──────────────────────────
     //   echo "widget:NOM[:ACTION]" > /tmp/qs-panel.fifo → ouvre / ferme / bascule
-    //        un widget flottant (cf. services/Widgets.qml ; c'est ce qu'écrit anna)
-    //   echo "dock"     > /tmp/qs-panel.fifo   → fait monter (ou renvoie) la barre de conversation
+    //        un onglet du panneau de droite (cf. services/Widgets.qml ; c'est ce qu'écrit anna)
+    //   echo "dock"     > /tmp/qs-panel.fifo   → donne (ou reprend) le clavier au champ de la barre
     //   echo "voix"     > /tmp/qs-panel.fifo   → parle au pilote (comme `anna voice`)
-    //   echo "controls" > /tmp/qs-panel.fifo   → bascule les réglages (sortie, entrée, webcam)
-    //   echo "camera"   > /tmp/qs-panel.fifo   → bascule le widget caméra/gestes
+    //   echo "controls" > /tmp/qs-panel.fifo   → bascule les réglages
     //   echo "close"    > /tmp/qs-panel.fifo   → ferme tout
-    //   NOM : explorer, stats, notifications, notes, lecteur, musique, son, camera,
-    //         reglages, tout
+    //   NOM : explorer, stats, agenda, lecteur, musique, claude, reglages, son, tout
     //   ACTION : ouvrir, fermer, basculer (le défaut)
     //   « widget:N » reste compris : 0=stats 3=musique 4=lecteur
     //   echo "metronome:ACTION[:BPM[:TEMPS]]" > /tmp/qs-panel.fifo → lance, arrête ou
@@ -65,8 +63,6 @@ ShellRoot {
                     Pilot.voiceToggle();
                 } else if (msg === "controls") {
                     Widgets.apply("son", "basculer");
-                } else if (msg === "camera") {
-                    Widgets.apply("camera", "basculer");
                 } else if (msg === "close") {
                     Widgets.closeAll();
                     root.barClosed();
@@ -95,54 +91,40 @@ ShellRoot {
     // screen swaps the model, so the panels are rebuilt on the new one.
     readonly property var primaryScreens: Display.primary ? [Display.primary] : []
 
-    // La barre de conversation, en bas au centre : le flocon (la voix) et le
-    // champ qui parle au pilote, sa réponse au-dessus.
+    // La surface : l'encre unie sous toutes les fenêtres.
     Variants {
         model: root.primaryScreens
 
-        ConversationBar {
-            id: conversationBar
+        Surface {
+            property var modelData
+            screen: modelData
+        }
+    }
+
+    // La barre du bas, toujours là : les workspaces, le flocon et le champ
+    // qui parle au pilote, puis les groupes et leurs volets.
+    Variants {
+        model: root.primaryScreens
+
+        Bar {
+            id: bottomBar
             property var modelData
             screen: modelData
 
             Connections {
                 target: root
-                function onBarToggled() { conversationBar.toggle(); }
-                function onBarClosed() { conversationBar.dismiss(); }
+                function onBarToggled() { bottomBar.toggle(); }
+                function onBarClosed() { bottomBar.dismiss(); }
             }
         }
     }
 
-    // La petite barre du bord droit : la luminosité et le volume quand ils
-    // changent, que la souris approche ou que les widgets sont ouverts.
+    // Le panneau de droite, que le dernier bouton de la barre montre ou
+    // cache : la musique, les fichiers, la flotte, l'agenda, Claude.
     Variants {
         model: root.primaryScreens
 
-        LevelsIsland {
-            property var modelData
-            screen: modelData
-        }
-    }
-
-    // Sa sœur du bord du haut, avec les widgets : l'alimentation, les
-    // notifications, le Bluetooth, la capture, la batterie ; seule,
-    // l'enregistrement en cours.
-    Variants {
-        model: root.primaryScreens
-
-        TopIsland {
-            property var modelData
-            screen: modelData
-            onDismissRequested: root.barClosed()
-        }
-    }
-
-    // Les widgets flottants (système, musique, métronome, son, gestes),
-    // qu'anna ouvre à la demande.
-    Variants {
-        model: root.primaryScreens
-
-        FloatingWidgets {
+        SidePanel {
             property var modelData
             screen: modelData
         }

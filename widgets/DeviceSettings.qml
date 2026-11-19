@@ -5,9 +5,8 @@ import Quickshell.Io
 import "../services"
 
 // Les périphériques, première colonne des réglages : la sortie et l'entrée
-// du son, la webcam, le Wi-Fi (WifiSettings). Le volume et la luminosité
-// sont dans la barre du bord droit (LevelsIsland), le Bluetooth dans celle
-// du haut (TopIsland).
+// du son, la webcam, le Wi-Fi (WifiSettings). Le volume, la luminosité et
+// le Bluetooth sont aussi dans les volets de la barre du bas (panels/Bar.qml).
 //
 // Son et webcam sont des nœuds PipeWire : `wpctl status` les liste (le
 // défaut marqué d'un *), `wpctl set-default` en change — une webcam par

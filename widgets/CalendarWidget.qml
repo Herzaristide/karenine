@@ -31,6 +31,10 @@ Item {
     property string view: "month"
     // Le panneau des tâches, déplié.
     property bool showTasks: true
+    // Étroit (le panneau de droite) : le mois seul, et les tâches dessous
+    // plutôt qu'à côté.
+    readonly property bool compact: root.width < 620
+    onCompactChanged: if (root.compact) root.view = "month"
     // Le jour de référence : son mois en vue Mois, sa semaine en vue Semaine.
     property date anchor: root.midnight(new Date())
     // Aujourd'hui, à minuit : relu toutes les minutes (passer minuit).
@@ -233,12 +237,14 @@ Item {
         GlassButton { implicitHeight: 26; fontSize: 11; text: I18n.tr("agenda.today"); onClicked: root.goToday() }
         Item { implicitWidth: 6 }
         GlassButton {
+            visible: !root.compact
             implicitHeight: 26; fontSize: 11
             text: I18n.tr("agenda.month")
             accent: root.view === "month"
             onClicked: root.view = "month"
         }
         GlassButton {
+            visible: !root.compact
             implicitHeight: 26; fontSize: 11
             text: I18n.tr("agenda.week")
             accent: root.view === "week"
@@ -260,9 +266,10 @@ Item {
         anchors.top: header.bottom
         anchors.topMargin: 8
         anchors.left: parent.left
-        anchors.right: tasksPane.visible ? tasksPane.left : parent.right
-        anchors.rightMargin: tasksPane.visible ? 12 : 0
-        anchors.bottom: parent.bottom
+        anchors.right: tasksPane.visible && !root.compact ? tasksPane.left : parent.right
+        anchors.rightMargin: tasksPane.visible && !root.compact ? 12 : 0
+        anchors.bottom: tasksPane.visible && root.compact ? tasksPane.top : parent.bottom
+        anchors.bottomMargin: tasksPane.visible && root.compact ? 14 : 0
 
         readonly property real cellW: monthPane.width / 7
         readonly property real cellH: (monthPane.height - weekdays.height) / 6
@@ -447,9 +454,10 @@ Item {
         anchors.top: header.bottom
         anchors.topMargin: 8
         anchors.left: parent.left
-        anchors.right: tasksPane.visible ? tasksPane.left : parent.right
-        anchors.rightMargin: tasksPane.visible ? 12 : 0
-        anchors.bottom: parent.bottom
+        anchors.right: tasksPane.visible && !root.compact ? tasksPane.left : parent.right
+        anchors.rightMargin: tasksPane.visible && !root.compact ? 12 : 0
+        anchors.bottom: tasksPane.visible && root.compact ? tasksPane.top : parent.bottom
+        anchors.bottomMargin: tasksPane.visible && root.compact ? 14 : 0
 
         readonly property int gutter: 44
         readonly property real colW: (weekPane.width - weekPane.gutter) / 7
@@ -798,11 +806,12 @@ Item {
     Item {
         id: tasksPane
         visible: Google.connected && root.showTasks
-        anchors.top: header.bottom
+        anchors.top: root.compact ? undefined : header.bottom
         anchors.topMargin: 8
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        width: Math.min(240, root.width * 0.28)
+        width: root.compact ? root.width : Math.min(240, root.width * 0.28)
+        height: root.compact ? Math.round(root.height * 0.4) : implicitHeight
 
         // [{ title, tasks }] par liste, les listes vides laissées de côté.
         readonly property var groups: Agenda.lists.map(l => ({

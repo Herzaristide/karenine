@@ -24,6 +24,9 @@ Singleton {
     // confirmé : la barre l'attend sans couleur.
     property bool voiceWaking: false
     property real voiceLevel: 0
+    // Ce qu'anna a compris jusqu'ici, pendant qu'on parle (puis le texte
+    // final) : la barre l'écrit à mesure.
+    property string voiceText: ""
     property string voiceError: ""
     // Le mot d'activation écoute (micro ouvert en continu).
     property bool voiceWake: false
@@ -51,6 +54,7 @@ Singleton {
                 // La phase en dernier : qui réagit à la fin de l'écoute
                 // trouve déjà le texte final.
                 pilot.voiceLevel = msg.voice.level || 0;
+                pilot.voiceText = msg.voice.text || "";
                 pilot.voiceWaking = !!msg.voice.waking;
                 pilot.voiceError = msg.voice.error || "";
                 pilot.voiceWake = !!msg.voice.wake;

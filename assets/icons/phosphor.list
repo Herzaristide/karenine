@@ -86,3 +86,8 @@ wallpaper     regular  image
 theme         regular  circle-half
 accent        regular  palette
 language      regular  translate
+
+# ── La barre du bas et son panneau ───────────────────────────
+palette       regular  palette
+sidebar       regular  sidebar-simple
+battery       regular  battery-high

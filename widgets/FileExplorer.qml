@@ -62,11 +62,18 @@ Item {
     property bool showHidden: false
 
     readonly property int placesW: 150
+    // Étroit (le panneau de droite) : les favoris passent en rangée de
+    // pastilles au-dessus, la grille devient une liste, les disques
+    // s'empilent. Large (le hub), tout reste côte à côte.
+    readonly property bool compact: root.width < 600
+    readonly property int sideW: root.compact ? 0 : root.placesW + 12
     readonly property int headerH: 34
     readonly property int switchH: 34
     // La bande des disques, en bas sur toute la largeur (rien sans disque).
     readonly property int diskH: 46
-    readonly property int diskSpace: root.disks.length > 0 ? root.diskH + 10 : 0
+    readonly property int diskSpace: root.disks.length === 0 ? 0
+                                   : root.compact ? root.disks.length * (root.diskH + 8) + 2
+                                   : root.diskH + 10
 
     // Un chemin en URL « file:// », chaque segment encodé.
     function urlOf(p) {
@@ -718,7 +725,7 @@ Item {
 
     // ── La machine, au-dessus des favoris ────────────────────────
     MachinePicker {
-        width: root.placesW
+        width: root.compact ? root.width : root.placesW
         height: root.switchH
         busy: root.connecting
     }
@@ -771,19 +778,20 @@ Item {
 
     Rectangle {
         id: placesCard
-        y: root.switchH + 8
-        width: root.placesW
-        height: parent.height - y - root.diskSpace
+        y: root.compact ? header.y + root.headerH + 6 : root.switchH + 8
+        width: root.compact ? root.width : root.placesW
+        height: root.compact ? 34 : parent.height - y - root.diskSpace
         radius: Theme.radius
-        color: Qt.alpha(Theme.textPrimary, 0.05)
+        color: root.compact ? "transparent" : Qt.alpha(Theme.textPrimary, 0.05)
 
         // Plus de favoris que de place : la liste défile.
         ListView {
             anchors.fill: parent
-            anchors.margins: 6
-            spacing: 1
+            anchors.margins: root.compact ? 0 : 6
+            spacing: root.compact ? 4 : 1
             clip: true
             boundsBehavior: Flickable.StopAtBounds
+            orientation: root.compact ? ListView.Horizontal : ListView.Vertical
             model: root.places
 
             delegate: Item {
@@ -793,8 +801,8 @@ Item {
                 readonly property bool here: root.path === placeRow.modelData.path
                                              || (!placeRow.modelData.exact
                                                  && root.path.indexOf(placeRow.modelData.path + "/") === 0)
-                width: ListView.view.width
-                height: root.placeH
+                width: root.compact ? placeLabel.implicitWidth + 10 + 18 + 9 + 12 : ListView.view.width
+                height: root.compact ? 34 : root.placeH
 
                 Rectangle {
                     anchors.fill: parent
@@ -814,6 +822,7 @@ Item {
                 }
 
                 Text {
+                    id: placeLabel
                     anchors.left: placeIcon.right
                     anchors.leftMargin: 9
                     anchors.right: parent.right
@@ -843,13 +852,13 @@ Item {
     // qu'il contient, son remplissage. Un clic va à son point de montage.
     //   ( Micron 3400      255 / 953 Go · 27 %  )  ( WD 2TB   …           )
     //   ( ▬▬▬▬───────────────────────────────── )  ( ▬▬▬▬▬▬▬▬──────────── )
-    Row {
+    Flow {
         id: diskBar
         visible: root.disks.length > 0
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        height: root.diskH
+        height: root.compact ? root.disks.length * (root.diskH + 8) - 8 : root.diskH
         spacing: 8
 
         Repeater {
@@ -862,8 +871,9 @@ Item {
                 readonly property real pct: disk.modelData.size > 0 ? disk.modelData.used / disk.modelData.size : 0
                 readonly property bool here: root.path === disk.modelData.path
 
-                width: (diskBar.width - diskBar.spacing * (root.disks.length - 1)) / root.disks.length
-                height: diskBar.height
+                width: root.compact ? diskBar.width
+                                    : (diskBar.width - diskBar.spacing * (root.disks.length - 1)) / root.disks.length
+                height: root.diskH
                 radius: Theme.radiusSmall
                 color: disk.here ? Theme.selectedFill
                                  : Qt.alpha(Theme.textPrimary, diskMa.containsMouse || disk.activeFocus ? 0.09 : 0.05)
@@ -952,7 +962,8 @@ Item {
     // ── Le chemin et les actions ─────────────────────────────────
     Item {
         id: header
-        x: root.placesW + 12
+        x: root.sideW
+        y: root.compact ? root.switchH + 8 : 0
         width: root.width - x
         height: root.headerH
 
@@ -1142,15 +1153,16 @@ Item {
 
     GridView {
         id: grid
-        x: root.placesW + 12
-        y: root.headerH + 8
+        x: root.sideW
+        y: root.compact ? placesCard.y + placesCard.height + 8 : root.headerH + 8
         width: root.width - x
         height: root.height - y - root.diskSpace
 
         model: folder
-        readonly property int columns: Math.max(1, Math.floor(width / 96))
+        // Étroit : une ligne par élément, l'icône puis le nom.
+        readonly property int columns: root.compact ? 1 : Math.max(1, Math.floor(width / 96))
         cellWidth: width / columns
-        cellHeight: 88
+        cellHeight: root.compact ? 38 : 88
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         currentIndex: -1
@@ -1280,10 +1292,10 @@ Item {
             // défaut : les dossiers à l'accent, les fichiers en retrait).
             Item {
                 id: tileImage
-                anchors.horizontalCenter: parent.horizontalCenter
-                y: 10
-                width: 36
-                height: 36
+                x: root.compact ? 10 : (parent.width - width) / 2
+                y: root.compact ? (parent.height - height) / 2 : 10
+                width: root.compact ? 22 : 36
+                height: width
                 // Un fichier caché, un peu effacé.
                 opacity: tile.fileName.charAt(0) === "." ? 0.55 : 1
 
@@ -1300,24 +1312,23 @@ Item {
                 FileIcon {
                     anchors.centerIn: parent
                     visible: !tile.thumb
-                    iconSize: 36
+                    iconSize: tileImage.width
                     source: tile.thumb ? "" : tile.icon
                     tint: tile.fileIsDir ? Theme.accentColor : Theme.textSecondary
                 }
             }
 
             Text {
-                anchors.top: tileImage.bottom
-                anchors.topMargin: 6
-                anchors.horizontalCenter: parent.horizontalCenter
-                width: parent.width - 12
+                x: root.compact ? tileImage.x + tileImage.width + 12 : 6
+                y: root.compact ? (parent.height - height) / 2 : tileImage.y + tileImage.height + 6
+                width: root.compact ? parent.width - x - 10 : parent.width - 12
                 text: tile.fileName
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.WrapAnywhere
-                maximumLineCount: 2
+                horizontalAlignment: root.compact ? Text.AlignLeft : Text.AlignHCenter
+                wrapMode: root.compact ? Text.NoWrap : Text.WrapAnywhere
+                maximumLineCount: root.compact ? 1 : 2
                 elide: Text.ElideMiddle
                 font.family: "Inter"
-                font.pixelSize: 11
+                font.pixelSize: root.compact ? 13 : 11
                 font.weight: Font.Medium
                 lineHeight: 0.95
                 color: tile.fileName.charAt(0) === "." ? Theme.textSecondary : Theme.textPrimary

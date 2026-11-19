@@ -39,7 +39,7 @@ TestCase {
     function test_query_is_trimmed_and_sent_to_every_source() {
         dispatch("  fi ");
         var srcs = [Search.appSource, Search.fileSource, Search.settingSource,
-                    Search.wallpaperSource, Search.noteSource];
+                    Search.wallpaperSource];
         for (var i = 0; i < srcs.length; i++) {
             compare(srcs[i].lastQuery, "fi", srcs[i].type);
             compare(srcs[i].lastSeq, Search._seq, srcs[i].type);
@@ -114,9 +114,9 @@ TestCase {
         Search.fileSource.produced(Search._seq, many);
         compare(Search.results.length, Search.maxResults);
 
-        Search.noteSource.produced(Search._seq, [item("note", "note:new", 1, { always: true })]);
+        Search.settingSource.produced(Search._seq, [item("setting", "setting:always", 1, { always: true })]);
         compare(Search.results.length, Search.maxResults);
-        verify(ids().indexOf("note:new") !== -1, "« Créer une note » reste");
+        verify(ids().indexOf("setting:always") !== -1, "un résultat « toujours là » reste");
     }
 
     function test_unanswered_source_keeps_its_previous_results() {

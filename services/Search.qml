@@ -47,13 +47,8 @@ QtObject {
     property WebSource webSource: WebSource {
         onProduced: (seq, items) => root._collect(seq, "web", items)
     }
-    // Les notes de l'onglet Notes, et « Créer une note » avec ce qu'on tape.
-    property NoteSource noteSource: NoteSource {
-        onProduced: (seq, items) => root._collect(seq, "note", items)
-    }
-
     readonly property var sources: [appSource, fileSource, settingSource,
-                                    wallpaperSource, noteSource, webSource]
+                                    wallpaperSource, webSource]
 
     // Le débounce protège la seule source coûteuse (fd) sans se faire sentir
     // sur les autres, qui répondent en moins d'une milliseconde.
