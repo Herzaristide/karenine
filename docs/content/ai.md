@@ -10,9 +10,10 @@ links: [panels, backend, widgets, languages]
 ## The pilot
 
 What you type in the conversation bar (`panels/ConversationBar.qml`, see
-[Panels](#panels)) goes to the **pilot**: a Claude session (Haiku by
-default) that anna keeps ready, to which you say what you want in a few
-words.
+[Panels](#panels)) goes to the **pilot**: a conversation anna holds itself with a model —
+a local one served by Ollama (by default), or a remote one through an API
+with a key — to which you say what you want in a few words. No agent runs
+beside it: anna calls the model, then the tools it asks for.
 
 - **It acts on the desktop** with its tools (`anna/src/claude/desk.rs`):
   windows and workspaces, sound, brightness, media playback, applications,
@@ -22,17 +23,22 @@ words.
   its widget), widgets, desktop
   state, clipboard, and as a last resort a shell command. It never rebuilds NixOS.
 - **It answers questions** like a general assistant (knowledge,
-  explanations, definitions, conversions, advice…), from what it knows,
-  and searches the web (`WebSearch`, `WebFetch`) for what is recent or
-  changes — news, weather, schedules, prices — giving its source. A
-  question about what you noted goes to your notes first.
+  explanations, definitions, conversions, advice…), from what it knows.
+  It has no search engine: it reads a page whose address it has
+  (`lire_page`: the page's text, at most 12 000 characters), and for what
+  is recent or changes — news, weather, prices — it says what it does not
+  know and offers to open a search in the browser. A question about what
+  you noted goes to your notes first.
 - **It looks at your screen** when the question is about it (« c'est quoi
-  cette erreur ? », « résume cette page ») : `voir_ecran` grabs the focused
-  monitor with `grim` (JPEG, at most 1568 px on its long side, never written
-  to disk) and hands it back to the model as an image in the tool result.
-- **It does no code work**: it never starts a Claude Code session. A code
-  task on a project, it suggests opening the project (Zed or a terminal) and
-  leaves it to you.
+  cette erreur ? », « résume cette page », « décris ce qu'il y a à
+  l'écran ») : `voir_ecran` grabs the focused monitor with `grim` (JPEG, at
+  most 1568 px on its long side, never written to disk) and hands it back to
+  the model as an image in the tool result. Given a window (`cible`: its
+  class or a piece of its title — « regarde mon Firefox »), it grabs that
+  window alone, if it is on a workspace shown on some monitor; one out of
+  sight is not shown for it (that would change what you see) — it says so.
+- **It does no code work**: a code task on a project, it suggests opening
+  the project (Zed or a terminal) and leaves it to you.
 - **Nothing waits for a confirmation**: closing a window or running a shell
   command runs as soon as the pilot calls it. Its prompt asks it to use them
   only when the request is clear.
@@ -44,29 +50,43 @@ words.
 The answer shows above the bar: a one-sentence confirmation fades away, a
 longer answer, a question back or an error stay displayed.
 
-Mechanics: `claude -p` in stream-json, with its own system prompt
-(`--system-prompt`), with only the web among Claude Code's built-in tools
-(`--tools "WebSearch,WebFetch"`),
-with `anna mcp` as its only MCP server (`--strict-mcp-config`), without the
-user's settings (`--setting-sources project`: no hooks, no journal) and
-without a transcript on disk. Each request carries a context block: date,
-language to answer in, active window, open windows, sound,
-projects. The process is kept between two requests and renewed after 20 min
-of inactivity or 30 requests — never on the way of a request: a spoken one
-starts (or renews) it as soon as you start speaking, and after the 30th the
-new one starts right away. The context block of a spoken request is built
-while its last words are transcribed. Count about 2 s for a direct answer,
-4 s on the first call with a tool.
+Mechanics: anna speaks the Anthropic Messages API itself (`POST
+<address>/v1/messages`, streamed), which Ollama serves as well as
+Anthropic's API: its system prompt, the desk tools (`desk.rs`, in the API's
+shape), and the conversation so far. The answer streams into the bar word
+by word; when the model asks for tools, anna runs them one after the other
+through the daemon (the `desk` command, as `anna mcp` has them run), hands
+the results back (the screen as an image), and calls it again — at most 16
+times for one request. Thinking is off unless asked for (`think`); a local
+model's thinking is never sent back. Each request carries a context block:
+date, language to answer in, active window, open windows, sound, projects.
+The conversation is kept between requests (at most 40 messages, the oldest
+requests dropped whole; a screenshot only for the request that took it, its
+line of text after) and forgotten after 20 min of inactivity or 20
+requests. With Ollama, the model is asked to load as soon as you start
+speaking. The context block of a spoken request is built while its last
+words are transcribed. Nothing is written to disk but the settings.
 
-Settings: `ANNA_PILOT_MODEL` (anna's environment variable) changes the
-model; `~/.config/anna/pilote.md`, if it exists, is appended to the prompt
-(preferred apps, habits, projects…).
+Settings (Settings › Assistant, `widgets/AssistantSettings.qml`): the
+provider — **Ollama** (a local model, `http://localhost:11434` by default,
+no key) or the **Anthropic API** (`https://api.anthropic.com`, with a key) —
+its address, the model (the list the provider gives: Ollama's installed
+models, or the API's), and whether it thinks before answering. They are
+saved in `~/.config/anna/pilot.json`; the key apart, in
+`~/.config/anna/pilot.key` (mode 600), or in `ANNA_PILOT_API_KEY`. Every
+change starts the conversation over. Ollama's context window must hold the
+prompt and the tools — about 5 300 tokens before the first word: with
+Ollama's default of 4096, it silently drops half of it. Set
+`OLLAMA_CONTEXT_LENGTH` to 16384 on the Ollama service (on an 8 GB GPU,
+`qwen3.5:9b` then stays wholly in VRAM; at 32k it spills over). `~/.config/anna/pilote.md`, if it exists, is appended to the
+prompt (preferred apps, habits, projects…).
 
 | File | Role |
 | --- | --- |
-| `anna/src/claude/pilot.rs` | The pilot process, its prompt, the context, the thread of exchanges. |
+| `anna/src/claude/pilot.rs` | The pilot: its settings, its prompt, the context, the conversation with the model and its tool calls. |
 | `anna/src/claude/desk.rs` | Its tools and their execution (Hyprland through Lua dispatchers). |
-| `anna/src/claude/mcp.rs` | `anna mcp`: the MCP server (stdio) that presents them to it. |
+| `anna/src/claude/mcp.rs` | `anna mcp`: the desk tools as an MCP server (stdio), for any MCP client; and the call to the daemon the pilot uses too. |
+| `widgets/AssistantSettings.qml` | Its settings: provider, address, key, model, thinking. |
 
 ## Voice
 
@@ -202,8 +222,9 @@ its `near` forms are how Parakeet writes it, and the journal shows what was
 written either way (`anna: mot d'activation confirmé : « … »`, `… non
 confirmé : « … »`), to add to them.
 
-The model: `ANNA_PARAKEET_MODEL`, otherwise `~/.local/share/anna/parakeet/`,
-linked by the NixOS configuration: the int8 ONNX export of
+The model ships with the anna package (`anna/default.nix`, pinned to one
+upstream revision), which points `ANNA_PARAKEET_MODEL` at it; without it,
+anna looks in `~/.local/share/anna/parakeet/`. It is the int8 ONNX export of
 [onnx-asr](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx),
 four files — `nemo128.onnx` (16 kHz samples → NeMo's 128 log-mel bands),
 `encoder-model.int8.onnx` (FastConformer, 650 MB),

@@ -119,7 +119,7 @@ Flickable {
     }
 
     // Une carte de machine, la même pour celle-ci et pour les autres.
-    // `m` : { name, tag, online, error, uptime, cpu, temp, ramUsed, ramTotal,
+    // `m` : { name, online, error, uptime, cpu, temp, ramUsed, ramTotal,
     //         gpu: { asleep, usage, used, total } | null, drives, services,
     //         host, canWake, lastSeen, remote }
     component MachineCard: Rectangle {
@@ -157,20 +157,6 @@ Flickable {
                     font.pixelSize: 14
                     font.weight: Font.DemiBold
                     color: Theme.textPrimary
-                }
-                Rectangle {
-                    implicitWidth: tagText.implicitWidth + 12
-                    implicitHeight: 18
-                    radius: 5
-                    color: Theme.hoverOverlay
-                    Text {
-                        id: tagText
-                        anchors.centerIn: parent
-                        text: card.m.tag
-                        font.family: "JetBrains Mono"
-                        font.pixelSize: 10
-                        color: card.m.remote ? Theme.accentColor : Theme.textSecondary
-                    }
                 }
                 Item { Layout.fillWidth: true }
                 Text {
@@ -539,7 +525,6 @@ Flickable {
         MachineCard {
             m: ({
                 name: root.local && root.local.hostname ? root.local.hostname : "localhost",
-                tag: I18n.tr("fleet.thisPc"),
                 remote: false,
                 online: true,
                 error: "",
@@ -565,7 +550,6 @@ Flickable {
                 required property var modelData
                 m: ({
                     name: modelData.name,
-                    tag: I18n.tr("fleet.server"),
                     remote: true,
                     host: modelData.host,
                     online: modelData.online,

@@ -1,9 +1,11 @@
-//! `anna mcp` — the MCP server (stdio) through which the pilot acts.
+//! `anna mcp` — the desk tools as an MCP server (stdio), for any MCP client
+//! that should act on the desktop as the pilot does.
 //!
-//! Claude Code starts it for the pilot session (see pilot.rs) and talks
-//! JSON-RPC 2.0 to it, one message per line. It lists the desk tools and
-//! forwards each call to the daemon (`desk` command), which carries it out:
-//! this process holds no state and runs no action itself.
+//! The client talks JSON-RPC 2.0 to it, one message per line. It lists the
+//! desk tools and forwards each call to the daemon (`desk` command), which
+//! carries it out: this process holds no state and runs no action itself.
+//! The pilot (pilot.rs) forwards its own calls the same way
+//! (`call_daemon`).
 
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
@@ -20,7 +22,7 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(180);
 /// for `voir_ecran`.
 pub type Answer = (bool, String, Option<String>);
 
-fn call_daemon(tool: &str, args: &Value) -> Answer {
+pub fn call_daemon(tool: &str, args: &Value) -> Answer {
     let attempt = || -> std::io::Result<Value> {
         let mut sock = UnixStream::connect(crate::paths::socket_path())?;
         sock.set_read_timeout(Some(CALL_TIMEOUT))?;

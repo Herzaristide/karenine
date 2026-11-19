@@ -37,6 +37,8 @@ Singleton {
     // Le dossier ouvert dans l'explorateur, gardé d'un onglet à l'autre ;
     // vide : le dossier personnel.
     property string explorerPath: ""
+    // L'Explorer en liste (nom, taille, date) plutôt qu'en tuiles.
+    property bool explorerListView: false
     // La machine choisie, la même pour tous les onglets qui en montrent une
     // (cf. MachinePicker) : null pour celle-ci, sinon un serveur du tailnet
     // ({ name, host }).

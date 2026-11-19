@@ -15,6 +15,26 @@ let
     hash = "sha256-cNFkKQwdCV0dTuFJvF4AVDJQpzFrWfMdBWz/e9MHXB8=";
   };
 
+  # Parakeet TDT 0.6B v3 (CC-BY-4.0), the int8 ONNX export of onnx-asr: what
+  # is said to the pilot is transcribed with it (claude/parakeet.rs). Pinned to
+  # one revision — never `main`: the upstream repository moves and its hashes
+  # with it. A linkFarm of the four fetched files, so the ~650 MB encoder is
+  # not copied once more into anna's own output.
+  parakeetRev = "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce";
+  parakeetFile = name: hash: {
+    inherit name;
+    path = pkgs.fetchurl {
+      url = "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/${parakeetRev}/${name}";
+      inherit hash;
+    };
+  };
+  parakeet = pkgs.linkFarm "parakeet-tdt-0.6b-v3-onnx" [
+    (parakeetFile "nemo128.onnx" "sha256-qf3hSG6/zAjzKNda1GEMZ4Nf6ljHO6V+Mgmm9s8Bnp8=")
+    (parakeetFile "encoder-model.int8.onnx" "sha256-YTnS+n4bCGCXsnfHFJcl7bq4nMfHrmSyPHQb5AVa/wk=")
+    (parakeetFile "decoder_joint-model.int8.onnx" "sha256-7qdIPuPRowN12u3I7YPjlgyRsJiBISeg2Z0ciXdmenA=")
+    (parakeetFile "vocab.txt" "sha256-1YVEZ56kvGrFY9H1Ret9R0vWz6Rn8KbiwdwcfTfjw10=")
+  ];
+
   # The wake words trained in lab/wakeword-<word>: one per models/wake/<word>.onnx.
   # The NixOS configuration picks one per machine (ANNA_WAKE_WORD), and falls
   # back on « karenine » for a machine without its own.
@@ -85,18 +105,20 @@ pkgs.rustPlatform.buildRustPackage {
     # written and heard (<word>.json). ONNX
     # Runtime is loaded at run time (ort's load-dynamic).
     # What is said to the pilot is transcribed by Parakeet (claude/parakeet.rs),
-    # in the same ONNX Runtime; its files are provided by the NixOS
-    # configuration.
+    # in the same ONNX Runtime; its four files ship with the package, in
+    # share/anna/parakeet (a link to the linkFarm above).
     mkdir -p "$out/share/anna/wake"
     cp ${melspectrogram} "$out/share/anna/wake/melspectrogram.onnx"
     cp ${embedding} "$out/share/anna/wake/embedding_model.onnx"
     cp ${./models/wake}/*.onnx ${./models/wake}/*.json "$out/share/anna/wake/"
+    ln -s ${parakeet} "$out/share/anna/parakeet"
 
     # nvidia-smi and sudo(dmidecode) are intentionally left to the ambient PATH:
     # they are host-specific and, for sudo, must be the setuid system binary.
     wrapProgram "$out/bin/anna" \
       --set-default ORT_DYLIB_PATH ${pkgs.onnxruntime}/lib/libonnxruntime.so \
       --set-default ANNA_WAKE_MODELS "$out/share/anna/wake" \
+      --set-default ANNA_PARAKEET_MODEL "$out/share/anna/parakeet" \
       --set-default ANNA_ICON_SOURCE ${pkgs.reversal-icon-theme}/share/icons \
       --prefix PATH : ${
         lib.makeBinPath (
@@ -127,7 +149,7 @@ pkgs.rustPlatform.buildRustPackage {
       }
   '';
 
-  passthru = { inherit wakeWords; };
+  passthru = { inherit wakeWords parakeet; };
 
   meta = {
     description = "Unified engine daemon for karenine (accent/palette theming + hardware stats)";

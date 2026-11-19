@@ -88,6 +88,38 @@ Singleton {
         pilot._send({ cmd: "pilot_reset" });
     }
 
+    // ── Le modèle du pilote ──────────────────────────────────────────
+    // Ce qu'anna en dit (anna/src/claude/pilot.rs) : { config: { provider,
+    // url, model, think }, has_key, models, error } ; null tant qu'on ne
+    // l'a pas demandé.
+    property var pilotConfig: null
+    property bool pilotConfigLoading: false
+    // Le dernier refus d'anna en changeant de modèle.
+    property string pilotConfigError: ""
+
+    function loadPilotConfig() {
+        pilot.pilotConfigLoading = true;
+        pilot._send({ cmd: "pilot_config" }, function (r) {
+            pilot.pilotConfigLoading = false;
+            if (r && r.config)
+                pilot.pilotConfig = r;
+        });
+    }
+
+    // `key` : absent, la clé reste ; "", elle est retirée.
+    function configurePilot(config, key) {
+        var o = { cmd: "pilot_configure", provider: config.provider, url: config.url || "",
+                  model: config.model || "", think: !!config.think };
+        if (key !== undefined)
+            o.key = key;
+        pilot.pilotConfigError = "";
+        pilot._send(o, function (r) {
+            if (!r || r.ok === false)
+                pilot.pilotConfigError = r && r.error ? r.error : I18n.tr("anna.noAnswer");
+            pilot.loadPilotConfig();
+        });
+    }
+
     Socket {
         id: pilotSock
         path: Anna.socketPath

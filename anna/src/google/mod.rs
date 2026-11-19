@@ -40,9 +40,13 @@ const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const REVOKE_URL: &str = "https://oauth2.googleapis.com/revoke";
 
-/// The events read, the tasks read and checked off, and who the account is.
+/// The calendars read, their events read and written, the tasks read and
+/// written, and who the account is. An account connected before events
+/// could be written lacks `calendar.events`: Google then refuses writes
+/// (`insufficientPermissions`) until it is connected again.
 const SCOPES: &str = "openid email \
     https://www.googleapis.com/auth/calendar.readonly \
+    https://www.googleapis.com/auth/calendar.events \
     https://www.googleapis.com/auth/tasks";
 
 /// How the refresh token is filed in the keyring.
@@ -124,18 +128,40 @@ fn agent() -> ureq::Agent {
         .build()
 }
 
-/// Why a request failed: Google's answer, or no answer at all.
+/// Why a request failed: Google's answer — its HTTP status and the reason it
+/// gives (`accessNotConfigured`, `insufficientPermissions`, `invalid_grant`…,
+/// "" when none) —, or no answer at all.
 #[derive(Debug, PartialEq)]
 pub enum Fail {
-    Status(u16),
+    Status(u16, String),
     Net(String),
 }
 
 impl std::fmt::Display for Fail {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Fail::Status(401 | 403) => write!(f, "{}", crate::i18n::tr("google.refused")),
-            Fail::Status(code) => write!(f, "HTTP {code}"),
+            // The Calendar or Tasks API is not enabled in the client's Cloud
+            // project: reconnecting would change nothing.
+            Fail::Status(403, reason)
+                if reason == "accessNotConfigured" || reason == "SERVICE_DISABLED" =>
+            {
+                write!(f, "{}", crate::i18n::tr("google.api_disabled"))
+            }
+            // Connected before writing was asked for: consent again.
+            Fail::Status(403, reason)
+                if reason == "insufficientPermissions"
+                    || reason == "ACCESS_TOKEN_SCOPE_INSUFFICIENT" =>
+            {
+                write!(f, "{}", crate::i18n::tr("google.reconnect_write"))
+            }
+            Fail::Status(401 | 403, reason) if reason.is_empty() => {
+                write!(f, "{}", crate::i18n::tr("google.refused"))
+            }
+            Fail::Status(401 | 403, reason) => {
+                write!(f, "{} ({reason})", crate::i18n::tr("google.refused"))
+            }
+            Fail::Status(code, reason) if reason.is_empty() => write!(f, "HTTP {code}"),
+            Fail::Status(code, reason) => write!(f, "HTTP {code} ({reason})"),
             Fail::Net(e) => write!(f, "{e}"),
         }
     }
@@ -148,9 +174,28 @@ fn send(req: ureq::Request, body: Option<(&str, &str)>) -> Result<String, Fail> 
     };
     match res {
         Ok(r) => r.into_string().map_err(|e| Fail::Net(e.to_string())),
-        Err(ureq::Error::Status(code, _)) => Err(Fail::Status(code)),
+        Err(ureq::Error::Status(code, r)) => Err(Fail::Status(
+            code,
+            reason(&r.into_string().unwrap_or_default()),
+        )),
         Err(ureq::Error::Transport(t)) => Err(Fail::Net(t.to_string())),
     }
+}
+
+/// The short reason in an error body: an API's
+/// `{"error":{"errors":[{"reason":…}],"status":…}}`, or the token
+/// endpoint's `{"error":"invalid_grant"}`.
+fn reason(body: &str) -> String {
+    let Ok(v) = serde_json::from_str::<Value>(body) else {
+        return String::new();
+    };
+    let e = &v["error"];
+    e["errors"][0]["reason"]
+        .as_str()
+        .or_else(|| e["status"].as_str())
+        .or_else(|| e.as_str())
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// A connected account, ready to make requests.
@@ -184,7 +229,7 @@ impl Account {
             send(req, body.as_deref().map(|b| ("application/json", b)))
         };
         let text = match attempt(&self.token) {
-            Err(Fail::Status(401)) => {
+            Err(Fail::Status(401, _)) => {
                 self.token = refresh(&self.config)?;
                 attempt(&self.token)
             }
@@ -293,7 +338,8 @@ fn refresh(config: &Config) -> Result<String, String> {
     )
     .map_err(|e| match e {
         // invalid_grant: revoked from the Google account, or expired.
-        Fail::Status(400 | 401) => crate::i18n::tr("google.refused"),
+        Fail::Status(400 | 401, r) if r.is_empty() => crate::i18n::tr("google.refused"),
+        Fail::Status(400 | 401, r) => format!("{} ({r})", crate::i18n::tr("google.refused")),
         e => e.to_string(),
     })?;
     let v: Value = serde_json::from_str(&answer).map_err(|e| e.to_string())?;
@@ -580,7 +626,7 @@ fn connect() -> Result<Config, String> {
         Some(("application/x-www-form-urlencoded", &body)),
     )
     .map_err(|e| match e {
-        Fail::Status(400 | 401) => crate::i18n::tr("google.bad_client"),
+        Fail::Status(400 | 401, _) => crate::i18n::tr("google.bad_client"),
         e => e.to_string(),
     })?;
     let v: Value = serde_json::from_str(&answer).map_err(|e| e.to_string())?;

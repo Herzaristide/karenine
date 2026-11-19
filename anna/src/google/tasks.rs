@@ -3,13 +3,20 @@
 //!
 //!   anna tasks [list]                  → {"ok":true,"lists":[List…],"tasks":[Task…]}
 //!   anna tasks done <list> <id> [no]   → checked off (or back to do)
+//!   anna tasks create <list> <json>        → {"ok":true,"task":Task}
+//!   anna tasks update <list> <id> <json>   → {"ok":true,"task":Task}
+//!   anna tasks delete <list> <id>          → {"ok":true}
+//!
+//! `<list>`: an id, a list's title, or "" for the default one. `<json>`: a
+//! `TaskInput` — on an update, only what changes; moving a task is giving it
+//! a new `due` day ("" takes its date away).
 //!
 //! Every list, and in each its tasks: those to do, and those done but not
 //! yet cleared in Google. Google keeps a task's due date only, never its
 //! time: `due` is that day (`2026-10-22`), "" for a task without one.
 
 use super::{encode, Account};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 const API: &str = "https://tasks.googleapis.com/tasks/v1";
@@ -100,6 +107,103 @@ pub fn set_done(list: &str, id: &str, done: bool) -> Result<Task, String> {
         .ok_or_else(|| crate::i18n::tr("google.unknown_task"))
 }
 
+// ── Writing ─────────────────────────────────────────────────────────────────
+
+/// A new task, or what changes in one (every field may be left out of a
+/// change). `due` is a day (`2026-11-20`), or "" for none.
+#[derive(Deserialize, Default, Debug)]
+#[serde(default)]
+pub struct TaskInput {
+    pub title: Option<String>,
+    pub notes: Option<String>,
+    pub due: Option<String>,
+    pub done: Option<bool>,
+}
+
+/// Google keeps the day of `due` only, given as midnight UTC.
+fn due_value(day: &str) -> Result<Value, String> {
+    let d = day.trim();
+    if d.is_empty() {
+        return Ok(Value::Null);
+    }
+    match super::calendar::Stamp::day(d).filter(|s| s.time.is_none() && d.len() == 10) {
+        Some(s) => Ok(json!(format!("{}T00:00:00.000Z", s.iso()))),
+        None => Err(crate::i18n::tr("google.bad_dates")),
+    }
+}
+
+fn body_of(input: &TaskInput) -> Result<Value, String> {
+    let mut body = serde_json::Map::new();
+    if let Some(t) = &input.title {
+        body.insert("title".into(), json!(t));
+    }
+    if let Some(n) = &input.notes {
+        body.insert("notes".into(), json!(n));
+    }
+    if let Some(d) = &input.due {
+        body.insert("due".into(), due_value(d)?);
+    }
+    match input.done {
+        Some(true) => {
+            body.insert("status".into(), json!("completed"));
+        }
+        Some(false) => {
+            body.insert("status".into(), json!("needsAction"));
+            body.insert("completed".into(), Value::Null);
+        }
+        None => {}
+    }
+    Ok(Value::Object(body))
+}
+
+/// The list `text` names: its id, its title (any case), or the default one
+/// when empty.
+fn list_id(account: &mut Account, text: &str) -> Result<String, String> {
+    let t = text.trim();
+    if t.is_empty() || t == "@default" {
+        return Ok("@default".into());
+    }
+    lists(&account.list(&format!("{API}/users/@me/lists?maxResults=100"))?)
+        .into_iter()
+        .find(|l| l.id == t || l.title.eq_ignore_ascii_case(t))
+        .map(|l| l.id)
+        .ok_or_else(|| crate::i18n::tr_args("google.unknown_list", &[("name", t)]))
+}
+
+pub fn create_task(list: &str, input: &TaskInput) -> Result<Task, String> {
+    let mut account = Account::load()?;
+    let list = list_id(&mut account, list)?;
+    let url = format!("{API}/lists/{}/tasks", encode(&list));
+    let v = account.call("POST", &url, Some(&body_of(input)?))?;
+    tasks(&[v], &list)
+        .pop()
+        .ok_or_else(|| crate::i18n::tr("google.unknown_task"))
+}
+
+pub fn update_task(list: &str, id: &str, input: &TaskInput) -> Result<Task, String> {
+    if id.is_empty() {
+        return Err(crate::i18n::tr("google.unknown_task"));
+    }
+    let mut account = Account::load()?;
+    let list = list_id(&mut account, list)?;
+    let url = format!("{API}/lists/{}/tasks/{}", encode(&list), encode(id));
+    let v = account.call("PATCH", &url, Some(&body_of(input)?))?;
+    tasks(&[v], &list)
+        .pop()
+        .ok_or_else(|| crate::i18n::tr("google.unknown_task"))
+}
+
+pub fn delete_task(list: &str, id: &str) -> Result<(), String> {
+    if id.is_empty() {
+        return Err(crate::i18n::tr("google.unknown_task"));
+    }
+    let mut account = Account::load()?;
+    let list = list_id(&mut account, list)?;
+    let url = format!("{API}/lists/{}/tasks/{}", encode(&list), encode(id));
+    account.call("DELETE", &url, None)?;
+    Ok(())
+}
+
 // ── The command line ────────────────────────────────────────────────────────
 
 /// `anna tasks …`: one JSON line on stdout.
@@ -112,6 +216,15 @@ pub fn run(args: &[String]) {
         "done" => {
             set_done(arg(3), arg(4), arg(5) != "no").map(|t| json!({ "ok": true, "task": t }))
         }
+        "create" => serde_json::from_str::<TaskInput>(arg(4))
+            .map_err(|e| format!("tasks : {e}"))
+            .and_then(|i| create_task(arg(3), &i))
+            .map(|t| json!({ "ok": true, "task": t })),
+        "update" => serde_json::from_str::<TaskInput>(arg(5))
+            .map_err(|e| format!("tasks : {e}"))
+            .and_then(|i| update_task(arg(3), arg(4), &i))
+            .map(|t| json!({ "ok": true, "task": t })),
+        "delete" => delete_task(arg(3), arg(4)).map(|()| json!({ "ok": true })),
         other => Err(format!("tasks : action inconnue « {other} »")),
     };
     let line = result.unwrap_or_else(|e| json!({ "ok": false, "error": e }));
@@ -121,6 +234,32 @@ pub fn run(args: &[String]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn task_bodies_send_only_what_changes() {
+        let moved = TaskInput {
+            due: Some("2026-11-21".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            body_of(&moved).unwrap(),
+            json!({ "due": "2026-11-21T00:00:00.000Z" })
+        );
+        let undated = TaskInput {
+            due: Some(String::new()),
+            ..Default::default()
+        };
+        assert_eq!(body_of(&undated).unwrap(), json!({ "due": null }));
+        let reopened = TaskInput {
+            done: Some(false),
+            ..Default::default()
+        };
+        assert_eq!(
+            body_of(&reopened).unwrap(),
+            json!({ "status": "needsAction", "completed": null })
+        );
+        assert!(due_value("21/11").is_err());
+    }
 
     #[test]
     fn tasks_are_read() {

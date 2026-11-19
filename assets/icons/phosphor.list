@@ -40,6 +40,11 @@ volume-mute   regular  speaker-slash
 refresh       regular  arrow-clockwise
 reset         regular  arrow-counter-clockwise
 arrow-right   regular  arrow-right
+arrow-left    regular  arrow-left
+search        regular  magnifying-glass
+view-list     regular  list-bullets
+view-grid     regular  squares-four
+pencil        regular  pencil-simple
 # Petites (10 à 12 px) : en gras pour rester lisibles.
 close         bold     x
 chevron-down  bold     caret-down
@@ -65,11 +70,15 @@ music-note    regular  music-note
 bolt          fill     lightning
 
 # ── Les lieux et les fichiers (explorateur, recherche) ───────
+home          regular  house
 place-desktop regular  desktop
 documents     regular  files
 downloads     regular  download-simple
 pictures      regular  image
 videos        regular  film-strip
+projects      regular  code
+public        regular  share-network
+templates     regular  file-dashed
 file          regular  file
 file-text     regular  file-text
 file-code     regular  file-code

@@ -26,10 +26,11 @@ Click the snowflake and the bar grows into a capsule of widgets.
 
 ## An AI that actually drives the desktop
 
-The **pilot** is Claude with hands: sound, windows, apps, URLs, projects,
-screenshots, accent color, vault notes — the desktop is exposed to it as MCP
-tools. “Open YouTube Music in Chrome” just happens. It only acts: code and
-research stay with you, in your own Claude Code sessions.
+The **pilot** is a model with hands — a local one through Ollama, or a
+remote one with an API key: sound, windows, apps, URLs, projects,
+screenshots, accent color, vault notes — the desktop is exposed to it as
+tools, which anna runs itself. “Open YouTube Music in Chrome” just happens.
+It only acts: code stays with you.
 
 ## Everything else, one tab away
 

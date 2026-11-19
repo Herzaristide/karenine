@@ -391,6 +391,22 @@ Item {
                     }
                 }
 
+                // ── ASSISTANT section ──────────────────────────────
+                // Le modèle du pilote : local (Ollama) ou une API.
+                Text {
+                    Layout.bottomMargin: 10
+                    text: I18n.tr("settings.assistant")
+                    font.family: "Inter"
+                    font.pixelSize: 12
+                    font.letterSpacing: 0
+                    color: Theme.accentMuted
+                }
+
+                AssistantSettings {
+                    Layout.fillWidth: true
+                    Layout.bottomMargin: 18
+                }
+
                 // ── LANGUE section ─────────────────────────────────
                 // Une ligne par fichier de i18n/ : une langue ajoutée là
                 // apparaît ici d'elle-même.

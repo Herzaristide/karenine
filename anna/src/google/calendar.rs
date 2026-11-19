@@ -11,11 +11,20 @@
 //! Google unrolls the recurring ones over the range, so no RRULE is read
 //! here.
 //!
+//!   anna agenda create <calendar> <json>        → {"ok":true,"event":Event}
+//!   anna agenda update <calendar> <id> <json>   → {"ok":true,"event":Event}
+//!   anna agenda delete <calendar> <id>          → {"ok":true}
+//!
+//! `<calendar>`: an id, a calendar's name, or "" for the main one. `<json>`:
+//! an `EventInput` — on an update, only what changes; moving an event is
+//! giving it a new `start` (it keeps its length unless `end` is given too).
+//! The shell's « Agenda » tab and the pilot's tools write through these.
+//!
 //! Times go to the shell as text: `2026-10-22T12:00:00Z` (Google's
 //! `dateTime`, brought back to UTC), `2026-10-22` (all day, `end` excluded).
 
 use super::{encode, Account};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 const API: &str = "https://www.googleapis.com/calendar/v3";
@@ -35,6 +44,8 @@ pub struct Event {
     pub uid: String,
     pub title: String,
     pub location: String,
+    /// Its description.
+    pub notes: String,
     pub start: String,
     pub end: String,
     #[serde(rename = "allDay")]
@@ -262,6 +273,7 @@ pub fn events(items: &[Value], calendar: &str) -> Vec<Event> {
                 uid: s(e, "id"),
                 title: s(e, "summary"),
                 location: s(e, "location"),
+                notes: s(e, "description"),
                 start: start.iso(),
                 end: end.iso(),
                 all_day,
@@ -298,6 +310,193 @@ pub fn agenda(from: &str, to: &str) -> Result<(Vec<Calendar>, Vec<Event>), Strin
     }
     events.sort_by(|a, b| a.start.cmp(&b.start).then(a.title.cmp(&b.title)));
     Ok((cals, events))
+}
+
+// ── Writing ─────────────────────────────────────────────────────────────────
+
+/// A new event, or what changes in one (every field may be left out of a
+/// change). A time is a day (`2026-11-20`, all day, `end` excluded), an
+/// instant with its zone (`2026-11-20T13:00:00Z`, `…+01:00`), or a local
+/// time (`2026-11-20T14:00`, `2026-11-20 14:00`) read in the machine's zone.
+#[derive(Deserialize, Default, Debug)]
+#[serde(default)]
+pub struct EventInput {
+    pub title: Option<String>,
+    pub location: Option<String>,
+    pub notes: Option<String>,
+    pub start: Option<String>,
+    pub end: Option<String>,
+}
+
+/// Whether an instant says its zone (`Z`, `+01:00`, `-05:00`).
+fn has_zone(t: &str) -> bool {
+    t.ends_with(['Z', 'z'])
+        || (t.len() > 19 && t.is_char_boundary(19) && t[19..].contains(['+', '-']))
+}
+
+/// A time as Google's `start` / `end` want it: `{"date":…}` for a day,
+/// `{"dateTime":…}` (UTC) for an instant.
+pub fn google_time(text: &str) -> Result<Value, String> {
+    let t = text.trim();
+    if t.len() == 10 {
+        if let Some(day) = Stamp::day(t).filter(|d| d.time.is_none()) {
+            return Ok(json!({ "date": day.iso() }));
+        }
+    }
+    if has_zone(t) {
+        if let Some(s) = rfc3339(t) {
+            return Ok(json!({ "dateTime": s.iso() }));
+        }
+    }
+    // A local time: `date` knows the zone (and its summer time).
+    let out = std::process::Command::new("date")
+        .args(["-u", "-d", &t.replace('T', " "), "+%Y-%m-%dT%H:%M:%SZ"])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map_err(|e| e.to_string())?;
+    let utc = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if !out.status.success() || utc.is_empty() {
+        return Err(crate::i18n::tr("google.bad_dates"));
+    }
+    Ok(json!({ "dateTime": utc }))
+}
+
+/// `time` moved later by `secs` (an instant) or `days` (a day).
+fn shifted(time: &Value, secs: i64, days: i64) -> Option<Value> {
+    if let Some(d) = time.get("date").and_then(Value::as_str) {
+        return Some(json!({ "date": Stamp::day(d)?.plus_days(days).iso() }));
+    }
+    let s = rfc3339(time.get("dateTime")?.as_str()?)?;
+    Some(json!({ "dateTime": s.plus_seconds(secs).iso() }))
+}
+
+/// How long an event lasts, as `shifted` takes it: seconds, and days.
+fn length(start: &Value, end: &Value) -> (i64, i64) {
+    match (when(Some(start)), when(Some(end))) {
+        (Some(a), Some(b)) => {
+            let secs = (b.epoch() - a.epoch()).max(0);
+            (secs, (secs / 86400).max(1))
+        }
+        _ => (3600, 1),
+    }
+}
+
+/// The calendar `text` names: its id, its name (any case), or the main one
+/// when empty.
+fn calendar_id(account: &mut Account, text: &str) -> Result<String, String> {
+    let t = text.trim();
+    if t.is_empty() || t == "primary" {
+        return Ok("primary".into());
+    }
+    let items = account.list(&format!("{API}/users/me/calendarList?maxResults=250"))?;
+    items
+        .iter()
+        .find_map(|c| {
+            let s = |k: &str| c.get(k).and_then(Value::as_str).unwrap_or("");
+            (s("id") == t
+                || s("summary").eq_ignore_ascii_case(t)
+                || s("summaryOverride").eq_ignore_ascii_case(t))
+            .then(|| s("id").to_string())
+        })
+        .ok_or_else(|| crate::i18n::tr_args("google.unknown_calendar", &[("name", t)]))
+}
+
+fn event_url(calendar: &str, id: &str) -> String {
+    let base = format!("{API}/calendars/{}/events", encode(calendar));
+    if id.is_empty() {
+        base
+    } else {
+        format!("{base}/{}", encode(id))
+    }
+}
+
+/// The text fields of an input, as Google names them.
+fn text_fields(input: &EventInput, body: &mut serde_json::Map<String, Value>) {
+    for (key, value) in [
+        ("summary", &input.title),
+        ("location", &input.location),
+        ("description", &input.notes),
+    ] {
+        if let Some(v) = value {
+            body.insert(key.into(), json!(v));
+        }
+    }
+}
+
+fn one(v: Value, calendar: &str) -> Result<Event, String> {
+    events(&[v], calendar)
+        .pop()
+        .ok_or_else(|| crate::i18n::tr("google.unknown_event"))
+}
+
+/// A new event. Without `end`, it lasts an hour (a day when all day).
+pub fn create_event(calendar: &str, input: &EventInput) -> Result<Event, String> {
+    let mut account = Account::load()?;
+    let calendar = calendar_id(&mut account, calendar)?;
+    let start = google_time(
+        input
+            .start
+            .as_deref()
+            .ok_or_else(|| crate::i18n::tr("google.need_start"))?,
+    )?;
+    let end = match &input.end {
+        Some(e) => google_time(e)?,
+        None => shifted(&start, 3600, 1).ok_or_else(|| crate::i18n::tr("google.bad_dates"))?,
+    };
+    let mut body = serde_json::Map::new();
+    text_fields(input, &mut body);
+    body.insert("start".into(), start);
+    body.insert("end".into(), end);
+    let v = account.call(
+        "POST",
+        &event_url(&calendar, ""),
+        Some(&Value::Object(body)),
+    )?;
+    one(v, &calendar)
+}
+
+/// What changes in an event. A new `start` without `end` keeps its length:
+/// that is moving it.
+pub fn update_event(calendar: &str, id: &str, input: &EventInput) -> Result<Event, String> {
+    if id.is_empty() {
+        return Err(crate::i18n::tr("google.unknown_event"));
+    }
+    let mut account = Account::load()?;
+    let calendar = calendar_id(&mut account, calendar)?;
+    let url = event_url(&calendar, id);
+    let mut body = serde_json::Map::new();
+    text_fields(input, &mut body);
+    match (&input.start, &input.end) {
+        (Some(s), Some(e)) => {
+            body.insert("start".into(), google_time(s)?);
+            body.insert("end".into(), google_time(e)?);
+        }
+        (Some(s), None) => {
+            let now = account.call("GET", &url, None)?;
+            let (secs, days) = length(&now["start"], &now["end"]);
+            let start = google_time(s)?;
+            let end =
+                shifted(&start, secs, days).ok_or_else(|| crate::i18n::tr("google.bad_dates"))?;
+            body.insert("start".into(), start);
+            body.insert("end".into(), end);
+        }
+        (None, Some(e)) => {
+            body.insert("end".into(), google_time(e)?);
+        }
+        (None, None) => {}
+    }
+    let v = account.call("PATCH", &url, Some(&Value::Object(body)))?;
+    one(v, &calendar)
+}
+
+pub fn delete_event(calendar: &str, id: &str) -> Result<(), String> {
+    if id.is_empty() {
+        return Err(crate::i18n::tr("google.unknown_event"));
+    }
+    let mut account = Account::load()?;
+    let calendar = calendar_id(&mut account, calendar)?;
+    account.call("DELETE", &event_url(&calendar, id), None)?;
+    Ok(())
 }
 
 // ── The pilot ───────────────────────────────────────────────────────────────
@@ -382,9 +581,11 @@ pub fn pilot_read(from: &str, to: &str) -> Result<String, String> {
             format!(" — {}", e.location)
         };
         lines.push(format!(
-            "- {when} : {}{place} [{}]",
+            "- {when} : {}{place} [{}] (id {}, calendrier {})",
             e.title,
-            name(&e.calendar)
+            name(&e.calendar),
+            e.uid,
+            e.calendar
         ));
     }
     // The tasks due in the range, still to do (best effort: the events
@@ -399,7 +600,10 @@ pub fn pilot_read(from: &str, to: &str) -> Result<String, String> {
                 .find(|l| l.id == t.list)
                 .map(|l| l.title.as_str())
                 .unwrap_or("");
-            lines.push(format!("- {} (tâche) : {} [{list}]", t.due, t.title));
+            lines.push(format!(
+                "- {} (tâche) : {} [{list}] (id {}, liste {})",
+                t.due, t.title, t.id, t.list
+            ));
         }
     }
     Ok(if lines.is_empty() {
@@ -414,10 +618,22 @@ pub fn pilot_read(from: &str, to: &str) -> Result<String, String> {
 /// `anna agenda <from> <to>`: one JSON line on stdout.
 pub fn run(args: &[String]) {
     let arg = |i: usize| args.get(i).map(String::as_str).unwrap_or("");
-    let line = match agenda(arg(2), arg(3)) {
-        Ok((calendars, events)) => json!({ "ok": true, "calendars": calendars, "events": events }),
-        Err(e) => json!({ "ok": false, "error": e }),
+    let input = |i: usize| -> Result<EventInput, String> {
+        serde_json::from_str(arg(i)).map_err(|e| format!("agenda : {e}"))
     };
+    let result = match arg(2) {
+        "create" => input(4)
+            .and_then(|i| create_event(arg(3), &i))
+            .map(|e| json!({ "ok": true, "event": e })),
+        "update" => input(5)
+            .and_then(|i| update_event(arg(3), arg(4), &i))
+            .map(|e| json!({ "ok": true, "event": e })),
+        "delete" => delete_event(arg(3), arg(4)).map(|()| json!({ "ok": true })),
+        _ => agenda(arg(2), arg(3)).map(
+            |(calendars, events)| json!({ "ok": true, "calendars": calendars, "events": events }),
+        ),
+    };
+    let line = result.unwrap_or_else(|e| json!({ "ok": false, "error": e }));
     println!("{line}");
 }
 
@@ -442,6 +658,49 @@ mod tests {
         assert_eq!(Stamp::day("1970-01-02").unwrap().epoch(), 86400);
         assert!(Stamp::parse("2026").is_none());
         assert!(Stamp::parse("20261322").is_none());
+    }
+
+    #[test]
+    fn times_given_to_google() {
+        assert_eq!(
+            google_time("2026-11-20").unwrap(),
+            json!({ "date": "2026-11-20" })
+        );
+        assert_eq!(
+            google_time("2026-11-20T14:00:00+01:00").unwrap(),
+            json!({ "dateTime": "2026-11-20T13:00:00Z" })
+        );
+        assert_eq!(
+            google_time("2026-11-20T13:00:00Z").unwrap(),
+            json!({ "dateTime": "2026-11-20T13:00:00Z" })
+        );
+        // A local time goes through `date`: an instant in UTC comes out.
+        let local = google_time("2026-11-20 14:00").unwrap();
+        assert!(local["dateTime"].as_str().unwrap().ends_with('Z'));
+        assert!(google_time("demain vers midi").is_err());
+    }
+
+    #[test]
+    fn moving_keeps_the_length() {
+        let (s, e) = (
+            json!({ "dateTime": "2026-11-20T13:00:00Z" }),
+            json!({ "dateTime": "2026-11-20T14:30:00Z" }),
+        );
+        let (secs, _) = length(&s, &e);
+        assert_eq!(secs, 5400);
+        let new = json!({ "dateTime": "2026-11-21T09:00:00Z" });
+        assert_eq!(
+            shifted(&new, secs, 1).unwrap(),
+            json!({ "dateTime": "2026-11-21T10:30:00Z" })
+        );
+        let (_, days) = length(
+            &json!({ "date": "2026-11-20" }),
+            &json!({ "date": "2026-11-23" }),
+        );
+        assert_eq!(
+            shifted(&json!({ "date": "2026-11-25" }), 0, days).unwrap(),
+            json!({ "date": "2026-11-28" })
+        );
     }
 
     #[test]

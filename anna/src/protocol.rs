@@ -173,6 +173,23 @@ pub enum Command {
     PilotWatch,
     /// Forget the pilot's conversation.
     PilotReset,
+    /// The pilot's model (claude/pilot.rs): `{"ok":true,"config":{provider,
+    /// url,model,think},"has_key":bool,"models":[…],"error":…}` — the models
+    /// the provider offers, `error` when it could not be asked.
+    PilotConfig,
+    /// Change the pilot's model; the conversation starts over. `key`: absent
+    /// keeps the API key, "" removes it. `{"ok":true}`.
+    PilotConfigure {
+        provider: String,
+        #[serde(default)]
+        url: String,
+        #[serde(default)]
+        model: String,
+        #[serde(default)]
+        think: bool,
+        #[serde(default)]
+        key: Option<String>,
+    },
     // ── Voice (claude/voice.rs) ───────────────────────────────────────────
     /// Start listening, or end the recording now if already listening.
     /// `send` (default true): hand the transcript to the pilot; false only

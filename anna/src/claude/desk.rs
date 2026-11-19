@@ -1,5 +1,6 @@
-//! What the pilot can do on the desktop: its tools, as `anna mcp` serves them
-//! to Claude Code, and how anna carries each one out.
+//! What the pilot can do on the desktop: its tools, as the pilot hands them
+//! to its model (pilot.rs) and `anna mcp` serves them to any MCP client, and
+//! how anna carries each one out.
 //!
 //! Every call lands in the daemon (`desk` command), never in the MCP process:
 //! the daemon owns the theme and the bar.
@@ -77,15 +78,22 @@ pub fn tools() -> Value {
             json!({ "nom": s("nom de l'application") }), &["nom"]),
         tool("ouvrir_url", "Ouvre une URL ou une recherche dans le navigateur par défaut.",
             json!({ "url": s("URL complète (https://…)") }), &["url"]),
+        tool("lire_page",
+            "Lit une page web (http ou https) et en rend le texte, sans la mise en page : pour \
+             répondre sur une page dont on a l'adresse.",
+            json!({ "url": s("URL complète (https://…)") }), &["url"]),
         tool("ouvrir_projet", "Ouvre un projet de ~/ciph3r dans Zed ou dans un terminal.",
             json!({ "projet": s("nom du projet, ex. karenine"),
                     "outil": json!({ "type": "string", "enum": ["zed", "terminal"] }) }),
             &["projet", "outil"]),
         tool("voir_ecran",
-            "Te montre l'écran que regarde l'utilisateur (le moniteur actif, en image), pour répondre \
-             à une question sur ce qui y est affiché : « c'est quoi cette erreur ? », « explique-moi ce \
-             schéma », « résume cette page ». Rien n'est enregistré.",
-            json!({}), &[]),
+            "Te montre en image l'écran que regarde l'utilisateur (le moniteur actif), ou une seule \
+             fenêtre (`cible`), pour répondre à une question sur ce qui y est affiché ou le décrire : \
+             « c'est quoi cette erreur ? », « explique-moi ce schéma », « résume cette page », \
+             « décris ce qu'il y a dans Firefox ». Une fenêtre doit être affichée (sur un workspace \
+             visible) pour être vue. Rien n'est enregistré.",
+            json!({ "cible": s("classe ou morceau de titre de la fenêtre à voir, ex. « firefox », \
+                               « zed », « youtube » ; vide : tout l'écran actif") }), &[]),
         tool("capture_ecran", "Fait une capture (copiée et enregistrée).",
             json!({ "zone": json!({ "type": "string", "enum": ["ecran", "selection", "fenetre"] }) }),
             &["zone"]),
@@ -123,6 +131,55 @@ pub fn tools() -> Value {
             json!({ "debut": s("premier jour, AAAA-MM-JJ ; défaut : aujourd'hui"),
                     "fin": s("lendemain du dernier jour, AAAA-MM-JJ (exclu) ; défaut : début + 7 jours") }),
             &[]),
+        tool("evenement_creer",
+            "Crée un événement dans l'agenda Google de l'utilisateur. Heures locales (« 2026-11-20T14:00 ») ; \
+             un jour seul (« 2026-11-20 ») fait un événement sur toute la journée. Sans fin : une heure (un jour \
+             pour une journée entière).",
+            json!({ "titre": s("titre de l'événement"),
+                    "debut": s("début : AAAA-MM-JJTHH:MM (heure locale) ou AAAA-MM-JJ (toute la journée)"),
+                    "fin": s("fin, même forme (exclue pour une journée entière) ; défaut : une heure après"),
+                    "lieu": s("lieu (facultatif)"),
+                    "notes": s("description (facultatif)"),
+                    "calendrier": s("nom ou id de l'agenda ; défaut : l'agenda principal") }),
+            &["titre", "debut"]),
+        tool("evenement_modifier",
+            "Modifie ou déplace un événement de l'agenda Google : seuls les champs donnés changent. Un nouveau \
+             `debut` sans `fin` le déplace en gardant sa durée. L'id et le calendrier viennent de l'outil `agenda`.",
+            json!({ "id": s("id de l'événement (donné par `agenda`)"),
+                    "calendrier": s("id de son calendrier (donné par `agenda`)"),
+                    "titre": s("nouveau titre"),
+                    "debut": s("nouveau début : AAAA-MM-JJTHH:MM (heure locale) ou AAAA-MM-JJ"),
+                    "fin": s("nouvelle fin, même forme"),
+                    "lieu": s("nouveau lieu"),
+                    "notes": s("nouvelle description") }),
+            &["id", "calendrier"]),
+        tool("evenement_supprimer",
+            "Supprime un événement de l'agenda Google. Seulement si l'utilisateur le demande clairement.",
+            json!({ "id": s("id de l'événement (donné par `agenda`)"),
+                    "calendrier": s("id de son calendrier (donné par `agenda`)") }),
+            &["id", "calendrier"]),
+        tool("tache_creer",
+            "Crée une tâche Google (Google Tasks). Google ne garde que le jour d'échéance, jamais l'heure.",
+            json!({ "titre": s("titre de la tâche"),
+                    "echeance": s("jour d'échéance, AAAA-MM-JJ (facultatif)"),
+                    "notes": s("notes (facultatif)"),
+                    "liste": s("nom ou id de la liste ; défaut : la liste principale") }),
+            &["titre"]),
+        tool("tache_modifier",
+            "Modifie, déplace (nouvelle échéance), coche ou décoche une tâche Google : seuls les champs donnés \
+             changent. L'id et la liste viennent de l'outil `agenda`.",
+            json!({ "id": s("id de la tâche (donné par `agenda`)"),
+                    "liste": s("id de sa liste (donné par `agenda`)"),
+                    "titre": s("nouveau titre"),
+                    "echeance": s("nouveau jour d'échéance, AAAA-MM-JJ ; chaîne vide pour l'enlever"),
+                    "notes": s("nouvelles notes"),
+                    "faite": json!({ "type": "boolean", "description": "true : cochée ; false : à refaire" }) }),
+            &["id", "liste"]),
+        tool("tache_supprimer",
+            "Supprime une tâche Google. Seulement si l'utilisateur le demande clairement.",
+            json!({ "id": s("id de la tâche (donné par `agenda`)"),
+                    "liste": s("id de sa liste (donné par `agenda`)") }),
+            &["id", "liste"]),
         tool("widget",
             "Ouvre, ferme ou bascule un onglet du panneau de droite de l'interface : « explorer » (les fichiers de ce PC \
              ou d'un serveur du réseau Tailscale), « stats » (toute la flotte : processeur, mémoire, carte graphique, disques \
@@ -208,6 +265,86 @@ fn shell_send(line: &str) -> Result<(), String> {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
+
+/// Longest page read (bytes), and the text handed back from it (characters).
+const PAGE_MAX: u64 = 2 * 1024 * 1024;
+const PAGE_TEXT_MAX: usize = 12_000;
+
+/// A web page, as text: scripts, styles and tags out, entities decoded,
+/// blank runs folded.
+fn read_page(url: &str) -> Result<String, String> {
+    use std::io::Read;
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("seules les URL http(s) se lisent".into());
+    }
+    let resp = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(15))
+        .user_agent("Mozilla/5.0 (X11; Linux x86_64) anna")
+        .build()
+        .get(url)
+        .call()
+        .map_err(|e| e.to_string())?;
+    let mut body = String::new();
+    resp.into_reader()
+        .take(PAGE_MAX)
+        .read_to_string(&mut body)
+        .map_err(|e| e.to_string())?;
+    let text: String = html_text(&body).chars().take(PAGE_TEXT_MAX).collect();
+    Ok(if text.trim().is_empty() { "(page sans texte)".into() } else { text })
+}
+
+fn html_text(html: &str) -> String {
+    // ASCII only: the byte offsets stay those of `html`.
+    let lower = html.to_ascii_lowercase();
+    let lb = lower.as_bytes();
+    let mut out = String::with_capacity(html.len() / 3);
+    let mut i = 0;
+    let bytes = html.as_bytes();
+    while i < html.len() {
+        if bytes[i] == b'<' {
+            // Whole elements whose content is no text.
+            let skip = ["script", "style", "noscript", "svg", "head"]
+                .iter()
+                .find(|t| lb[i + 1..].starts_with(t.as_bytes()));
+            let end = match skip {
+                Some(t) => lower[i..]
+                    .find(&format!("</{t}"))
+                    .and_then(|k| lower[i + k..].find('>').map(|m| i + k + m + 1)),
+                None => lower[i..].find('>').map(|k| i + k + 1),
+            };
+            let Some(end) = end else { break };
+            // Blocks end lines.
+            let tag = &lb[i + 1..end];
+            if ["p>", "p ", "br", "div", "li", "h1", "h2", "h3", "h4", "tr", "/p", "/div", "/li", "/h"]
+                .iter()
+                .any(|b| tag.starts_with(b.as_bytes()))
+            {
+                out.push('\n');
+            } else {
+                out.push(' ');
+            }
+            i = end;
+        } else {
+            let next = html[i..].find('<').map_or(html.len(), |k| i + k);
+            out.push_str(&html[i..next]);
+            i = next;
+        }
+    }
+    let decoded = out
+        .replace("&nbsp;", " ")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&");
+    decoded
+        .lines()
+        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
     let out = Command::new(cmd)
@@ -531,40 +668,99 @@ pub fn project_dir(name: &str) -> Result<String, String> {
 /// reads best, larger is scaled down on its side anyway.
 const SCREEN_MAX: f64 = 1568.0;
 
-/// The focused monitor, as `voir_ecran` shows it: a line saying which, and
-/// the JPEG in base64. Nothing is written to disk.
-pub fn screen_image() -> Result<(String, String), String> {
-    use base64::Engine;
-    let monitors = hypr_json("monitors");
-    let mon = monitors
-        .as_array()
-        .and_then(|m| {
-            m.iter()
-                .find(|m| m.get("focused").and_then(Value::as_bool) == Some(true))
-        })
-        .ok_or("aucun écran actif")?;
-    let name = mon.get("name").and_then(Value::as_str).unwrap_or("");
-    let f = |k: &str| mon.get(k).and_then(Value::as_f64).unwrap_or(0.0);
-    let (w, h, scale) = (f("width"), f("height"), f("scale").max(1e-3));
-    // grim's scale applies to the logical size (pixels / monitor scale).
-    let logical = w.max(h) / scale;
-    let factor = if logical > 0.0 {
-        (SCREEN_MAX / logical).min(scale)
-    } else {
-        1.0
+/// What `voir_ecran` captures: grim's arguments (`-o <output>` or
+/// `-g "<x>,<y> <w>x<h>"`, then `-s <scale>`), and the line saying what it
+/// is. `target` empty: the focused monitor; else the window whose class, then
+/// title, contains it — if it is on a workspace shown on some monitor.
+fn capture_area(monitors: &Value, clients: &Value, active: &Value, target: &str)
+    -> Result<(Vec<String>, String), String> {
+    let mons = monitors.as_array().cloned().unwrap_or_default();
+    let num = |v: &Value, k: &str| v.get(k).and_then(Value::as_f64).unwrap_or(0.0);
+    let text = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    // Scale the image down so its long side (in logical pixels) is at most
+    // SCREEN_MAX, never above the monitor's own pixels.
+    let factor = |logical: f64, scale: f64| {
+        if logical > 0.0 { (SCREEN_MAX / logical).min(scale.max(1e-3)) } else { 1.0 }
     };
+
+    let target = target.trim().to_lowercase();
+    if target.is_empty() {
+        let mon = mons
+            .iter()
+            .find(|m| m.get("focused").and_then(Value::as_bool) == Some(true))
+            .ok_or("aucun écran actif")?;
+        let (w, h, scale) = (num(mon, "width"), num(mon, "height"), num(mon, "scale").max(1e-3));
+        let args = vec![
+            "-o".into(), text(mon, "name"),
+            "-s".into(), format!("{:.3}", factor(w.max(h) / scale, scale)),
+        ];
+        let line = format!(
+            "écran {} ({w}×{h}) ; fenêtre active : {} — {}. La barre de conversation est en bas.",
+            text(mon, "name"), text(active, "class"), text(active, "title")
+        );
+        return Ok((args, line));
+    }
+
+    let all = clients.as_array().cloned().unwrap_or_default();
+    let has = |c: &Value, k: &str| text(c, k).to_lowercase().contains(&target);
+    // Shown windows first: a matching one on screen beats one elsewhere.
+    let shown_ws: Vec<i64> = mons
+        .iter()
+        .flat_map(|m| {
+            [m.pointer("/activeWorkspace/id"), m.pointer("/specialWorkspace/id")]
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_i64)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let ws_of = |c: &Value| c.pointer("/workspace/id").and_then(Value::as_i64).unwrap_or(i64::MIN);
+    let visible = |c: &Value| shown_ws.contains(&ws_of(c)) && c.get("hidden").and_then(Value::as_bool) != Some(true);
+    let win = all.iter().find(|c| visible(c) && has(c, "class"))
+        .or_else(|| all.iter().find(|c| visible(c) && has(c, "title")))
+        .or_else(|| all.iter().find(|c| has(c, "class") || has(c, "title")))
+        .ok_or_else(|| format!("aucune fenêtre ne correspond à « {target} »"))?;
+    let label = format!("{} — {}", text(win, "class"), text(win, "title"));
+    if !visible(win) {
+        let ws = win.pointer("/workspace/name").and_then(Value::as_str).unwrap_or("?");
+        return Err(format!(
+            "la fenêtre {label} est sur le workspace {ws}, qui n'est pas affiché : elle ne peut pas \
+             être vue sans l'afficher (afficher_fenetre change ce que voit l'utilisateur ; ne le fais \
+             que s'il le veut)"
+        ));
+    }
+    let at = |i: usize| win.pointer(&format!("/at/{i}")).and_then(Value::as_f64).unwrap_or(0.0);
+    let size = |i: usize| win.pointer(&format!("/size/{i}")).and_then(Value::as_f64).unwrap_or(0.0);
+    let (w, h) = (size(0), size(1));
+    if w < 1.0 || h < 1.0 {
+        return Err(format!("la fenêtre {label} n'a pas de taille à l'écran"));
+    }
+    let scale = mons
+        .iter()
+        .find(|m| m.get("id").and_then(Value::as_i64) == win.get("monitor").and_then(Value::as_i64))
+        .map(|m| num(m, "scale"))
+        .unwrap_or(1.0);
+    let args = vec![
+        "-g".into(), format!("{},{} {}x{}", at(0), at(1), w, h),
+        "-s".into(), format!("{:.3}", factor(w.max(h), scale)),
+    ];
+    Ok((args, format!("fenêtre {label} ({w}×{h})")))
+}
+
+/// What `voir_ecran` shows: the focused monitor, or one window (`target`).
+/// A line saying what it is, and the JPEG in base64. Nothing is written to
+/// disk.
+pub fn screen_image(target: &str) -> Result<(String, String), String> {
+    use base64::Engine;
+    let (area, line) = capture_area(
+        &hypr_json("monitors"),
+        &hypr_json("clients"),
+        &hypr_json("activewindow"),
+        target,
+    )?;
     let out = Command::new("grim")
-        .args([
-            "-o",
-            name,
-            "-s",
-            &format!("{factor:.3}"),
-            "-t",
-            "jpeg",
-            "-q",
-            "80",
-            "-",
-        ])
+        .args(&area)
+        .args(["-t", "jpeg", "-q", "80", "-"])
         .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("grim : {e}"))?;
@@ -574,21 +770,8 @@ pub fn screen_image() -> Result<(String, String), String> {
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
-    let active = hypr_json("activewindow");
-    let window = |k: &str| {
-        active
-            .get(k)
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string()
-    };
-    let text = format!(
-        "écran {name} ({w}×{h}) ; fenêtre active : {} — {}. La barre de conversation est en bas.",
-        window("class"),
-        window("title")
-    );
     Ok((
-        text,
+        line,
         base64::engine::general_purpose::STANDARD.encode(&out.stdout),
     ))
 }
@@ -740,6 +923,7 @@ pub fn run_tool(tool: &str, args: &Value) -> Result<String, String> {
             launch(&["xdg-open", &url])?;
             Ok("ouvert dans le navigateur".into())
         }
+        "lire_page" => read_page(&s("url")),
         "ouvrir_projet" => {
             let dir = project_dir(&s("projet"))?;
             match s("outil").as_str() {
@@ -787,6 +971,67 @@ pub fn run_tool(tool: &str, args: &Value) -> Result<String, String> {
         ),
         "lire_notes" => Ok(cut(&crate::notes::pilot_read(&s("recherche")))),
         "agenda" => crate::google::calendar::pilot_read(&s("debut"), &s("fin")).map(|t| cut(&t)),
+        "evenement_creer" | "evenement_modifier" => {
+            use crate::google::calendar::{create_event, update_event, EventInput};
+            let opt = |k: &str| args.get(k).and_then(Value::as_str).map(str::to_string);
+            let input = EventInput {
+                title: opt("titre"),
+                location: opt("lieu"),
+                notes: opt("notes"),
+                start: opt("debut"),
+                end: opt("fin"),
+            };
+            let event = if tool == "evenement_creer" {
+                create_event(&s("calendrier"), &input)?
+            } else {
+                update_event(&s("calendrier"), &s("id"), &input)?
+            };
+            let verb = if tool == "evenement_creer" {
+                "créé"
+            } else {
+                "modifié"
+            };
+            Ok(format!(
+                "événement « {} » {verb} : {} → {} (UTC pour les heures ; id {}, calendrier {})",
+                event.title, event.start, event.end, event.uid, event.calendar
+            ))
+        }
+        "evenement_supprimer" => crate::google::calendar::delete_event(&s("calendrier"), &s("id"))
+            .map(|()| "événement supprimé".to_string()),
+        "tache_creer" | "tache_modifier" => {
+            use crate::google::tasks::{create_task, update_task, TaskInput};
+            let opt = |k: &str| args.get(k).and_then(Value::as_str).map(str::to_string);
+            let input = TaskInput {
+                title: opt("titre"),
+                notes: opt("notes"),
+                due: opt("echeance"),
+                done: args.get("faite").and_then(Value::as_bool),
+            };
+            let task = if tool == "tache_creer" {
+                create_task(&s("liste"), &input)?
+            } else {
+                update_task(&s("liste"), &s("id"), &input)?
+            };
+            let verb = if tool == "tache_creer" {
+                "créée"
+            } else {
+                "modifiée"
+            };
+            let due = if task.due.is_empty() {
+                "sans échéance".to_string()
+            } else {
+                format!("pour le {}", task.due)
+            };
+            Ok(format!(
+                "tâche « {} » {verb}, {due}{} (id {}, liste {})",
+                task.title,
+                if task.done { ", cochée" } else { "" },
+                task.id,
+                task.list
+            ))
+        }
+        "tache_supprimer" => crate::google::tasks::delete_task(&s("liste"), &s("id"))
+            .map(|()| "tâche supprimée".to_string()),
         "ouvrir_note" => {
             let rel = s("chemin");
             let p = vault().join(&rel);
@@ -829,6 +1074,61 @@ pub fn run_tool(tool: &str, args: &Value) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn hypr() -> (Value, Value) {
+        let monitors = json!([
+            { "id": 0, "name": "eDP-1", "width": 1920, "height": 1080, "scale": 1.25, "focused": true,
+              "activeWorkspace": { "id": 7 }, "specialWorkspace": { "id": 0 } },
+            { "id": 1, "name": "HDMI-A-1", "width": 1920, "height": 1080, "scale": 1.0, "focused": false,
+              "activeWorkspace": { "id": 1 }, "specialWorkspace": { "id": 0 } }
+        ]);
+        let clients = json!([
+            { "class": "firefox", "title": "Docs", "at": [10, 20], "size": [800, 600],
+              "workspace": { "id": 3, "name": "3" }, "monitor": 1 },
+            { "class": "firefox", "title": "YouTube", "at": [0, 900], "size": [1920, 1050],
+              "workspace": { "id": 1, "name": "1" }, "monitor": 1 },
+            { "class": "dev.zed.Zed", "title": "karenine", "at": [1536, 900], "size": [1536, 864],
+              "workspace": { "id": 7, "name": "7" }, "monitor": 0 }
+        ]);
+        (monitors, clients)
+    }
+
+    #[test]
+    fn the_whole_screen_is_the_focused_monitor() {
+        let (m, c) = hypr();
+        let (args, line) = capture_area(&m, &c, &json!({"class": "zed", "title": "t"}), "").unwrap();
+        // 1920 px at scale 1.25: 1536 logical, brought up to 1568.
+        assert_eq!(args, vec!["-o", "eDP-1", "-s", "1.021"]);
+        assert!(line.starts_with("écran eDP-1 (1920×1080)"));
+    }
+
+    #[test]
+    fn a_window_is_its_region_and_the_shown_one_wins() {
+        let (m, c) = hypr();
+        // Two Firefox windows: the one on a shown workspace is captured.
+        let (args, line) = capture_area(&m, &c, &json!({}), "Firefox").unwrap();
+        assert_eq!(args, vec!["-g", "0,900 1920x1050", "-s", "0.817"]);
+        assert_eq!(line, "fenêtre firefox — YouTube (1920×1050)");
+        // By title, scaled to its monitor (1.25): never above its pixels.
+        let (args, _) = capture_area(&m, &c, &json!({}), "karen").unwrap();
+        assert_eq!(args[1], "1536,900 1536x864");
+    }
+
+    #[test]
+    fn a_window_out_of_sight_is_not_captured() {
+        let (m, c) = hypr();
+        let err = capture_area(&m, &c, &json!({}), "docs").unwrap_err();
+        assert!(err.contains("workspace 3"), "{err}");
+        assert!(capture_area(&m, &c, &json!({}), "gimp").unwrap_err().contains("aucune fenêtre"));
+    }
+
+    #[test]
+    fn a_page_reads_as_text() {
+        let html = "<html><head><title>T</title><style>a{}</style></head><body>\
+                    <h1>Météo</h1><p>Il fait&nbsp;12&deg; à <b>Paris</b>.</p>\
+                    <script>var x = '<p>';</script><div>İstanbul &amp; co</div></body></html>";
+        assert_eq!(html_text(html), "Météo\nIl fait 12&deg; à Paris .\nİstanbul & co");
+    }
 
     #[test]
     fn every_tool_has_a_schema() {

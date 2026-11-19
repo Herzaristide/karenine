@@ -15,6 +15,12 @@ import Quickshell.Io
 // Les tâches, toutes listes confondues, se lisent d'un coup ; Google ne
 // garde que leur jour d'échéance (`due`, "" sans échéance). Cocher une tâche
 // la coche ici tout de suite, puis chez Google (`anna tasks done`).
+//
+// Créer, modifier (déplacer, c'est modifier le début ou l'échéance) et
+// supprimer passent par `anna agenda create|update|delete` et `anna tasks
+// create|update|delete`, l'un après l'autre. Un changement s'affiche ici
+// tout de suite ; Google répondu, l'agenda se relit. Un échec s'affiche dans
+// `error` (ou `tasksError`) et la relecture remet ce que Google garde.
 Singleton {
     id: agenda
 
@@ -251,6 +257,112 @@ Singleton {
                 agenda.tasksError = typeof e === "string" && e !== "" ? e : I18n.tr("anna.noAnswer");
             }
             doneProc.next();
+        }
+    }
+
+    // ── Écrire ───────────────────────────────────────────────────
+
+    // Une Date → ce qu'anna attend : l'instant en UTC, ou le jour seul pour
+    // une journée entière.
+    function stamp(d, allDay) {
+        return allDay ? agenda.dayKey(d) : d.toISOString();
+    }
+
+    // input : { title, location, notes, start: Date, end: Date, allDay }.
+    function _eventJson(input) {
+        var out = {};
+        ["title", "location", "notes"].forEach(k => {
+            if (input[k] !== undefined)
+                out[k] = input[k];
+        });
+        if (input.start)
+            out.start = agenda.stamp(input.start, input.allDay);
+        if (input.end)
+            out.end = agenda.stamp(input.end, input.allDay);
+        return JSON.stringify(out);
+    }
+
+    function createEvent(calendar, input) {
+        agenda._write([agenda.anna, "agenda", "create", calendar || "", agenda._eventJson(input)], "events");
+    }
+
+    // Affiché tout de suite à sa nouvelle place, puis écrit chez Google.
+    function updateEvent(ev, input) {
+        agenda.events = agenda.events.map(e => e.calendar === ev.calendar && e.uid === ev.uid
+            ? Object.assign({}, e, {
+                title: input.title !== undefined ? input.title : e.title,
+                location: input.location !== undefined ? input.location : e.location,
+                notes: input.notes !== undefined ? input.notes : e.notes,
+                startDate: input.start || e.startDate,
+                endDate: input.end || e.endDate,
+                allDay: input.allDay !== undefined ? input.allDay : e.allDay
+            }) : e);
+        agenda._write([agenda.anna, "agenda", "update", ev.calendar, ev.uid, agenda._eventJson(input)], "events");
+    }
+
+    function deleteEvent(ev) {
+        agenda.events = agenda.events.filter(e => !(e.calendar === ev.calendar && e.uid === ev.uid));
+        agenda._write([agenda.anna, "agenda", "delete", ev.calendar, ev.uid], "events");
+    }
+
+    // input : { title, notes, due: "AAAA-MM-JJ" ou "" }.
+    function createTask(list, input) {
+        agenda._write([agenda.anna, "tasks", "create", list || "", JSON.stringify(input)], "tasks");
+    }
+
+    function updateTask(task, input) {
+        agenda.tasks = agenda.tasks.map(t => t.list === task.list && t.id === task.id
+                                             ? Object.assign({}, t, input) : t);
+        agenda._write([agenda.anna, "tasks", "update", task.list, task.id, JSON.stringify(input)], "tasks");
+    }
+
+    function deleteTask(task) {
+        agenda.tasks = agenda.tasks.filter(t => !(t.list === task.list && t.id === task.id));
+        agenda._write([agenda.anna, "tasks", "delete", task.list, task.id], "tasks");
+    }
+
+    function _write(args, what) {
+        writeProc.queue.push({ args: args, what: what });
+        writeProc.next();
+    }
+
+    // Les écritures, l'une après l'autre ; chacune finie, ce qu'elle touche
+    // se relit.
+    Process {
+        id: writeProc
+        property var queue: []
+        property var current: null
+        stdout: StdioCollector { id: writeOut }
+
+        function next() {
+            if (writeProc.running || writeProc.queue.length === 0)
+                return;
+            writeProc.current = writeProc.queue.shift();
+            writeProc.command = writeProc.current.args;
+            writeProc.running = true;
+        }
+
+        onRunningChanged: {
+            if (running)
+                return;
+            var c = writeProc.current;
+            writeProc.current = null;
+            var failed = "";
+            try {
+                var r = JSON.parse(writeOut.text);
+                if (!r.ok)
+                    failed = r.error || I18n.tr("common.failedSentence");
+            } catch (e) {
+                failed = I18n.tr("anna.noAnswer");
+            }
+            if (c.what === "tasks") {
+                agenda.tasksError = failed;
+                agenda.loadTasks();
+            } else {
+                agenda.reloadAll();
+                agenda.error = failed;
+            }
+            writeProc.next();
         }
     }
 }

@@ -1,52 +1,64 @@
-//! The pilot: a Claude session anna keeps warm, to which the conversation
-//! bar sends what the user asks of the desktop — "turn the sound down",
-//! "open Zed on karenine".
+//! The pilot: the assistant of the conversation bar, to which the user says
+//! what they want of the desktop — "turn the sound down", "open Zed on
+//! karenine" — or asks anything.
 //!
-//! It acts through the desk tools only (`anna mcp`, see desk.rs): Claude
-//! Code's own tools are off, and so are the user's settings — no hooks, no
-//! journal, no other MCP server — which keeps it quick to start and its
-//! reach exactly what desk.rs allows. It never starts a Claude Code session:
-//! code and research stay with the user.
+//! anna runs the conversation itself: it speaks the Anthropic Messages API
+//! (`POST /v1/messages`, streamed) to a model it is configured for — a local
+//! one through Ollama (which serves that API), or a remote one with an API
+//! key — and carries out the tools the model asks for. No agent runs beside
+//! it: the tools are the desk tools (desk.rs), run by the daemon exactly as
+//! `anna mcp` has them run (`desk` command), and nothing else.
 //!
 //! Each request carries a short context block (time, active window,
-//! projects), built here at send time. The process lives across requests so
-//! a request costs no start-up; it is restarted after a while (idle or many
-//! turns) to keep its context small. Nothing is written to disk.
+//! projects), built here at send time. The conversation is kept across
+//! requests, then forgotten after a while (idle or many requests) to keep
+//! it small. Nothing is written to disk but the configuration
+//! (`~/.config/anna/pilot.json`, and the key in `pilot.key`).
 //!
 //! What the bar shows — the user's requests, the tool calls, the answers —
 //! is kept here as a short log, pushed to `pilot_watch` subscribers whole on
 //! every change.
 
 use super::desk;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::VecDeque;
-use std::process::Stdio;
+use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{ChildStdin, Command};
-use tokio::sync::{broadcast, Mutex as AsyncMutex};
+use tokio::sync::broadcast;
 
-/// Restart after this many requests, or this long without one.
-const MAX_TURNS: u32 = 30;
+/// Forget the conversation after this many requests, or this long without one.
+const MAX_TURNS: u32 = 20;
 const MAX_IDLE: Duration = Duration::from_secs(20 * 60);
-/// Claude Code's web tools, the only ones of its own the pilot has.
-const WEB_TOOLS: &str = "WebSearch,WebFetch";
+/// Model calls for one request at most (each tool round is one more).
+const MAX_STEPS: usize = 16;
+/// Messages kept in the conversation; older requests are dropped whole.
+const MAX_MESSAGES: usize = 40;
 /// A context block built ahead (`prepare`) is used if this recent.
 const CONTEXT_FRESH: Duration = Duration::from_secs(5);
 /// Entries kept in the log the bar shows.
 const LOG_MAX: usize = 60;
+/// Longest wait for the model's next words (a local model loading counts).
+const READ_TIMEOUT: Duration = Duration::from_secs(300);
+/// The Messages API revision spoken.
+const API_VERSION: &str = "2023-06-01";
+/// Tokens for one answer; with thinking, its budget comes on top.
+const MAX_TOKENS: u32 = 4096;
+const THINKING_BUDGET: u32 = 2048;
 
 const PROMPT: &str = r#"Tu es {nom}, l'assistant intégré à l'interface de l'utilisateur (Hyprland sur NixOS). Il te parle depuis la barre de conversation en bas de l'écran (au clavier, ou à la voix en disant « {nom} »), souvent en quelques mots. Ta réponse s'affiche juste au-dessus de la barre.
 
 Ce que tu fais :
-- Tu agis sur le bureau avec tes outils : fenêtres et workspaces, son, luminosité, lecture média, applications, URL, projets, captures, couleur d'accent, notes du coffre Obsidian et notes rapides, agenda (`agenda`, en lecture), le métronome (`metronome` : lancer, arrêter, tempo et mesure, sans ouvrir de widget), et les widgets de l'interface (`widget` : stats, notes, agenda, lecteur, musique (métronome et accordeur), son, caméra, réglages).
+- Tu agis sur le bureau avec tes outils : fenêtres et workspaces, son, luminosité, lecture média, applications, URL, projets, captures, couleur d'accent, notes du coffre Obsidian, l'agenda et les tâches Google, le métronome (`metronome` : lancer, arrêter, tempo et mesure, sans ouvrir de widget), et les onglets du panneau de droite (`widget` : explorer, stats, agenda, lecteur, musique, claude, reglages).
+- L'agenda Google : `agenda` le lit (événements et tâches, avec leurs id) ; `evenement_creer`, `evenement_modifier`, `evenement_supprimer`, `tache_creer`, `tache_modifier`, `tache_supprimer` y écrivent. Pour modifier, déplacer ou supprimer, lis d'abord l'agenda pour trouver l'id ; pour déplacer un événement, donne seulement son nouveau `debut` (il garde sa durée). Écris les heures en heure locale (« 2026-11-20T14:00 »), en t'appuyant sur la date du [contexte]. Ne supprime que sur une demande claire, et dis ce que tu as supprimé.
 - Tu réponds aussi à toutes ses questions, comme un assistant généraliste : culture, sciences, histoire, langue, définitions, explications, calculs et conversions, conseils, recettes… Réponds de ce que tu sais, sans le renvoyer ailleurs.
-- Pour ce qui change ou est récent (actualité, météo, horaires, prix, résultats, versions, ce que tu ne sais pas avec certitude), cherche sur le web (`WebSearch`, puis `WebFetch` pour lire une page) et donne ta source en fin de réponse.
-- Pour une question sur ce qui est affiché (« c'est quoi ça ? », « explique-moi cette erreur », « que dit cette page ? », « ici », « à l'écran »), regarde l'écran (`voir_ecran`) puis réponds à sa question à partir de ce que tu y vois. Ne décris pas tout l'écran : réponds à ce qu'il demande.
+- Tu n'as pas de moteur de recherche. Pour lire une page dont tu as l'adresse, utilise `lire_page`. Pour ce qui change ou est récent (actualité, météo, horaires, prix, versions) et que tu ne sais pas avec certitude, dis-le franchement plutôt que d'inventer, et propose d'ouvrir une recherche dans le navigateur (`ouvrir_url`).
+- Pour une question sur ce qui est affiché (« c'est quoi ça ? », « explique-moi cette erreur », « que dit cette page ? », « ici », « à l'écran »), regarde l'écran (`voir_ecran`) puis réponds à sa question à partir de ce que tu y vois. S'il parle d'une fenêtre précise (« regarde mon Firefox », « qu'est-ce qu'il y a dans Zed ? »), donne-la en `cible` : tu ne verras qu'elle. S'il te demande de décrire ce qui est affiché, décris-le : l'essentiel d'abord (quelle application, quel contenu), puis les détails utiles. Sinon, ne décris pas tout : réponds à ce qu'il demande. Ne dis que ce que tu vois vraiment sur l'image.
 - Pour une question sur ce que l'utilisateur a déjà noté ou décidé, cherche d'abord dans ses notes (`chercher_notes`).
-- Tu ne fais pas de travail de code sur ses projets et tu ne lances pas de session Claude Code : pour ça, propose d'ouvrir le projet (`ouvrir_projet`, dans Zed ou un terminal) et laisse l'utilisateur s'en charger. Expliquer une notion de programmation reste une question comme une autre.
+- Tu ne fais pas de travail de code sur ses projets : pour ça, propose d'ouvrir le projet (`ouvrir_projet`, dans Zed ou un terminal) et laisse l'utilisateur s'en charger. Expliquer une notion de programmation reste une question comme une autre.
 
 Comment :
 - Agis d'abord, puis confirme en une phrase courte (« Volume à 30 %. », « Zed ouvert sur karenine. »). Pas de préambule, pas de « bien sûr ».
@@ -67,24 +79,388 @@ fn preferences() -> Option<String> {
         .filter(|s| !s.trim().is_empty())
 }
 
-struct Proc {
-    pid: u32,
-    stdin: ChildStdin,
+// ── Configuration ───────────────────────────────────────────────────────────
+
+/// Which model the pilot talks to. Both providers speak the Messages API;
+/// they differ in their defaults, how their models are listed, and the key.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct Config {
+    /// "ollama" (a local model, no key) or "anthropic" (an API with a key).
+    pub provider: String,
+    /// The API's base address, without `/v1`.
+    pub url: String,
+    pub model: String,
+    /// Let the model think before answering (slower, sometimes better).
+    pub think: bool,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            provider: "ollama".into(),
+            url: OLLAMA_URL.into(),
+            model: "qwen3.5:9b".into(),
+            think: false,
+        }
+    }
+}
+
+pub const OLLAMA_URL: &str = "http://localhost:11434";
+pub const ANTHROPIC_URL: &str = "https://api.anthropic.com";
+
+fn config_path() -> PathBuf {
+    crate::paths::home_dir().join(".config/anna/pilot.json")
+}
+fn key_path() -> PathBuf {
+    crate::paths::home_dir().join(".config/anna/pilot.key")
+}
+
+impl Config {
+    pub fn load() -> Config {
+        let mut c: Config = std::fs::read_to_string(config_path())
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default();
+        c.normalize();
+        c
+    }
+
+    /// An unknown provider falls back on Ollama; an empty address on the
+    /// provider's own.
+    fn normalize(&mut self) {
+        if self.provider != "anthropic" {
+            self.provider = "ollama".into();
+        }
+        self.url = self.url.trim().trim_end_matches('/').to_string();
+        if let Some(stripped) = self.url.strip_suffix("/v1") {
+            self.url = stripped.to_string();
+        }
+        if self.url.is_empty() {
+            self.url = if self.provider == "anthropic" { ANTHROPIC_URL } else { OLLAMA_URL }.into();
+        }
+        self.model = self.model.trim().to_string();
+    }
+
+    fn save(&self) -> Result<(), String> {
+        let p = config_path();
+        if let Some(dir) = p.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
+        std::fs::write(&p, text + "\n").map_err(|e| format!("{} : {e}", p.display()))
+    }
+}
+
+/// The API key: `ANNA_PILOT_API_KEY`, or the file written from the settings
+/// (readable by the user alone).
+fn api_key() -> Option<String> {
+    std::env::var("ANNA_PILOT_API_KEY")
+        .ok()
+        .or_else(|| std::fs::read_to_string(key_path()).ok())
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty())
+}
+
+fn save_key(key: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let p = key_path();
+    if key.trim().is_empty() {
+        return match std::fs::remove_file(&p) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+            _ => Ok(()),
+        };
+    }
+    if let Some(dir) = p.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&p)
+        .map_err(|e| format!("{} : {e}", p.display()))?;
+    // An existing file keeps its mode: made private here too.
+    use std::os::unix::fs::PermissionsExt;
+    let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
+    f.write_all(key.trim().as_bytes()).map_err(|e| e.to_string())
+}
+
+fn agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(5))
+        .timeout_read(READ_TIMEOUT)
+        .build()
+}
+
+/// The error an API sent back, in its words when it gave some.
+fn http_error(e: ureq::Error) -> String {
+    match e {
+        ureq::Error::Status(code, resp) => {
+            let body = resp.into_string().unwrap_or_default();
+            let msg = serde_json::from_str::<Value>(&body)
+                .ok()
+                .and_then(|v| {
+                    v.pointer("/error/message")
+                        .or_else(|| v.get("error"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .unwrap_or_else(|| body.chars().take(200).collect());
+            format!("{code} : {msg}")
+        }
+        ureq::Error::Transport(t) => t.to_string(),
+    }
+}
+
+/// The models the configured provider offers: Ollama's installed models, or
+/// the API's list (with the key).
+pub fn list_models(c: &Config) -> Result<Vec<String>, String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(6))
+        .build();
+    let text = if c.provider == "ollama" {
+        agent.get(&format!("{}/api/tags", c.url)).call()
+    } else {
+        let mut req = agent
+            .get(&format!("{}/v1/models?limit=100", c.url))
+            .set("anthropic-version", API_VERSION);
+        if let Some(k) = api_key() {
+            req = req.set("x-api-key", &k);
+        }
+        req.call()
+    }
+    .map_err(http_error)?
+    .into_string()
+    .map_err(|e| e.to_string())?;
+    let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    let (list, field) = if c.provider == "ollama" { ("models", "name") } else { ("data", "id") };
+    Ok(v.get(list)
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|m| m.get(field).and_then(Value::as_str).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// The configuration as the settings show it (never the key itself).
+pub fn config_line() -> Value {
+    let c = Config::load();
+    let models = list_models(&c);
+    json!({
+        "ok": true,
+        "config": c,
+        "has_key": api_key().is_some(),
+        "models": models.as_ref().cloned().unwrap_or_default(),
+        "error": models.err(),
+    })
+}
+
+// ── The streamed answer ─────────────────────────────────────────────────────
+
+/// What a streamed event changes for the bar.
+#[derive(Debug, PartialEq)]
+enum Update {
+    /// More words of the answer (the first ones start a new entry).
+    Text(String),
+    /// The answer's text block is over.
+    TextEnd,
+    /// A tool call, its arguments complete.
+    Tool(String, Value),
+}
+
+/// One answer, assembled from its stream of events (`content_block_*`): the
+/// content blocks as they are to be sent back, and why it stopped.
+#[derive(Default)]
+struct Message {
+    blocks: Vec<Value>,
+    /// A tool call's arguments, as their JSON comes in pieces.
+    partial_json: String,
+    stop_reason: String,
+    error: Option<String>,
+}
+
+impl Message {
+    fn feed(&mut self, event: &Value) -> Vec<Update> {
+        let mut out = Vec::new();
+        match event.get("type").and_then(Value::as_str) {
+            Some("content_block_start") => {
+                let mut block = event.get("content_block").cloned().unwrap_or(Value::Null);
+                if block.get("type").and_then(Value::as_str) == Some("text") {
+                    // Its text comes in the deltas.
+                    block["text"] = json!("");
+                }
+                self.partial_json.clear();
+                self.blocks.push(block);
+            }
+            Some("content_block_delta") => {
+                let Some(block) = self.blocks.last_mut() else {
+                    return out;
+                };
+                let delta = event.get("delta").cloned().unwrap_or(Value::Null);
+                let piece = |k: &str| delta.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+                match delta.get("type").and_then(Value::as_str) {
+                    Some("text_delta") => {
+                        let p = piece("text");
+                        if let Some(Value::String(t)) = block.get_mut("text") {
+                            t.push_str(&p);
+                        }
+                        out.push(Update::Text(p));
+                    }
+                    Some("input_json_delta") => self.partial_json.push_str(&piece("partial_json")),
+                    Some("thinking_delta") => {
+                        let p = piece("thinking");
+                        match block.get_mut("thinking") {
+                            Some(Value::String(t)) => t.push_str(&p),
+                            _ => block["thinking"] = json!(p),
+                        }
+                    }
+                    Some("signature_delta") => block["signature"] = json!(piece("signature")),
+                    _ => {}
+                }
+            }
+            Some("content_block_stop") => {
+                let Some(block) = self.blocks.last_mut() else {
+                    return out;
+                };
+                match block.get("type").and_then(Value::as_str) {
+                    Some("text") => out.push(Update::TextEnd),
+                    Some("tool_use") => {
+                        if !self.partial_json.trim().is_empty() {
+                            block["input"] = serde_json::from_str(&self.partial_json)
+                                .unwrap_or_else(|_| json!({}));
+                        }
+                        if !block.get("input").is_some_and(Value::is_object) {
+                            block["input"] = json!({});
+                        }
+                        let name = block.get("name").and_then(Value::as_str).unwrap_or("");
+                        out.push(Update::Tool(name.to_string(), block["input"].clone()));
+                    }
+                    _ => {}
+                }
+                self.partial_json.clear();
+            }
+            Some("message_delta") => {
+                if let Some(r) = event.pointer("/delta/stop_reason").and_then(Value::as_str) {
+                    self.stop_reason = r.to_string();
+                }
+            }
+            Some("error") => {
+                self.error = Some(
+                    event
+                        .pointer("/error/message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("erreur")
+                        .to_string(),
+                );
+            }
+            _ => {}
+        }
+        out
+    }
+
+    /// The blocks to keep in the conversation: empty texts and unsigned
+    /// thinking (a local model's, which no API wants back) are left out.
+    fn kept(&self) -> Vec<Value> {
+        self.blocks
+            .iter()
+            .filter(|b| match b.get("type").and_then(Value::as_str) {
+                Some("text") => b
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(|t| !t.trim().is_empty()),
+                Some("thinking") => b
+                    .get("signature")
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| !s.is_empty()),
+                Some("tool_use") => true,
+                _ => false,
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn tool_calls(&self) -> Vec<(String, String, Value)> {
+        self.blocks
+            .iter()
+            .filter(|b| b.get("type").and_then(Value::as_str) == Some("tool_use"))
+            .map(|b| {
+                let s = |k: &str| b.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+                (s("id"), s("name"), b.get("input").cloned().unwrap_or(json!({})))
+            })
+            .collect()
+    }
+}
+
+/// The desk tools, as the Messages API takes them.
+fn api_tools() -> Vec<Value> {
+    desk::tools()
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|t| {
+                    json!({
+                        "name": t["name"],
+                        "description": t["description"],
+                        "input_schema": t["inputSchema"],
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Once a request is answered, the screenshots it took leave the
+/// conversation (each costs a thousand tokens or more, and a local model's
+/// context is small): their line of text stays, saying what was seen.
+fn drop_images(history: &mut [Value]) {
+    for m in history.iter_mut() {
+        let Some(blocks) = m.get_mut("content").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for b in blocks.iter_mut() {
+            if let Some(inner) = b.get_mut("content").and_then(Value::as_array_mut) {
+                inner.retain(|c| c.get("type").and_then(Value::as_str) != Some("image"));
+            }
+        }
+    }
+}
+
+/// Drop the oldest requests, whole, until the conversation fits: it always
+/// starts on a request (a user message with text, not tool results).
+fn trim_history(history: &mut Vec<Value>) {
+    while history.len() > MAX_MESSAGES {
+        history.remove(0);
+        while history
+            .first()
+            .is_some_and(|m| !(m["role"] == "user" && m["content"].is_string()))
+        {
+            history.remove(0);
+        }
+    }
+}
+
+// ── The pilot ───────────────────────────────────────────────────────────────
+
 pub struct Pilot {
-    proc: AsyncMutex<Option<Proc>>,
-    /// Bumped on every start, so a dying process can tell it was replaced.
+    /// Bumped on every reset: a request still running for an older one
+    /// ends without a word.
     generation: AtomicU32,
     busy: AtomicBool,
     /// A text block is streaming into the log's last entry.
     in_text: AtomicBool,
-    /// The current message's text came streamed: its final copy is skipped.
-    streamed: AtomicBool,
     turns: AtomicU32,
     last: Mutex<Instant>,
+    /// The conversation, as the Messages API takes it.
+    history: Mutex<Vec<Value>>,
     /// The context block built ahead (`prepare`), and when.
     context: Mutex<Option<(Instant, tokio::task::JoinHandle<String>)>>,
+    /// When a local model was last asked to load (`prewarm`).
+    warmed: Mutex<Option<Instant>>,
     log: Mutex<VecDeque<Value>>,
     tx: broadcast::Sender<String>,
 }
@@ -118,14 +494,14 @@ impl Pilot {
     pub fn new() -> Arc<Self> {
         let (tx, _) = broadcast::channel(32);
         Arc::new(Pilot {
-            proc: AsyncMutex::new(None),
             generation: AtomicU32::new(0),
             busy: AtomicBool::new(false),
             in_text: AtomicBool::new(false),
-            streamed: AtomicBool::new(false),
             turns: AtomicU32::new(0),
             last: Mutex::new(Instant::now()),
+            history: Mutex::new(Vec::new()),
             context: Mutex::new(None),
+            warmed: Mutex::new(None),
             log: Mutex::new(VecDeque::new()),
             tx,
         })
@@ -152,253 +528,52 @@ impl Pilot {
         }
     }
 
-    /// Forget the conversation: the next request starts a fresh process.
+    /// Forget the conversation; a request still running is dropped.
     pub async fn reset(&self) {
-        self.stop().await;
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        self.forget();
         lock(&self.log).clear();
         self.in_text.store(false, Ordering::SeqCst);
         self.busy.store(false, Ordering::SeqCst);
         self.publish();
     }
 
-    async fn stop(&self) {
-        if let Some(p) = self.proc.lock().await.take() {
-            let _ = tokio::process::Command::new("kill")
-                .args(["-TERM", &p.pid.to_string()])
-                .status()
-                .await;
-        }
+    fn forget(&self) {
+        lock(&self.history).clear();
         self.turns.store(0, Ordering::SeqCst);
     }
 
-    /// Start the pilot process (the caller holds the slot).
-    fn spawn(self: &Arc<Self>, slot: &mut Option<Proc>) -> Result<(), String> {
-        let dir = crate::paths::home_dir().join(".local/state/anna/pilot");
-        std::fs::create_dir_all(&dir).map_err(|e| format!("pilote : {e}"))?;
-        let exe = std::env::current_exe().map_err(|e| format!("pilote : {e}"))?;
-        // claude's own wrapper sets LD_LIBRARY_PATH for its audio library;
-        // anna, built against its own, must not inherit it.
-        let mcp = json!({ "mcpServers": { "anna": {
-            "type": "stdio",
-            "command": exe.to_string_lossy(),
-            "args": ["mcp"],
-            "env": { "LD_LIBRARY_PATH": "" },
-        }}});
-        let mut prompt = PROMPT.replace("{nom}", super::wake::WakeWord::current().display.as_str());
-        if let Some(p) = preferences() {
-            prompt.push_str("\n\nPréférences de l'utilisateur :\n");
-            prompt.push_str(&p);
-        }
-        let model = std::env::var("ANNA_PILOT_MODEL").unwrap_or_else(|_| "haiku".into());
-
-        let mut child = Command::new("claude")
-            .args([
-                "-p",
-                "--input-format",
-                "stream-json",
-                "--output-format",
-                "stream-json",
-                "--verbose",
-                // The reply shows up word by word, not once it is whole.
-                "--include-partial-messages",
-                "--model",
-                &model,
-                "--system-prompt",
-                &prompt,
-                // Of Claude Code's own tools, only the web: for what it
-                // doesn't know or that changes.
-                "--tools",
-                WEB_TOOLS,
-                "--mcp-config",
-                &mcp.to_string(),
-                "--strict-mcp-config",
-                "--allowedTools",
-                &format!("mcp__anna,{WEB_TOOLS}"),
-                "--setting-sources",
-                "project",
-                "--no-session-persistence",
-                "--disable-slash-commands",
-            ])
-            .current_dir(&dir)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("pilote : {e}"))?;
-
-        let pid = child.id().unwrap_or(0);
-        let stdin = child.stdin.take().ok_or("pilote : pas d'entrée standard")?;
-        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-
-        if let Some(err) = child.stderr.take() {
-            tokio::spawn(async move {
-                let mut lines = BufReader::new(err).lines();
-                while let Ok(Some(l)) = lines.next_line().await {
-                    eprintln!("anna: pilote: {l}");
-                }
-            });
-        }
-        if let Some(out) = child.stdout.take() {
-            let me = Arc::clone(self);
-            tokio::spawn(async move {
-                let mut lines = BufReader::new(out).lines();
-                while let Ok(Some(l)) = lines.next_line().await {
-                    me.on_event(&l);
-                }
-                let _ = child.wait().await;
-                me.on_exit(generation).await;
-            });
-        }
-        *slot = Some(Proc { pid, stdin });
-        self.turns.store(0, Ordering::SeqCst);
-        // Idle time counts from its start: one started ahead isn't stale.
-        *lock(&self.last) = Instant::now();
-        Ok(())
-    }
-
-    fn on_event(self: &Arc<Self>, line: &str) {
-        let Ok(v) = serde_json::from_str::<Value>(line) else {
-            return;
-        };
-        match v.get("type").and_then(Value::as_str) {
-            Some("assistant") => {
-                let Some(blocks) = v.pointer("/message/content").and_then(Value::as_array) else {
-                    return;
-                };
-                for b in blocks {
-                    match b.get("type").and_then(Value::as_str) {
-                        // Already in the log, streamed piece by piece.
-                        Some("text") if self.streamed.load(Ordering::SeqCst) => {}
-                        Some("text") => {
-                            let t = b.get("text").and_then(Value::as_str).unwrap_or("").trim();
-                            if !t.is_empty() {
-                                self.push("reply", t);
-                            }
-                        }
-                        Some("tool_use") => {
-                            let name = b.get("name").and_then(Value::as_str).unwrap_or("outil");
-                            let input = b.get("input").cloned().unwrap_or(Value::Null);
-                            self.push("action", &action_line(name, &input));
-                        }
-                        _ => {}
-                    }
-                }
-                self.publish();
-            }
-            Some("result") => {
-                if v.get("is_error").and_then(Value::as_bool) == Some(true) {
-                    let why = v
-                        .get("result")
-                        .and_then(Value::as_str)
-                        .or_else(|| v.get("subtype").and_then(Value::as_str))
-                        .map(str::to_string)
-                        .unwrap_or_else(|| crate::i18n::tr("failed"));
-                    self.push("error", &why);
-                }
-                self.busy.store(false, Ordering::SeqCst);
-                self.publish();
-                // That was the last turn: the fresh process is started now,
-                // not when the next request comes.
-                if self.turns.load(Ordering::SeqCst) >= MAX_TURNS {
-                    let me = Arc::clone(self);
-                    tokio::spawn(async move { me.prewarm().await });
-                }
-            }
-            Some("stream_event") => {
-                if let Some(event) = v.get("event") {
-                    self.on_stream(event);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// A piece of the message being written (`--include-partial-messages`):
-    /// the reply grows in the log's last entry as the text comes.
-    fn on_stream(&self, event: &Value) {
-        match event.get("type").and_then(Value::as_str) {
-            Some("message_start") => {
-                self.streamed.store(false, Ordering::SeqCst);
-                self.in_text.store(false, Ordering::SeqCst);
-            }
-            Some("content_block_delta") => {
-                if event.pointer("/delta/type").and_then(Value::as_str) != Some("text_delta") {
-                    return;
-                }
-                let piece = event
-                    .pointer("/delta/text")
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
-                if self.in_text.load(Ordering::SeqCst) {
-                    let mut log = lock(&self.log);
-                    if let Some(Value::String(text)) =
-                        log.back_mut().and_then(|e| e.get_mut("text"))
-                    {
-                        text.push_str(piece);
-                    }
-                    drop(log);
-                } else {
-                    // Nothing shown before the first words.
-                    let piece = piece.trim_start();
-                    if piece.is_empty() {
-                        return;
-                    }
-                    self.push("reply", piece);
-                    self.in_text.store(true, Ordering::SeqCst);
-                    self.streamed.store(true, Ordering::SeqCst);
-                }
-                self.publish();
-            }
-            Some("content_block_stop") if self.in_text.swap(false, Ordering::SeqCst) => {
-                let mut log = lock(&self.log);
-                if let Some(Value::String(text)) = log.back_mut().and_then(|e| e.get_mut("text")) {
-                    let end = text.trim_end().len();
-                    text.truncate(end);
-                }
-                drop(log);
-                self.publish();
-            }
-            _ => {}
-        }
-    }
-
-    async fn on_exit(&self, generation: u32) {
-        let mut slot = self.proc.lock().await;
-        // A process replaced by a newer one (reset, restart) ends without a
-        // word: the request in flight, if any, is the newer one's.
-        if self.generation.load(Ordering::SeqCst) != generation {
-            return;
-        }
-        *slot = None;
-        drop(slot);
-        if self.busy.swap(false, Ordering::SeqCst) {
-            self.push("error", &crate::i18n::tr("pilot.stopped"));
-            self.publish();
-        }
-    }
-
-    /// Too long idle or too many turns: the process is to be renewed.
+    /// Too long idle or too many requests: the conversation starts over.
     fn stale(&self) -> bool {
         let last = *lock(&self.last);
         last.elapsed() > MAX_IDLE || self.turns.load(Ordering::SeqCst) >= MAX_TURNS
     }
 
-    /// Have a fresh process ready for the next request — started, or
-    /// renewed if stale — so that it doesn't wait for the start-up. Called
-    /// when the user starts speaking.
+    /// A request is about to come (the user starts speaking): a local model
+    /// is asked to load now, so that it doesn't wait for it. At most every
+    /// few minutes; an API has nothing to load.
     pub async fn prewarm(self: &Arc<Self>) {
         if self.busy.load(Ordering::SeqCst) {
             return;
         }
-        if self.stale() {
-            self.stop().await;
+        let c = Config::load();
+        if c.provider != "ollama" || c.model.is_empty() {
+            return;
         }
-        let mut slot = self.proc.lock().await;
-        if slot.is_none() {
-            if let Err(e) = self.spawn(&mut slot) {
-                eprintln!("anna: {e}");
+        {
+            let mut warmed = lock(&self.warmed);
+            if warmed.is_some_and(|t| t.elapsed() < Duration::from_secs(240)) {
+                return;
             }
+            *warmed = Some(Instant::now());
         }
+        // An empty prompt only loads the model (Ollama's own API).
+        tokio::task::spawn_blocking(move || {
+            let _ = agent()
+                .post(&format!("{}/api/generate", c.url))
+                .set("content-type", "application/json")
+                .send_string(&json!({ "model": c.model, "keep_alive": "30m" }).to_string());
+        });
     }
 
     /// Build the context block now, for a request about to come (the voice,
@@ -410,11 +585,11 @@ impl Pilot {
 
     /// Send one request. Its answer arrives through the log.
     pub async fn ask(self: &Arc<Self>, text: &str, clipboard: bool) -> Result<(), String> {
-        if self.busy.load(Ordering::SeqCst) {
+        if self.busy.swap(true, Ordering::SeqCst) {
             return Err(crate::i18n::tr("pilot.busy"));
         }
         if self.stale() {
-            self.stop().await;
+            self.forget();
         }
 
         // Built ahead a moment ago, or now.
@@ -427,30 +602,199 @@ impl Pilot {
         let context = job.await.unwrap_or_default();
         let message = format!("{context}\n[demande]\n{text}");
 
-        let mut slot = self.proc.lock().await;
-        if slot.is_none() {
-            self.spawn(&mut slot)?;
-        }
         self.push("user", text);
-        self.busy.store(true, Ordering::SeqCst);
+        self.in_text.store(false, Ordering::SeqCst);
         self.publish();
-
-        let line = json!({
-            "type": "user",
-            "message": { "role": "user", "content": message },
-        })
-        .to_string()
-            + "\n";
-        let p = slot.as_mut().ok_or("pilote absent")?;
-        if let Err(e) = p.stdin.write_all(line.as_bytes()).await {
-            *slot = None;
-            self.busy.store(false, Ordering::SeqCst);
-            self.push("error", &crate::i18n::tr("pilot.no_answer"));
-            self.publish();
-            return Err(format!("pilote : {e}"));
-        }
         self.turns.fetch_add(1, Ordering::SeqCst);
         *lock(&self.last) = Instant::now();
+
+        let generation = self.generation.load(Ordering::SeqCst);
+        let me = Arc::clone(self);
+        // The HTTP client and the desk calls block: a thread of its own.
+        std::thread::spawn(move || {
+            let result = me.converse(generation, message);
+            if me.generation.load(Ordering::SeqCst) != generation {
+                return;
+            }
+            if let Err(e) = result {
+                me.close_text();
+                me.push("error", &e);
+            }
+            me.busy.store(false, Ordering::SeqCst);
+            me.publish();
+        });
+        Ok(())
+    }
+
+    /// The answer's text entry, if one is growing, is over.
+    fn close_text(&self) {
+        if self.in_text.swap(false, Ordering::SeqCst) {
+            let mut log = lock(&self.log);
+            if let Some(Value::String(text)) = log.back_mut().and_then(|e| e.get_mut("text")) {
+                let end = text.trim_end().len();
+                text.truncate(end);
+            }
+        }
+    }
+
+    fn show(&self, update: Update) {
+        match update {
+            Update::Text(piece) => {
+                if self.in_text.load(Ordering::SeqCst) {
+                    let mut log = lock(&self.log);
+                    if let Some(Value::String(text)) = log.back_mut().and_then(|e| e.get_mut("text"))
+                    {
+                        text.push_str(&piece);
+                    }
+                } else {
+                    // Nothing shown before the first words.
+                    let piece = piece.trim_start();
+                    if piece.is_empty() {
+                        return;
+                    }
+                    self.push("reply", piece);
+                    self.in_text.store(true, Ordering::SeqCst);
+                }
+            }
+            Update::TextEnd => self.close_text(),
+            Update::Tool(name, input) => {
+                self.close_text();
+                self.push("action", &action_line(&name, &input));
+            }
+        }
+        self.publish();
+    }
+
+    /// One request, to its answer: the model is called again with the
+    /// results of the tools it asked for, until it answers in words.
+    fn converse(&self, generation: u32, message: String) -> Result<(), String> {
+        let c = Config::load();
+        if c.model.is_empty() {
+            return Err(crate::i18n::tr("pilot.no_model"));
+        }
+        let key = api_key();
+        if c.provider == "anthropic" && key.is_none() {
+            return Err(crate::i18n::tr("pilot.no_key"));
+        }
+
+        let mut system = PROMPT.replace("{nom}", super::wake::WakeWord::current().display.as_str());
+        if let Some(p) = preferences() {
+            system.push_str("\n\nPréférences de l'utilisateur :\n");
+            system.push_str(&p);
+        }
+        let tools = api_tools();
+        let agent = agent();
+        let current = || self.generation.load(Ordering::SeqCst) == generation;
+
+        let mut messages = {
+            let mut h = lock(&self.history);
+            h.push(json!({ "role": "user", "content": message }));
+            trim_history(&mut h);
+            h.clone()
+        };
+
+        for _ in 0..MAX_STEPS {
+            let mut body = json!({
+                "model": c.model,
+                "max_tokens": MAX_TOKENS,
+                "system": system,
+                "messages": messages,
+                "tools": tools,
+                "stream": true,
+            });
+            if c.think {
+                body["max_tokens"] = json!(MAX_TOKENS + THINKING_BUDGET);
+                body["thinking"] = json!({ "type": "enabled", "budget_tokens": THINKING_BUDGET });
+            } else {
+                body["thinking"] = json!({ "type": "disabled" });
+            }
+            let mut req = agent
+                .post(&format!("{}/v1/messages", c.url))
+                .set("anthropic-version", API_VERSION)
+                .set("content-type", "application/json");
+            if let Some(k) = &key {
+                req = req.set("x-api-key", k);
+            }
+            let resp = req.send_string(&body.to_string()).map_err(|e| {
+                crate::i18n::tr_args("pilot.api_error", &[("error", &http_error(e))])
+            })?;
+
+            // Server-sent events: the JSON of each event on its `data:` line.
+            let mut answer = Message::default();
+            for line in BufReader::new(resp.into_reader()).lines() {
+                let line = line.map_err(|e| e.to_string())?;
+                if !current() {
+                    return Ok(());
+                }
+                let Some(data) = line.strip_prefix("data:") else {
+                    continue;
+                };
+                let Ok(event) = serde_json::from_str::<Value>(data.trim()) else {
+                    continue;
+                };
+                for u in answer.feed(&event) {
+                    self.show(u);
+                }
+                if event.get("type").and_then(Value::as_str) == Some("message_stop") {
+                    break;
+                }
+            }
+            self.close_text();
+            if let Some(e) = answer.error {
+                return Err(crate::i18n::tr_args("pilot.api_error", &[("error", &e)]));
+            }
+
+            let kept = answer.kept();
+            if !kept.is_empty() {
+                messages.push(json!({ "role": "assistant", "content": kept }));
+            }
+            let calls = answer.tool_calls();
+            if answer.stop_reason != "tool_use" || calls.is_empty() {
+                if answer.stop_reason == "max_tokens" {
+                    self.push("error", &crate::i18n::tr("pilot.truncated"));
+                }
+                drop_images(&mut messages);
+                *lock(&self.history) = messages;
+                return Ok(());
+            }
+
+            // The tools asked for, one after the other, through the daemon
+            // (as `anna mcp` has them run).
+            let mut results = Vec::new();
+            for (id, name, input) in calls {
+                if !current() {
+                    return Ok(());
+                }
+                let (ok, text, image) = super::mcp::call_daemon(&name, &input);
+                let mut content = vec![json!({ "type": "text", "text": if text.is_empty() { "ok".into() } else { text } })];
+                if let Some(data) = image {
+                    content.push(json!({ "type": "image", "source": {
+                        "type": "base64", "media_type": "image/jpeg", "data": data } }));
+                }
+                results.push(json!({
+                    "type": "tool_result",
+                    "tool_use_id": id,
+                    "content": content,
+                    "is_error": !ok,
+                }));
+            }
+            messages.push(json!({ "role": "user", "content": results }));
+        }
+        drop_images(&mut messages);
+        *lock(&self.history) = messages;
+        Err(crate::i18n::tr("pilot.too_many_steps"))
+    }
+
+    /// New settings: saved, and the conversation starts over with them.
+    /// `key`: None keeps it, "" removes it.
+    pub async fn configure(&self, mut c: Config, key: Option<String>) -> Result<(), String> {
+        c.normalize();
+        c.save()?;
+        if let Some(k) = key {
+            save_key(&k)?;
+        }
+        *lock(&self.warmed) = None;
+        self.reset().await;
         Ok(())
     }
 }
@@ -495,41 +839,145 @@ fn context_block(clipboard: bool) -> String {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn a_streamed_reply_grows_in_one_entry() {
-        let pilot = Pilot::new();
-        let delta = |t: &str| {
-            json!({ "type": "stream_event", "event": { "type": "content_block_delta",
-                "delta": { "type": "text_delta", "text": t } } })
-            .to_string()
-        };
-        pilot.on_event(r#"{"type":"stream_event","event":{"type":"message_start"}}"#);
-        pilot.on_event(&delta(" Volume"));
-        pilot.on_event(&delta(" à 30 %. "));
-        // The whole message, as the CLI sends it before the block's end.
-        pilot.on_event(
-            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Volume à 30 %."}]}}"#,
-        );
-        pilot.on_event(r#"{"type":"stream_event","event":{"type":"content_block_stop"}}"#);
-        let log: Vec<Value> = lock(&pilot.log).iter().cloned().collect();
+    fn ev(s: &str) -> Value {
+        serde_json::from_str(s).unwrap()
+    }
+
+    #[test]
+    fn a_streamed_answer_is_assembled() {
+        let mut m = Message::default();
+        let mut shown = Vec::new();
+        for e in [
+            r#"{"type":"message_start","message":{"content":[]}}"#,
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Je baisse"}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" le son."}}"#,
+            r#"{"type":"content_block_stop","index":0}"#,
+            r#"{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t1","name":"volume","input":{}}}"#,
+            r#"{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"pourcen"}}"#,
+            r#"{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"tage\": 30}"}}"#,
+            r#"{"type":"content_block_stop","index":1}"#,
+            r#"{"type":"message_delta","delta":{"stop_reason":"tool_use"}}"#,
+            r#"{"type":"message_stop"}"#,
+        ] {
+            shown.extend(m.feed(&ev(e)));
+        }
         assert_eq!(
-            log,
-            vec![json!({ "kind": "reply", "text": "Volume à 30 %." })]
+            shown,
+            vec![
+                Update::Text("Je baisse".into()),
+                Update::Text(" le son.".into()),
+                Update::TextEnd,
+                Update::Tool("volume".into(), json!({"pourcentage": 30})),
+            ]
+        );
+        assert_eq!(m.stop_reason, "tool_use");
+        assert_eq!(
+            m.tool_calls(),
+            vec![("t1".into(), "volume".into(), json!({"pourcentage": 30}))]
+        );
+        assert_eq!(
+            m.kept(),
+            vec![
+                json!({"type": "text", "text": "Je baisse le son."}),
+                json!({"type": "tool_use", "id": "t1", "name": "volume", "input": {"pourcentage": 30}}),
+            ]
         );
     }
 
     #[test]
+    fn a_tool_without_arguments_gets_an_empty_object() {
+        let mut m = Message::default();
+        m.feed(&ev(r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t","name":"etat_bureau"}}"#));
+        let shown = m.feed(&ev(r#"{"type":"content_block_stop","index":0}"#));
+        assert_eq!(shown, vec![Update::Tool("etat_bureau".into(), json!({}))]);
+    }
+
+    #[test]
+    fn unsigned_thinking_is_not_sent_back() {
+        let mut m = Message::default();
+        for e in [
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}"#,
+            r#"{"type":"content_block_stop","index":0}"#,
+            r#"{"type":"content_block_start","index":1,"content_block":{"type":"thinking","thinking":""}}"#,
+            r#"{"type":"content_block_delta","index":1,"delta":{"type":"thinking_delta","thinking":"ok"}}"#,
+            r#"{"type":"content_block_delta","index":1,"delta":{"type":"signature_delta","signature":"sig"}}"#,
+            r#"{"type":"content_block_stop","index":1}"#,
+        ] {
+            assert!(m.feed(&ev(e)).is_empty());
+        }
+        assert_eq!(
+            m.kept(),
+            vec![json!({"type": "thinking", "thinking": "ok", "signature": "sig"})]
+        );
+    }
+
+    #[test]
+    fn an_error_event_is_kept() {
+        let mut m = Message::default();
+        m.feed(&ev(r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#));
+        assert_eq!(m.error.as_deref(), Some("Overloaded"));
+    }
+
+    #[test]
+    fn the_history_is_trimmed_by_whole_requests() {
+        let mut h = Vec::new();
+        for i in 0..30 {
+            h.push(json!({ "role": "user", "content": format!("demande {i}") }));
+            h.push(json!({ "role": "assistant", "content": [{"type": "tool_use", "id": "x", "name": "n", "input": {}}] }));
+            h.push(json!({ "role": "user", "content": [{"type": "tool_result", "tool_use_id": "x", "content": "ok"}] }));
+        }
+        trim_history(&mut h);
+        assert!(h.len() <= MAX_MESSAGES);
+        assert!(h[0]["content"].is_string());
+    }
+
+    #[test]
+    fn answered_screenshots_leave_the_conversation() {
+        let mut h = vec![
+            json!({ "role": "user", "content": "regarde" }),
+            json!({ "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "c",
+                "content": [{ "type": "text", "text": "fenêtre firefox" },
+                            { "type": "image", "source": { "type": "base64", "data": "AA" } }] }] }),
+        ];
+        drop_images(&mut h);
+        assert_eq!(h[1]["content"][0]["content"], json!([{ "type": "text", "text": "fenêtre firefox" }]));
+        assert_eq!(h[0]["content"], "regarde");
+    }
+
+    #[test]
+    fn tools_take_the_api_shape_and_legal_names() {
+        let tools = api_tools();
+        assert!(tools.len() > 10);
+        for t in &tools {
+            let name = t["name"].as_str().unwrap();
+            assert!(
+                !name.is_empty()
+                    && name.len() <= 64
+                    && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'),
+                "{name}"
+            );
+            assert_eq!(t["input_schema"]["type"], "object");
+        }
+    }
+
+    #[test]
+    fn the_configuration_falls_back_on_sane_defaults() {
+        let mut c = Config { provider: "x".into(), url: " http://h:1/v1/ ".into(), model: " m ".into(), think: false };
+        c.normalize();
+        assert_eq!((c.provider.as_str(), c.url.as_str(), c.model.as_str()), ("ollama", "http://h:1", "m"));
+        let mut c = Config { provider: "anthropic".into(), url: "".into(), ..Config::default() };
+        c.normalize();
+        assert_eq!(c.url, ANTHROPIC_URL);
+    }
+
+    #[test]
     fn action_lines_name_the_tool_and_its_arguments() {
+        assert_eq!(action_line("volume", &json!({"pourcentage": 30})), "volume · 30");
+        assert_eq!(action_line("etat_bureau", &json!({})), "etat_bureau");
         assert_eq!(
-            action_line("mcp__anna__volume", &json!({"pourcentage": 30})),
-            "volume · 30"
-        );
-        assert_eq!(
-            action_line("mcp__anna__etat_bureau", &json!({})),
-            "etat_bureau"
-        );
-        assert_eq!(
-            action_line("mcp__anna__ouvrir_projet", &json!({"projet": "karenine"})),
+            action_line("ouvrir_projet", &json!({"projet": "karenine"})),
             "ouvrir_projet · karenine"
         );
     }

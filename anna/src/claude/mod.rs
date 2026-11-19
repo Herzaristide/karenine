@@ -1,7 +1,8 @@
 //! The pilot and its voice.
 //!
-//! The pilot (pilot.rs) is a Claude session anna keeps warm, which acts on
-//! the desktop through the desk tools (desk.rs, served to it by `anna mcp`).
+//! The pilot (pilot.rs) is the conversation anna holds with a model (local
+//! through Ollama, or an API), which acts on the desktop through the desk
+//! tools (desk.rs).
 //! It is spoken to (voice.rs, parakeet.rs, the wake word in wake.rs).
 //!
 //! The Claude Code sessions themselves are left alone: they are started and

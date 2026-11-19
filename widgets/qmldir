@@ -31,3 +31,5 @@ PowerCard 1.0 PowerCard.qml
 MusicView 1.0 MusicView.qml
 ClaudeView 1.0 ClaudeView.qml
 FleetView 1.0 FleetView.qml
+AgendaEditor 1.0 AgendaEditor.qml
+AssistantSettings 1.0 AssistantSettings.qml

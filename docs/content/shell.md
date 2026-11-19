@@ -15,7 +15,7 @@ are open, and where, lives in the `services/Widgets.qml` singleton.
 
 The shell listens on a **FIFO**, `/tmp/qs-panel.fifo`, so it can be driven
 from any script or shortcut — and that is how anna opens widgets when the
-pilot calls its `widget` MCP tool:
+pilot calls its `widget` tool:
 
 ```bash
 echo "widget:stats"          > /tmp/qs-panel.fifo   # toggles a widget

@@ -4,48 +4,50 @@ import QtQuick.Layouts
 import "../services"
 
 // L'onglet « Agenda » : les agendas et les tâches du compte Google, lus par
-// anna (services/Agenda.qml). Deux vues, comme un agenda en ligne :
+// anna (services/Agenda.qml), sur une vue heure par heure, en trois modes :
+// un jour, trois jours (aujourd'hui et les deux suivants), ou la semaine.
 //
-//   Mois : la grille entière, six semaines, les rendez-vous dans les cases.
-//   ╭ novembre 2026            ‹ › Aujourd'hui  [Mois|Semaine] ╮
-//   │ lun.     mar.     mer.     jeu.     ven.     sam.   dim. │
-//   ├────────┬────────┬────────┬────────┬────────┬──────┬──────┤
-//   │ 26     │ 27     │ 28     │ 29     │ 30     │ 31   │  1   │
-//   │▇Congés▇│• 14:00 │        │        │        │      │      │
-//   │        │ Dentist│        │        │        │      │      │
-//   ├────────┼────────┼ …                                      │
+//   ╭ 19 – 21 nov. 2026                 ‹ › Aujourd'hui ╮
+//   │ [Jour | 3 jours | Semaine]                         │
+//   │        jeu. 19      ven. 20      sam. 21         │
+//   │ Journée ☐ Acheter…  ▇ Congés ▇                    │  journées entières
+//   │  09:00 ┃ Point   ┃                                │  et tâches du jour
+//   │  10:00 ┃         ┃            ┃ Dentiste ┃        │
 //
-//   Semaine : sept colonnes, les heures en lignes, chaque rendez-vous à sa
-//   place et à sa durée ; les journées entières dans une bande au-dessus.
+// Chaque rendez-vous à sa place et à sa durée ; les journées entières et les
+// tâches datées (Google ne leur garde pas d'heure) dans la bande du haut, une
+// case à cocher devant chaque tâche : la cocher la coche chez Google. Pas de
+// liste de tâches à part : seules celles d'un jour affiché se voient.
 //
-// Les tâches datées s'y mêlent, à leur jour, une case à cocher devant (Google
-// ne leur garde pas d'heure) ; à droite, un panneau repliable les liste
-// toutes, datées ou non, par liste. Cocher, ici ou là, coche chez Google.
+// Tout s'y crée et s'y modifie (AgendaEditor, écrit chez Google par
+// Agenda) : un clic dans le vide de la grille crée un événement à cette
+// heure, dans la bande une tâche ce jour-là ; un clic sur un rendez-vous ou
+// une tâche l'ouvre. Glisser un rendez-vous le déplace au quart d'heure et
+// d'un jour à l'autre, tirer son bord bas change sa fin ; glisser une tâche
+// ou une journée entière la change de jour.
 //
-// Un clic sur un jour du mois ouvre sa semaine. Sans compte connecté,
-// l'onglet propose de le connecter (GoogleAccount).
+// Sans compte connecté, l'onglet propose de le connecter (GoogleAccount).
 Item {
     id: root
 
-    // "month" ou "week".
-    property string view: "month"
-    // Le panneau des tâches, déplié.
-    property bool showTasks: true
-    // Étroit (le panneau de droite) : le mois seul, et les tâches dessous
-    // plutôt qu'à côté.
-    readonly property bool compact: root.width < 620
-    onCompactChanged: if (root.compact) root.view = "month"
-    // Le jour de référence : son mois en vue Mois, sa semaine en vue Semaine.
+    // "day", "three" ou "week".
+    property string view: "three"
+    // Combien de jours la vue montre.
+    readonly property int count: root.view === "day" ? 1 : root.view === "three" ? 3 : 7
+    // Le jour de référence : le premier jour montré, sauf en vue Semaine où
+    // c'est un jour de la semaine montrée.
     property date anchor: root.midnight(new Date())
     // Aujourd'hui, à minuit : relu toutes les minutes (passer minuit).
     property date today: root.midnight(new Date())
     // L'heure, pour le trait rouge de la vue Semaine.
     property date now: new Date()
 
-    readonly property int year: root.anchor.getFullYear()
-    readonly property int month: root.anchor.getMonth()
-    readonly property date weekStart: {
+    // Le premier jour montré : le début de la semaine (au jour de la langue),
+    // ou le jour de référence lui-même.
+    readonly property date rangeStart: {
         var a = root.anchor;
+        if (root.view !== "week")
+            return a;
         var back = (a.getDay() - I18n.locale.firstDayOfWeek % 7 + 7) % 7;
         return new Date(a.getFullYear(), a.getMonth(), a.getDate() - back);
     }
@@ -66,32 +68,22 @@ Item {
         return s.charAt(0).toUpperCase() + s.slice(1);
     }
 
-    // La semaine tient toujours dans les six semaines lues pour le mois de
-    // son premier jour (Agenda.load).
+    // Les jours montrés tiennent toujours dans les six semaines lues pour le
+    // mois de leur premier jour (Agenda.load).
     function load() {
         if (!Google.connected)
             return;
-        if (root.view === "week")
-            Agenda.load(root.weekStart.getFullYear(), root.weekStart.getMonth());
-        else
-            Agenda.load(root.year, root.month);
+        Agenda.load(root.rangeStart.getFullYear(), root.rangeStart.getMonth());
     }
 
+    // ‹ › : autant de jours que la vue en montre.
     function step(delta) {
-        if (root.view === "week")
-            root.anchor = root.addDays(root.anchor, 7 * delta);
-        else
-            root.anchor = new Date(root.year, root.month + delta, 1);
+        root.anchor = root.addDays(root.anchor, root.count * delta);
     }
 
     function goToday() {
         root.today = root.midnight(new Date());
         root.anchor = root.today;
-    }
-
-    function openWeek(day) {
-        root.anchor = day;
-        root.view = "week";
     }
 
     onAnchorChanged: root.load()
@@ -127,19 +119,23 @@ Item {
     }
 
     // Une journée entière, ou un rendez-vous d'au moins vingt-quatre heures :
-    // dans la bande du haut en vue Semaine, en aplat en vue Mois.
+    // dans la bande du haut.
     function isBand(e) {
         return e.allDay || e.endDate - e.startDate >= 24 * 3600 * 1000;
+    }
+
+    // `d` décalé de `days` jours et `mins` minutes, à l'heure locale (un
+    // changement d'heure ne décale pas l'horaire).
+    function shift(d, days, mins) {
+        var out = new Date(d.getTime());
+        out.setDate(out.getDate() + days);
+        out.setMinutes(out.getMinutes() + mins);
+        return out;
     }
 
     // Une tâche (de Google Tasks), pas un rendez-vous.
     function isTask(item) {
         return item.due !== undefined;
-    }
-
-    // Ce qu'un jour montre : ses tâches, puis ses rendez-vous.
-    function itemsOn(day) {
-        return Agenda.tasksOn(day).concat(Agenda.on(day));
     }
 
     // La case d'une tâche : cliquée, elle la coche (ou la décoche).
@@ -202,26 +198,87 @@ Item {
         spacing: 4
 
         Text {
-            // « novembre 2026 », ou « 2 – 8 nov. 2026 » pour une semaine.
+            Layout.fillWidth: true
+            // « jeudi 19 novembre 2026 », ou « 19 – 21 nov. 2026 ».
             text: {
-                if (root.view === "month")
-                    return root.capitalize(I18n.locale.toString(new Date(root.year, root.month, 1), "MMMM yyyy"));
-                var a = root.weekStart, b = root.addDays(a, 6);
+                var a = root.rangeStart;
+                if (root.count === 1)
+                    return root.capitalize(I18n.locale.toString(a, "dddd d MMMM yyyy"));
+                var b = root.addDays(a, root.count - 1);
                 var from = a.getMonth() === b.getMonth() ? I18n.locale.toString(a, "d")
                          : a.getFullYear() === b.getFullYear() ? I18n.locale.toString(a, "d MMM")
                          : I18n.locale.toString(a, "d MMM yyyy");
                 return from + " – " + I18n.locale.toString(b, "d MMM yyyy");
             }
+            elide: Text.ElideRight
             font.family: "Inter"
             font.pixelSize: 14
             font.weight: Font.DemiBold
             color: Theme.textPrimary
         }
 
-        // Ce qui se passe : la lecture, ou ce qui a échoué.
+        GlassButton { implicitWidth: 26; implicitHeight: 26; fontSize: 13; text: "‹"; onClicked: root.step(-1) }
+        GlassButton { implicitWidth: 26; implicitHeight: 26; fontSize: 13; text: "›"; onClicked: root.step(1) }
+        GlassButton { implicitHeight: 26; fontSize: 11; text: I18n.tr("agenda.today"); onClicked: root.goToday() }
+    }
+
+    // Les modes, puis ce qui se passe : la lecture, ou ce qui a échoué.
+    RowLayout {
+        id: modes
+        visible: Google.connected
+        anchors.top: header.bottom
+        anchors.topMargin: 6
+        width: parent.width
+        height: 30
+        spacing: 10
+
+        Rectangle {
+            implicitWidth: modeRow.implicitWidth + 6
+            implicitHeight: 30
+            radius: Theme.radiusSmall + 2
+            color: Theme.bgElevated
+
+            Row {
+                id: modeRow
+                anchors.centerIn: parent
+                spacing: 2
+
+                Repeater {
+                    model: [{ v: "day", k: "agenda.day" }, { v: "three", k: "agenda.threeDays" },
+                            { v: "week", k: "agenda.week" }]
+
+                    Rectangle {
+                        id: mode
+                        required property var modelData
+                        readonly property bool active: root.view === mode.modelData.v
+                        width: modeText.implicitWidth + 22
+                        height: 24
+                        radius: Theme.radiusSmall
+                        color: mode.active ? Theme.bgDeep : modeMa.containsMouse ? Theme.hoverOverlay : "transparent"
+
+                        Text {
+                            id: modeText
+                            anchors.centerIn: parent
+                            text: I18n.tr(mode.modelData.k)
+                            font.family: "Inter"
+                            font.pixelSize: 12
+                            font.weight: Font.Medium
+                            color: mode.active ? Theme.textPrimary : Theme.textSecondary
+                        }
+                        MouseArea {
+                            id: modeMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.view = mode.modelData.v
+                        }
+                    }
+                }
+            }
+        }
+
         Text {
             Layout.fillWidth: true
-            Layout.leftMargin: 10
             text: Agenda.error !== "" ? Agenda.error
                 : Agenda.tasksError !== "" ? Agenda.tasksError
                 : Agenda.loading ? I18n.tr("common.loading")
@@ -231,241 +288,25 @@ Item {
             color: Agenda.error !== "" || Agenda.tasksError !== "" ? Theme.colorDanger : Theme.textDim
             elide: Text.ElideRight
         }
-
-        GlassButton { implicitWidth: 26; implicitHeight: 26; fontSize: 13; text: "‹"; onClicked: root.step(-1) }
-        GlassButton { implicitWidth: 26; implicitHeight: 26; fontSize: 13; text: "›"; onClicked: root.step(1) }
-        GlassButton { implicitHeight: 26; fontSize: 11; text: I18n.tr("agenda.today"); onClicked: root.goToday() }
-        Item { implicitWidth: 6 }
-        GlassButton {
-            visible: !root.compact
-            implicitHeight: 26; fontSize: 11
-            text: I18n.tr("agenda.month")
-            accent: root.view === "month"
-            onClicked: root.view = "month"
-        }
-        GlassButton {
-            visible: !root.compact
-            implicitHeight: 26; fontSize: 11
-            text: I18n.tr("agenda.week")
-            accent: root.view === "week"
-            onClicked: root.view = "week"
-        }
-        Item { implicitWidth: 6 }
-        GlassButton {
-            implicitHeight: 26; fontSize: 11
-            text: I18n.tr("agenda.tasks")
-            accent: root.showTasks
-            onClicked: root.showTasks = !root.showTasks
-        }
     }
 
-    // ── Le mois ──────────────────────────────────────────────────
-    Item {
-        id: monthPane
-        visible: Google.connected && root.view === "month"
-        anchors.top: header.bottom
-        anchors.topMargin: 8
-        anchors.left: parent.left
-        anchors.right: tasksPane.visible && !root.compact ? tasksPane.left : parent.right
-        anchors.rightMargin: tasksPane.visible && !root.compact ? 12 : 0
-        anchors.bottom: tasksPane.visible && root.compact ? tasksPane.top : parent.bottom
-        anchors.bottomMargin: tasksPane.visible && root.compact ? 14 : 0
-
-        readonly property real cellW: monthPane.width / 7
-        readonly property real cellH: (monthPane.height - weekdays.height) / 6
-        readonly property date start: Agenda.gridStart(root.year, root.month)
-        // Les lignes (tâches et rendez-vous) qui tiennent sous le numéro du jour.
-        readonly property int lines: Math.max(1, Math.floor((monthPane.cellH - 22) / 15))
-
-        Row {
-            id: weekdays
-            height: 18
-
-            Repeater {
-                model: 7
-                Text {
-                    required property int index
-                    width: monthPane.cellW
-                    leftPadding: 6
-                    // La semaine commence au jour de la langue (lundi en français).
-                    text: I18n.locale.dayName((I18n.locale.firstDayOfWeek + index) % 7, Locale.ShortFormat)
-                    font.family: "Inter"
-                    font.pixelSize: 10
-                    color: Theme.textDim
-                }
-            }
-        }
-
-        Grid {
-            id: grid
-            anchors.top: weekdays.bottom
-            columns: 7
-
-            Repeater {
-                model: 42
-
-                Item {
-                    id: cell
-                    required property int index
-                    readonly property date day: root.addDays(monthPane.start, cell.index)
-                    readonly property bool inMonth: cell.day.getMonth() === root.month
-                    readonly property bool isToday: root.sameDay(cell.day, root.today)
-                    readonly property var events: root.itemsOn(cell.day)
-                    // Trop de rendez-vous : le dernier rang dit combien manquent.
-                    readonly property int shown: cell.events.length > monthPane.lines ? monthPane.lines - 1
-                                                                                      : cell.events.length
-
-                    width: monthPane.cellW
-                    height: monthPane.cellH
-
-                    Rectangle {
-                        anchors.fill: parent
-                        color: cellMa.containsMouse ? Theme.hoverOverlay
-                             : cell.inMonth ? "transparent" : Qt.alpha(Theme.textPrimary, 0.02)
-                        Behavior on color { ColorAnimation { duration: 140 } }
-                    }
-
-                    // Le quadrillage : chaque case trace son haut et sa gauche.
-                    Rectangle { width: parent.width; height: 1; color: Theme.dividerColor }
-                    Rectangle { visible: cell.index % 7 > 0; width: 1; height: parent.height; color: Theme.dividerColor }
-
-                    MouseArea {
-                        id: cellMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.openWeek(cell.day)
-                    }
-
-                    // Le numéro, dans une pastille d'accent aujourd'hui.
-                    Rectangle {
-                        id: dayNum
-                        x: 4
-                        y: 3
-                        width: Math.max(18, numText.implicitWidth + 8)
-                        height: 18
-                        radius: 9
-                        color: cell.isToday ? Theme.glow(0) : "transparent"
-
-                        Text {
-                            id: numText
-                            anchors.centerIn: parent
-                            text: cell.day.getDate() === 1
-                                  ? I18n.locale.toString(cell.day, "d MMM") : cell.day.getDate()
-                            font.family: "Inter"
-                            font.pixelSize: 11
-                            font.weight: cell.isToday ? Font.DemiBold : Font.Normal
-                            font.features: { "tnum": 1 }
-                            color: cell.isToday ? Theme.bgDeep
-                                 : cell.inMonth ? Theme.textPrimary : Theme.textInactive
-                        }
-                    }
-
-                    Column {
-                        anchors.top: dayNum.bottom
-                        anchors.topMargin: 2
-                        x: 3
-                        width: parent.width - 6
-                        spacing: 1
-
-                        Repeater {
-                            model: cell.events.slice(0, cell.shown)
-
-                            Rectangle {
-                                id: chip
-                                required property var modelData
-                                readonly property bool task: root.isTask(chip.modelData)
-                                readonly property bool band: !chip.task && root.isBand(chip.modelData)
-                                readonly property color tint: Agenda.color(chip.modelData.calendar)
-
-                                width: parent.width
-                                height: 14
-                                radius: 3
-                                // Les journées : un aplat ; une tâche : sa case ; le reste :
-                                // un point et l'heure.
-                                color: chip.band ? Qt.alpha(chip.tint, cell.inMonth ? 0.85 : 0.45) : "transparent"
-
-                                Rectangle {
-                                    visible: !chip.band && !chip.task
-                                    x: 3
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    width: 6
-                                    height: 6
-                                    radius: 3
-                                    color: chip.tint
-                                    opacity: cell.inMonth ? 1 : 0.5
-                                }
-
-                                TaskCheck {
-                                    visible: chip.task
-                                    task: chip.modelData
-                                    x: 1
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                Text {
-                                    x: chip.band ? 4 : 13
-                                    width: parent.width - x - 2
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: {
-                                        var t = chip.modelData.title || I18n.tr("agenda.untitled");
-                                        // Commencé la veille : pas d'heure à donner ici.
-                                        if (chip.task || chip.band || chip.modelData.startDate < cell.day)
-                                            return t;
-                                        return root.time(chip.modelData.startDate) + " " + t;
-                                    }
-                                    font.family: "Inter"
-                                    font.pixelSize: 10
-                                    font.weight: chip.band ? Font.Medium : Font.Normal
-                                    font.features: { "tnum": 1 }
-                                    font.strikeout: chip.task && chip.modelData.done
-                                    color: chip.band ? "white"
-                                         : !cell.inMonth || (chip.task && chip.modelData.done) ? Theme.textInactive
-                                         : Theme.textPrimary
-                                    elide: Text.ElideRight
-                                }
-                            }
-                        }
-
-                        Text {
-                            visible: cell.shown < cell.events.length
-                            x: 3
-                            height: 14
-                            verticalAlignment: Text.AlignVCenter
-                            text: I18n.tr("agenda.more", { n: cell.events.length - cell.shown })
-                            font.family: "Inter"
-                            font.pixelSize: 10
-                            font.weight: Font.Medium
-                            color: Theme.textSecondary
-                        }
-                    }
-                }
-            }
-        }
-
-        // Le bas de la grille.
-        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.dividerColor }
-    }
-
-    // ── La semaine ───────────────────────────────────────────────
+    // ── Les jours, heure par heure ───────────────────────────────
     Item {
         id: weekPane
-        visible: Google.connected && root.view === "week"
-        anchors.top: header.bottom
+        visible: Google.connected
+        anchors.top: modes.bottom
         anchors.topMargin: 8
         anchors.left: parent.left
-        anchors.right: tasksPane.visible && !root.compact ? tasksPane.left : parent.right
-        anchors.rightMargin: tasksPane.visible && !root.compact ? 12 : 0
-        anchors.bottom: tasksPane.visible && root.compact ? tasksPane.top : parent.bottom
-        anchors.bottomMargin: tasksPane.visible && root.compact ? 14 : 0
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
 
         readonly property int gutter: 44
-        readonly property real colW: (weekPane.width - weekPane.gutter) / 7
-        readonly property int hourH: 36
+        readonly property real colW: (weekPane.width - weekPane.gutter) / root.count
+        readonly property int hourH: 48
         readonly property var days: {
             var out = [];
-            for (var i = 0; i < 7; i++)
-                out.push(root.addDays(root.weekStart, i));
+            for (var i = 0; i < root.count; i++)
+                out.push(root.addDays(root.rangeStart, i));
             return out;
         }
         // Par jour, les journées entières, puis les rendez-vous placés :
@@ -574,8 +415,22 @@ Item {
                 elide: Text.ElideRight
             }
 
+            // Un clic dans le vide d'un jour : une nouvelle tâche ce jour-là.
             Repeater {
-                model: 7
+                model: root.count
+
+                MouseArea {
+                    required property int index
+                    x: weekPane.gutter + index * weekPane.colW
+                    width: weekPane.colW
+                    height: bandRow.height
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: editor.openNewTask(weekPane.days[index])
+                }
+            }
+
+            Repeater {
+                model: root.count
 
                 Column {
                     id: bandCol
@@ -596,11 +451,56 @@ Item {
                             id: band
                             required property var modelData
                             readonly property bool task: root.isTask(band.modelData)
+                            // Pendant un glisser : son décalage.
+                            property real dx: 0
                             width: bandCol.width
                             height: 14
                             radius: 3
+                            z: band.dx !== 0 ? 10 : 0
+                            transform: Translate { x: band.dx }
                             // Une tâche : sa case et son titre, sans aplat.
                             color: band.task ? "transparent" : Qt.alpha(Agenda.color(band.modelData.calendar), 0.85)
+
+                            // Un clic : la modifier. Glisser : la changer de
+                            // jour. Sous la case, qui garde ses clics.
+                            MouseArea {
+                                id: bandMa
+                                property real px: 0
+                                property bool moved: false
+                                anchors.fill: parent
+                                preventStealing: true
+                                cursorShape: bandMa.moved ? Qt.ClosedHandCursor : Qt.PointingHandCursor
+                                onPressed: (mouse) => {
+                                    bandMa.px = bandMa.mapToItem(null, mouse.x, mouse.y).x;
+                                    bandMa.moved = false;
+                                }
+                                onPositionChanged: (mouse) => {
+                                    band.dx = bandMa.mapToItem(null, mouse.x, mouse.y).x - bandMa.px;
+                                    if (Math.abs(band.dx) > 6)
+                                        bandMa.moved = true;
+                                }
+                                onReleased: {
+                                    var days = Math.round(band.dx / weekPane.colW);
+                                    band.dx = 0;
+                                    var item = band.modelData;
+                                    if (!bandMa.moved) {
+                                        if (band.task)
+                                            editor.openTask(item);
+                                        else
+                                            editor.openEvent(item);
+                                        return;
+                                    }
+                                    bandMa.moved = false;
+                                    if (days === 0)
+                                        return;
+                                    if (band.task)
+                                        Agenda.updateTask(item, { due: Agenda.dayKey(root.shift(Agenda._parse(item.due), days, 0)) });
+                                    else
+                                        Agenda.updateEvent(item, { start: root.shift(item.startDate, days, 0),
+                                                                   end: root.shift(item.endDate, days, 0),
+                                                                   allDay: item.allDay });
+                                }
+                            }
 
                             TaskCheck {
                                 visible: band.task
@@ -699,7 +599,7 @@ Item {
 
                 // Les colonnes, et leurs rendez-vous.
                 Repeater {
-                    model: 7
+                    model: root.count
 
                     Item {
                         id: col
@@ -716,6 +616,19 @@ Item {
                             color: Qt.alpha(Theme.glow(0), 0.04)
                         }
 
+                        // Un clic dans le vide : un nouvel événement d'une
+                        // heure, au quart d'heure cliqué.
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: (mouse) => {
+                                var q = Math.floor(mouse.y / weekPane.hourH * 4);
+                                var start = new Date(col.day.getFullYear(), col.day.getMonth(), col.day.getDate(),
+                                                     Math.floor(q / 4), (q % 4) * 15);
+                                editor.openNewEvent(start, new Date(start.getTime() + 3600000), false);
+                            }
+                        }
+
                         Repeater {
                             model: weekPane.placed[col.index]
 
@@ -726,10 +639,19 @@ Item {
                                 readonly property real slot: (col.width - 4) / block.modelData.cols
                                 readonly property color tint: Agenda.color(block.e.calendar)
 
+                                // Pendant un glisser : son décalage, et ce que
+                                // gagne sa fin quand on l'étire.
+                                property real dx: 0
+                                property real dy: 0
+                                property real dh: 0
+
                                 x: 2 + block.modelData.col * block.slot
                                 y: block.modelData.top * weekPane.hourH + 1
                                 width: block.slot - 2
-                                height: Math.max(14, block.modelData.height * weekPane.hourH - 2)
+                                height: Math.max(14, block.modelData.height * weekPane.hourH - 2 + block.dh)
+                                z: block.dx !== 0 || block.dy !== 0 || block.dh !== 0 ? 10 : 0
+                                opacity: block.dx !== 0 || block.dy !== 0 ? 0.85 : 1
+                                transform: Translate { x: block.dx; y: block.dy }
                                 radius: 4
                                 clip: true
                                 color: Qt.alpha(block.tint, 0.85)
@@ -774,6 +696,75 @@ Item {
                                         elide: Text.ElideRight
                                     }
                                 }
+
+                                // Un clic : le modifier. Glisser : le déplacer,
+                                // au quart d'heure et d'un jour à l'autre.
+                                MouseArea {
+                                    id: moveMa
+                                    property real px: 0
+                                    property real py: 0
+                                    property bool moved: false
+                                    anchors.fill: parent
+                                    anchors.bottomMargin: 6
+                                    preventStealing: true
+                                    cursorShape: moveMa.moved ? Qt.ClosedHandCursor : Qt.PointingHandCursor
+                                    onPressed: (mouse) => {
+                                        var p = moveMa.mapToItem(null, mouse.x, mouse.y);
+                                        moveMa.px = p.x;
+                                        moveMa.py = p.y;
+                                        moveMa.moved = false;
+                                    }
+                                    onPositionChanged: (mouse) => {
+                                        var p = moveMa.mapToItem(null, mouse.x, mouse.y);
+                                        block.dx = p.x - moveMa.px;
+                                        block.dy = p.y - moveMa.py;
+                                        if (Math.abs(block.dx) + Math.abs(block.dy) > 6)
+                                            moveMa.moved = true;
+                                    }
+                                    onReleased: {
+                                        var mins = Math.round(block.dy / weekPane.hourH * 4) * 15;
+                                        var days = Math.round(block.dx / weekPane.colW);
+                                        block.dx = 0;
+                                        block.dy = 0;
+                                        if (!moveMa.moved) {
+                                            editor.openEvent(block.e);
+                                            return;
+                                        }
+                                        moveMa.moved = false;
+                                        if (mins === 0 && days === 0)
+                                            return;
+                                        Agenda.updateEvent(block.e, {
+                                            start: root.shift(block.e.startDate, days, mins),
+                                            end: root.shift(block.e.endDate, days, mins),
+                                            allDay: false
+                                        });
+                                    }
+                                }
+
+                                // Le bas : l'étirer change sa fin.
+                                MouseArea {
+                                    id: resizeMa
+                                    property real py: 0
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.bottom: parent.bottom
+                                    height: 6
+                                    preventStealing: true
+                                    cursorShape: Qt.SizeVerCursor
+                                    onPressed: (mouse) => resizeMa.py = resizeMa.mapToItem(null, mouse.x, mouse.y).y
+                                    onPositionChanged: (mouse) => block.dh = resizeMa.mapToItem(null, mouse.x, mouse.y).y - resizeMa.py
+                                    onReleased: {
+                                        var mins = Math.round(block.dh / weekPane.hourH * 4) * 15;
+                                        block.dh = 0;
+                                        if (mins === 0)
+                                            return;
+                                        var end = root.shift(block.e.endDate, 0, mins);
+                                        // Un quart d'heure au moins.
+                                        if (end - block.e.startDate < 15 * 60000)
+                                            end = new Date(block.e.startDate.getTime() + 15 * 60000);
+                                        Agenda.updateEvent(block.e, { end: end, allDay: false });
+                                    }
+                                }
                             }
                         }
 
@@ -800,121 +791,10 @@ Item {
         }
     }
 
-    // ── Les tâches ───────────────────────────────────────────────
-    // Toutes, par liste : à faire d'abord (les datées par échéance), puis
-    // faites, en retrait. Une échéance passée est en rouge.
-    Item {
-        id: tasksPane
-        visible: Google.connected && root.showTasks
-        anchors.top: root.compact ? undefined : header.bottom
-        anchors.topMargin: 8
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        width: root.compact ? root.width : Math.min(240, root.width * 0.28)
-        height: root.compact ? Math.round(root.height * 0.4) : implicitHeight
-
-        // [{ title, tasks }] par liste, les listes vides laissées de côté.
-        readonly property var groups: Agenda.lists.map(l => ({
-            title: l.title,
-            tasks: Agenda.tasks.filter(t => t.list === l.id).sort((a, b) => {
-                if (a.done !== b.done)
-                    return a.done - b.done;
-                if ((a.due === "") !== (b.due === ""))
-                    return a.due === "" ? 1 : -1;
-                return a.due < b.due ? -1 : a.due > b.due ? 1
-                     : a.position < b.position ? -1 : a.position > b.position ? 1 : 0;
-            })
-        })).filter(g => g.tasks.length > 0)
-
-        Rectangle { width: 1; height: parent.height; color: Theme.dividerColor }
-
-        ListView {
-            id: taskList
-            anchors.fill: parent
-            anchors.leftMargin: 12
-            clip: true
-            spacing: 2
-            boundsBehavior: Flickable.StopAtBounds
-            model: tasksPane.groups
-
-            delegate: Column {
-                id: group
-                required property var modelData
-                width: taskList.width
-                spacing: 2
-
-                Text {
-                    width: parent.width
-                    topPadding: 4
-                    bottomPadding: 2
-                    text: group.modelData.title
-                    font.family: "Inter"
-                    font.pixelSize: 11
-                    font.weight: Font.DemiBold
-                    color: Theme.textSecondary
-                    elide: Text.ElideRight
-                }
-
-                Repeater {
-                    model: group.modelData.tasks
-
-                    Item {
-                        id: row
-                        required property var modelData
-                        readonly property bool late: !row.modelData.done && row.modelData.due !== ""
-                                                     && row.modelData.due < Agenda.dayKey(root.today)
-                        width: group.width
-                        height: Math.max(20, rowText.implicitHeight + 6)
-
-                        TaskCheck {
-                            x: row.modelData.parent !== "" ? 14 : 2
-                            y: 5
-                            task: row.modelData
-                        }
-
-                        Column {
-                            id: rowText
-                            x: (row.modelData.parent !== "" ? 14 : 2) + 16
-                            y: 3
-                            width: parent.width - x - 4
-
-                            Text {
-                                width: parent.width
-                                text: row.modelData.title || I18n.tr("agenda.untitled")
-                                font.family: "Inter"
-                                font.pixelSize: 11
-                                font.strikeout: row.modelData.done
-                                color: row.modelData.done ? Theme.textInactive : Theme.textPrimary
-                                wrapMode: Text.Wrap
-                                maximumLineCount: 2
-                                elide: Text.ElideRight
-                            }
-                            Text {
-                                visible: row.modelData.due !== "" && !row.modelData.done
-                                text: {
-                                    var p = row.modelData.due.split("-");
-                                    return I18n.locale.toString(new Date(+p[0], +p[1] - 1, +p[2]), "ddd d MMM");
-                                }
-                                font.family: "Inter"
-                                font.pixelSize: 9
-                                color: row.late ? Theme.colorDanger : Theme.textDim
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Text {
-            anchors.centerIn: parent
-            width: parent.width - 24
-            horizontalAlignment: Text.AlignHCenter
-            visible: tasksPane.groups.length === 0 && Agenda.tasksError === ""
-            text: I18n.tr("agenda.noTasks")
-            font.family: "Inter"
-            font.pixelSize: 11
-            color: Theme.textDim
-            wrapMode: Text.Wrap
-        }
+    // ── Créer, modifier ──────────────────────────────────────────
+    AgendaEditor {
+        id: editor
+        anchors.fill: parent
+        z: 20
     }
 }

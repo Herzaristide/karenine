@@ -171,7 +171,8 @@ PanelWindow { // qmllint disable uncreatable-type
         }
 
         Component { id: musicView; MusicView {} }
-        Component { id: filesView; FileExplorer { onOpened: Widgets.panelOpen = false } }
+        // Ouvrir un fichier ne referme pas le panneau : il reste là.
+        Component { id: filesView; FileExplorer {} }
         Component { id: systemView; FleetView {} }
         // Hors des onglets : la palette de la barre y mène (« Tous les
         // réglages »).

@@ -16,9 +16,9 @@
 //! long-enough silence after speech ends the turn. Simple, and enough for a
 //! request said into a laptop or a desk microphone.
 //!
-//! The model is a directory of ONNX files (parakeet.rs): `ANNA_PARAKEET_MODEL`,
-//! else `~/.local/share/anna/parakeet` (the NixOS configuration links it
-//! there).
+//! The model is a directory of ONNX files (parakeet.rs): `ANNA_PARAKEET_MODEL`
+//! (set by the package's wrapper to the files it ships, see
+//! anna/default.nix), else `~/.local/share/anna/parakeet`.
 
 use super::parakeet;
 use super::pilot::Pilot;

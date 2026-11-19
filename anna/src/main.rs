@@ -21,7 +21,7 @@
 //!                        run the gesture engine in the foreground with
 //!                        per-second diagnostics (disable the daemon's first:
 //!                        the camera is exclusive); --dry performs no action
-//!   anna mcp             MCP server (stdio) of the pilot's desk tools
+//!   anna mcp             MCP server (stdio) of the desk tools
 //!   anna pilot|voice …   client: the pilot, speaking to it, its answers aloud
 //!   anna record audio [mic|mix] | screen [area|screen] | stop [kind] | watch
 //!                        client: start/stop a recording (recorder.rs)
@@ -128,7 +128,7 @@ async fn main() {
         Some("tasks") => {
             google::tasks::run(&args);
         }
-        // MCP server of the pilot's desk tools (started by Claude Code).
+        // MCP server of the desk tools, for an MCP client.
         Some("mcp") => {
             claude::mcp::run();
         }
@@ -734,9 +734,26 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             write_result(&mut writer, Ok(())).await;
         }
 
+        Command::PilotConfig => {
+            let reply = tokio::task::spawn_blocking(claude::pilot::config_line)
+                .await
+                .unwrap_or_else(|e| serde_json::json!({ "ok": false, "error": e.to_string() }));
+            let _ = write_line(&mut writer, &reply.to_string()).await;
+        }
+
+        Command::PilotConfigure { provider, url, model, think, key } => {
+            let config = claude::pilot::Config { provider, url, model, think };
+            write_result(&mut writer, ctx.pilot.configure(config, key).await).await;
+        }
+
         // The screen goes back as an image, beside the text (claude/mcp.rs).
-        Command::Desk { tool, .. } if tool == "voir_ecran" => {
-            let result = tokio::task::spawn_blocking(claude::desk::screen_image)
+        Command::Desk { tool, args } if tool == "voir_ecran" => {
+            let target = args
+                .get("cible")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let result = tokio::task::spawn_blocking(move || claude::desk::screen_image(&target))
                 .await
                 .unwrap_or_else(|e| Err(e.to_string()));
             let reply = match result {

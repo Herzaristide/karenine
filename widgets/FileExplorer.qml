@@ -7,17 +7,26 @@ import "../services"
 
 // L'onglet « Explorer » : les dossiers du PC, sans quitter la barre. À
 // gauche, les favoris (le dossier personnel, ses dossiers, et /etc/nixos) ; à
-// droite, le chemin, cliquable segment par segment, et le contenu du
-// dossier en tuiles, les dossiers d'abord.
+// droite, la navigation (précédent, suivant, parent), le chemin, et le
+// contenu du dossier, les dossiers d'abord : en tuiles, ou en liste avec la
+// taille et la date, au choix. En bas, combien
+// d'éléments, la sélection, et l'affichage.
 //
-//   (▣ zola       ▾)  (↑)  ~ › ciph3r › karenine         (◉) (▭) (>_)
-//   ╭──────────────╮
-//   │ ▭ ciph3r     │  ╭────╮ ╭────╮ ╭────╮ ╭────╮ ╭────╮
-//   │ ▭ Documents  │  │ ▭  │ │ ▭  │ │ ▭  │ │ ≡  │ │ ▣  │
-//   │ ▭ Images     │  │ai  │ │anna│ │docs│ │flake│ │logo│
-//   │ …            │  ╰────╯ ╰────╯ ╰────╯ ╰────╯ ╰────╯
-//   │ ❄ nixos      │  …
-//   ╰──────────────╯
+//   (▣ zola  ▾)  (←)(→)(↑) ( ▭ ~ › ciph3r › karenine       ✎ ) (⌕)
+//   ╭──────────╮ ╭─────────────────────────────────────────────╮
+//   │ ▭ ciph3r │ │  ▭      ▭      ▭      ≡      ▣             │
+//   │ ▭ Docum… │ │  ai     anna   docs   flake  logo          │
+//   │ …        │ ╰─────────────────────────────────────────────╯
+//   │ ❄ nixos  │  12 éléments                 (◉) (▦) (▭) (>_)
+//   ╰──────────╯
+//
+// Le chemin s'édite : un clic dessus (à côté des segments), Ctrl+L, ou
+// « / » et « ~ » tapés dans la liste. On y tape un chemin absolu, relatif,
+// avec ~ ou .. ; les entrées du dossier tapé sont proposées dessous, Tab
+// complète (le préfixe commun, puis chaque proposition), ↑ ↓ choisissent,
+// Entrée y va (un fichier : son dossier, lui sélectionné), Échap annule.
+// La loupe (Ctrl+F) change la barre en filtre du dossier. Alt+← → ↑ et
+// les boutons latéraux de la souris parcourent l'historique.
 //
 // Comme dans un gestionnaire de fichiers : un clic sélectionne, Ctrl+clic
 // ajoute ou retire, Maj+clic prend une plage, un clic dans le vide
@@ -60,14 +69,25 @@ Item {
     readonly property string localHome: Quickshell.env("HOME") || "/"
     readonly property string path: Widgets.explorerPath || root.home
     property bool showHidden: false
+    // Le tri : 0 le nom, 1 la taille, 2 la date ; et dans quel sens.
+    property int sortKey: 0
+    property bool sortReversed: false
+    // La liste plutôt que les tuiles (qui vont à la ligne), au choix, même
+    // étroit : le bouton du pied passe de l'une à l'autre.
+    readonly property bool listView: Widgets.explorerListView
+    // La taille et la date, en liste, quand il y a la place.
+    readonly property bool details: root.listView && content.width >= 340
+    readonly property int sizeW: 58
+    readonly property int dateW: 78
 
     readonly property int placesW: 150
     // Étroit (le panneau de droite) : les favoris passent en rangée de
-    // pastilles au-dessus, la grille devient une liste, les disques
+    // pastilles au-dessus, les disques
     // s'empilent. Large (le hub), tout reste côte à côte.
     readonly property bool compact: root.width < 600
     readonly property int sideW: root.compact ? 0 : root.placesW + 12
     readonly property int headerH: 34
+    readonly property int footerH: 30
     readonly property int switchH: 34
     // La bande des disques, en bas sur toute la largeur (rien sans disque).
     readonly property int diskH: 46
@@ -88,13 +108,406 @@ Item {
         return slash > 0 ? p.substring(0, slash) : "/";
     }
 
-    function go(p) {
+    // 1536 → « 1,5 Ko » ; une décimale sous 10.
+    function humanSize(bytes) {
+        var units = [n => I18n.tr("unit.bytes", { n: n }), n => I18n.tr("unit.kb", { n: n }),
+                     n => I18n.tr("unit.mb", { n: n }), n => I18n.tr("unit.gb", { n: n }),
+                     n => I18n.tr("unit.tb", { n: n })];
+        var v = Number(bytes);
+        var i = 0;
+        while (v >= 1024 && i < units.length - 1) {
+            v /= 1024;
+            i++;
+        }
+        var n = i === 0 ? String(Math.round(v)) : v.toLocaleString(I18n.locale, "f", v < 10 ? 1 : 0);
+        return units[i](n);
+    }
+
+    // Aujourd'hui : l'heure ; cette année : le jour et le mois ; avant :
+    // l'année aussi.
+    function shortDate(d) {
+        // Le store Nix date tout de 1970 : rien à en dire.
+        if (!d || isNaN(d.getTime()) || d.getTime() < 86400000)
+            return "—";
+        var now = new Date();
+        if (d.toDateString() === now.toDateString())
+            return Qt.formatTime(d, "HH:mm");
+        return d.toLocaleDateString(I18n.locale, d.getFullYear() === now.getFullYear() ? "d MMM" : "d MMM yyyy");
+    }
+
+    // Aller au dossier `p`, en le notant dans l'historique (sauf depuis
+    // l'historique lui-même : `fromHistory`).
+    function go(p, fromHistory) {
         if (p === root.path)
             return;
+        if (!fromHistory) {
+            root.backStack = root.backStack.concat([root.path]).slice(-64);
+            root.forwardStack = [];
+        }
         Widgets.explorerPath = p;
         root.clearSelection();
+        root.filter = "";
+        root.filterOpen = false;
+        filterInput.text = "";
         grid.currentIndex = -1;
         grid.positionViewAtBeginning();
+    }
+
+    // ── L'historique ─────────────────────────────────────────────
+    // Les dossiers d'avant et ceux quittés en revenant ; vidés en changeant
+    // de machine (leurs chemins n'y voudraient plus rien dire).
+    property var backStack: []
+    property var forwardStack: []
+
+    function back() {
+        if (root.backStack.length === 0)
+            return;
+        var p = root.backStack[root.backStack.length - 1];
+        root.backStack = root.backStack.slice(0, -1);
+        root.forwardStack = root.forwardStack.concat([root.path]);
+        root.go(p, true);
+    }
+    function forward() {
+        if (root.forwardStack.length === 0)
+            return;
+        var p = root.forwardStack[root.forwardStack.length - 1];
+        root.forwardStack = root.forwardStack.slice(0, -1);
+        root.backStack = root.backStack.concat([root.path]);
+        root.go(p, true);
+    }
+
+    // ── Le contenu, filtré ───────────────────────────────────────
+    // Ce que montre la liste : le dossier lu par FolderListModel, réduit aux
+    // noms qui contiennent le filtre (ses nameFilters laisseraient passer
+    // les dossiers). Relu à chaque changement du dossier, groupé par
+    // Qt.callLater ; le défilement et le curseur restent si c'est le même
+    // dossier qui a bougé sur le disque.
+    property var entries: []
+    property string filter: ""
+    // La loupe ouverte, même vide.
+    property bool filterOpen: false
+    readonly property bool filtering: root.filterOpen || root.filter !== ""
+    property string entriesPath: ""
+    // Un fichier à sélectionner dès qu'il apparaîtra (cf. reveal).
+    property string pendingReveal: ""
+
+    onFilterChanged: Qt.callLater(root.rebuildEntries)
+    onShowHiddenChanged: Qt.callLater(root.rebuildEntries)
+
+    function rebuildEntries() {
+        var f = root.filter.toLowerCase();
+        var out = [];
+        for (var i = 0; i < folder.count; i++) {
+            var name = String(folder.get(i, "fileName"));
+            if (f !== "" && name.toLowerCase().indexOf(f) < 0)
+                continue;
+            out.push({
+                name: name,
+                path: folder.get(i, "filePath"),
+                isDir: folder.get(i, "fileIsDir"),
+                suffix: folder.get(i, "fileSuffix"),
+                size: folder.get(i, "fileSize"),
+                modified: folder.get(i, "fileModified")
+            });
+        }
+        var same = root.entriesPath === root.path;
+        var y = grid.contentY;
+        var cur = grid.currentIndex;
+        root.entries = out;
+        root.entriesPath = root.path;
+        if (same) {
+            grid.contentY = Math.min(y, Math.max(0, grid.contentHeight - grid.height));
+            grid.currentIndex = Math.min(cur, out.length - 1);
+        } else {
+            grid.currentIndex = -1;
+        }
+        if (root.pendingReveal !== "")
+            root.applyReveal();
+    }
+
+    // Montrer le fichier `p` : aller dans son dossier, l'y sélectionner.
+    function reveal(p) {
+        root.pendingReveal = p;
+        if (root.parentOf(p) === root.path)
+            root.applyReveal();
+        else
+            root.go(root.parentOf(p));
+    }
+    function applyReveal() {
+        for (var i = 0; i < root.entries.length; i++) {
+            if (root.entries[i].path === root.pendingReveal) {
+                root.pendingReveal = "";
+                root.selectOnly(i);
+                grid.currentIndex = i;
+                return;
+            }
+        }
+    }
+
+    function sortBy(key) {
+        if (root.sortKey === key)
+            root.sortReversed = !root.sortReversed;
+        else {
+            root.sortKey = key;
+            root.sortReversed = false;
+        }
+    }
+
+    function focusGrid() {
+        grid.forceActiveFocus();
+        if (grid.currentIndex < 0 && grid.count > 0)
+            grid.currentIndex = 0;
+    }
+
+    function openFilter() {
+        root.filterOpen = true;
+        filterInput.forceActiveFocus();
+        filterInput.selectAll();
+    }
+    function closeFilter() {
+        root.filter = "";
+        filterInput.text = "";
+        root.filterOpen = false;
+        root.focusGrid();
+    }
+
+    // ── Le chemin, tapé ──────────────────────────────────────────
+    // Ce qu'on tape se lit comme dans un shell, sur la machine montrée :
+    // « ~ » son dossier personnel, « / » sa racine, le reste relatif au
+    // dossier ouvert ; « . » et « .. » se résolvent sans sortir de la
+    // racine (à distance, du point de montage).
+    property bool editing: false
+    property bool addressError: false
+    // Les propositions : les entrées du dossier tapé dont le nom commence
+    // par ce qui suit le dernier « / » (puis celles qui le contiennent).
+    property var suggestions: []   // [{ name, path, isDir, suffix, at }]
+    property int suggestIndex: -1
+    // Le texte jusqu'au dernier « / » compris, et ce qui le suit.
+    property string suggestDirText: ""
+    property string suggestBase: ""
+    // Le dossier lu pour les propositions ("" : aucune).
+    property string suggestDir: ""
+    readonly property int suggestMax: 8
+
+    // Un chemin local en ce qu'on taperait : ~ pour le dossier personnel,
+    // sans le point de montage à distance.
+    function displayPath(p) {
+        if (p === root.home)
+            return "~";
+        if (p.indexOf(root.home + "/") === 0)
+            return "~" + p.substring(root.home.length);
+        return root.remote ? root.remotePath(p) : p;
+    }
+
+    // Ce qu'on a tapé, en chemin local (sous le point de montage à distance).
+    function resolve(t) {
+        t = t.trim();
+        var home = root.remote ? root.machine.home : root.localHome;
+        var cur = root.remote ? root.remotePath(root.path) : root.path;
+        var v;
+        if (t === "")
+            v = cur;
+        else if (t === "~" || t.indexOf("~/") === 0)
+            v = home + t.substring(1);
+        else if (t.charAt(0) === "/")
+            v = t;
+        else
+            v = cur + "/" + t;
+        var parts = [];
+        v.split("/").forEach(s => {
+            if (s === "" || s === ".")
+                return;
+            if (s === "..")
+                parts.pop();
+            else
+                parts.push(s);
+        });
+        var abs = "/" + parts.join("/");
+        return root.remote ? (abs === "/" ? root.rootDir : root.rootDir + abs) : abs;
+    }
+
+    // Ouvre la barre à l'édition : sur le chemin courant tout sélectionné
+    // (taper le remplace), ou sur `text` (« / » ou « ~ » tapés dans la liste).
+    function startEditing(text) {
+        root.editing = true;
+        root.addressError = false;
+        pathInput.forceActiveFocus();
+        if (text) {
+            pathInput.text = text;
+            pathInput.cursorPosition = text.length;
+            root.pathEdited(text);
+        } else {
+            var shown = root.displayPath(root.path);
+            pathInput.text = shown + (shown.charAt(shown.length - 1) === "/" ? "" : "/");
+            pathInput.selectAll();
+            root.suggestDir = "";
+            root.suggestions = [];
+            root.suggestIndex = -1;
+        }
+    }
+    // `back` : rendre le clavier à la liste (Échap).
+    function finishEditing(back) {
+        root.editing = false;
+        root.addressError = false;
+        root.suggestions = [];
+        root.suggestIndex = -1;
+        root.suggestDir = "";
+        if (back)
+            root.focusGrid();
+    }
+
+    function pathEdited(t) {
+        var slash = t.lastIndexOf("/");
+        root.suggestDirText = slash >= 0 ? t.substring(0, slash + 1) : "";
+        root.suggestBase = t.substring(slash + 1);
+        // « ~ » ou « ~nom » : pas encore un dossier à lire.
+        root.suggestDir = t.charAt(0) === "~" && slash < 0 ? "" : root.resolve(root.suggestDirText);
+        root.addressError = false;
+        root.suggestIndex = -1;
+        Qt.callLater(root.rebuildSuggestions);
+    }
+
+    function rebuildSuggestions() {
+        if (!root.editing || root.suggestDir === ""
+                || root.pathOf(suggestModel.folder) !== root.suggestDir) {
+            root.suggestions = [];
+            return;
+        }
+        var b = root.suggestBase.toLowerCase();
+        var hidden = root.showHidden || b.charAt(0) === ".";
+        var starts = [];
+        var inside = [];
+        for (var i = 0; i < suggestModel.count && starts.length < root.suggestMax; i++) {
+            var name = String(suggestModel.get(i, "fileName"));
+            if (!hidden && name.charAt(0) === ".")
+                continue;
+            var at = name.toLowerCase().indexOf(b);
+            if (at < 0 || (at > 0 && b === ""))
+                continue;
+            var e = { name: name, path: suggestModel.get(i, "filePath"),
+                      isDir: suggestModel.get(i, "fileIsDir"), suffix: suggestModel.get(i, "fileSuffix"), at: at };
+            if (at === 0)
+                starts.push(e);
+            else if (inside.length < root.suggestMax)
+                inside.push(e);
+        }
+        root.suggestions = starts.concat(inside).slice(0, root.suggestMax);
+        if (root.suggestIndex >= root.suggestions.length)
+            root.suggestIndex = -1;
+    }
+
+    // Le nom d'une proposition, la partie tapée en gras (StyledText).
+    function highlight(name, at, len) {
+        var esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        if (len === 0)
+            return esc(name);
+        return esc(name.substring(0, at)) + "<b>" + esc(name.substring(at, at + len)) + "</b>"
+             + esc(name.substring(at + len));
+    }
+
+    function takeSuggestion(i) {
+        var s = root.suggestions[i];
+        if (!s)
+            return;
+        var t = root.suggestDirText + s.name + (s.isDir ? "/" : "");
+        pathInput.text = t;
+        pathInput.cursorPosition = t.length;
+        // Un fichier : le texte est complet, plus rien à proposer.
+        if (s.isDir)
+            root.pathEdited(t);
+        else
+            root.suggestions = [];
+    }
+
+    // Tab : la proposition choisie ; sinon le préfixe commun des noms qui
+    // commencent par ce qu'on a tapé ; s'il n'ajoute rien, on parcourt les
+    // propositions (Maj+Tab à rebours).
+    function complete(backwards) {
+        var n = root.suggestions.length;
+        if (n === 0)
+            return;
+        if (n === 1) {
+            root.takeSuggestion(0);
+            return;
+        }
+        if (root.suggestIndex < 0) {
+            var pre = root.suggestions.filter(s => s.at === 0).map(s => s.name);
+            if (pre.length > 0) {
+                var common = pre[0];
+                pre.forEach(name => {
+                    var k = 0;
+                    while (k < common.length && k < name.length
+                           && common.charAt(k).toLowerCase() === name.charAt(k).toLowerCase())
+                        k++;
+                    common = common.substring(0, k);
+                });
+                if (common.length > root.suggestBase.length) {
+                    var t = root.suggestDirText + common;
+                    pathInput.text = t;
+                    pathInput.cursorPosition = t.length;
+                    root.pathEdited(t);
+                    return;
+                }
+            }
+        }
+        root.suggestIndex = backwards ? (root.suggestIndex <= 0 ? n - 1 : root.suggestIndex - 1)
+                                      : (root.suggestIndex + 1) % n;
+    }
+
+    // Entrée : la proposition choisie, ou le chemin tapé, s'il existe.
+    function acceptPath() {
+        if (root.suggestIndex >= 0) {
+            var s = root.suggestions[root.suggestIndex];
+            root.finishEditing(true);
+            if (s.isDir)
+                root.go(s.path);
+            else
+                root.reveal(s.path);
+            return;
+        }
+        checkProc.target = root.resolve(pathInput.text);
+        checkProc.typed = pathInput.text;
+        checkProc.running = true;
+    }
+
+    // Ce qu'est le chemin tapé : un dossier (d), autre chose (f), ou rien.
+    Process {
+        id: checkProc
+        property string target: ""
+        property string typed: ""
+        command: ["sh", "-c", "if [ -d \"$1\" ]; then echo d; elif [ -e \"$1\" ]; then echo f; fi",
+                  "--", checkProc.target]
+        stdout: StdioCollector {
+            id: checkOut
+            onStreamFinished: {
+                if (!root.editing)
+                    return;
+                var kind = checkOut.text.trim();
+                if (kind === "d" || kind === "f") {
+                    root.finishEditing(true);
+                    if (kind === "d")
+                        root.go(checkProc.target);
+                    else
+                        root.reveal(checkProc.target);
+                } else {
+                    root.addressError = true;
+                    shake.restart();
+                    root.say(I18n.tr("explorer.notFound", { path: checkProc.typed.trim() }));
+                }
+            }
+        }
+    }
+
+    FolderListModel {
+        id: suggestModel
+        folder: root.suggestDir !== "" ? root.urlOf(root.suggestDir) : ""
+        showDirsFirst: true
+        showDotAndDotDot: false
+        showHidden: true
+        sortField: FolderListModel.Name
+        sortCaseSensitive: false
+        onCountChanged: Qt.callLater(root.rebuildSuggestions)
+        onStatusChanged: Qt.callLater(root.rebuildSuggestions)
     }
 
     // ── La sélection ─────────────────────────────────────────────
@@ -104,6 +517,15 @@ Item {
     property var selection: ({})
     readonly property var selectedPaths: Object.keys(root.selection)
     readonly property int selectedCount: root.selectedPaths.length
+    // Ce que pèsent les fichiers sélectionnés (les dossiers ne comptent pas).
+    readonly property real selectedSize: {
+        var total = 0;
+        root.entries.forEach(e => {
+            if (!e.isDir && root.selection[e.path] === true)
+                total += e.size;
+        });
+        return total;
+    }
     // Le point de départ d'une plage (Maj+clic, Maj+flèches).
     property int anchorIndex: -1
 
@@ -115,7 +537,7 @@ Item {
         root.anchorIndex = -1;
     }
     function toggle(index) {
-        var p = folder.get(index, "filePath");
+        var p = root.entries[index].path;
         var s = Object.assign({}, root.selection);
         if (s[p])
             delete s[p];
@@ -126,7 +548,7 @@ Item {
     }
     function selectOnly(index) {
         var s = {};
-        s[folder.get(index, "filePath")] = true;
+        s[root.entries[index].path] = true;
         root.selection = s;
         root.anchorIndex = index;
     }
@@ -134,15 +556,15 @@ Item {
     function selectRange(index) {
         var from = root.anchorIndex < 0 ? index : root.anchorIndex;
         var s = {};
-        for (var i = Math.min(from, index); i <= Math.max(from, index); i++)
-            s[folder.get(i, "filePath")] = true;
+        for (var i = Math.min(from, index); i <= Math.max(from, index) && i < root.entries.length; i++)
+            s[root.entries[i].path] = true;
         root.selection = s;
         root.anchorIndex = from;
     }
     function selectAll() {
         var s = {};
-        for (var i = 0; i < folder.count; i++)
-            s[folder.get(i, "filePath")] = true;
+        for (var i = 0; i < root.entries.length; i++)
+            s[root.entries[i].path] = true;
         root.selection = s;
     }
 
@@ -206,11 +628,10 @@ Item {
             return;
         }
         var files = [];
-        for (var i = 0; i < folder.count; i++) {
-            var p = folder.get(i, "filePath");
-            if (root.isSelected(p) && !folder.get(i, "fileIsDir"))
-                files.push(p);
-        }
+        root.entries.forEach(e => {
+            if (root.isSelected(e.path) && !e.isDir)
+                files.push(e.path);
+        });
         if (files.length === 0) {
             root.say(I18n.tr("explorer.onlyFiles"));
             return;
@@ -276,10 +697,10 @@ Item {
     }
 
     function activate(index) {
-        if (index < 0 || index >= folder.count)
+        if (index < 0 || index >= root.entries.length)
             return;
-        var p = folder.get(index, "filePath");
-        if (folder.get(index, "fileIsDir")) {
+        var p = root.entries[index].path;
+        if (root.entries[index].isDir) {
             root.go(p);
             // Au clavier, la sélection reprend en haut du nouveau dossier.
             if (grid.activeFocus)
@@ -360,11 +781,13 @@ Item {
     }
 
     // Une image se montre elle-même (une URL file://) ; le reste prend
-    // l'icône de son type dans le thème. Les dossiers du dossier personnel
-    // gardent celle de leur favori (Documents, Musique…).
+    // l'icône de son type dans le thème. Les dossiers XDG (Documents,
+    // Musique…) gardent celle de leur favori, où qu'ils soient.
     function iconFor(p, isDir, suffix, name) {
-        if (isDir)
-            return root.parentOf(p) === root.home ? root.placeIcon(name) : root.themed(["folder"], "folder");
+        if (isDir) {
+            var xdg = root.xdgByPath[p];
+            return xdg ? root.xdgIcon(xdg) : root.themed(["folder"], "folder");
+        }
         var s = (suffix || "").toLowerCase();
         // À distance, pas de miniature : chaque image traverserait le réseau.
         if (!root.remote && root.imageSuffixes.indexOf(s) !== -1)
@@ -375,58 +798,139 @@ Item {
     }
 
     // ── Les favoris ──────────────────────────────────────────────
-    // Le dossier personnel, ses dossiers (sans les cachés), puis la
-    // configuration NixOS. Le dossier personnel ne s'allume que chez lui
-    // (`exact`) : il engloberait les autres favoris. `get()` n'est pas observable : la liste se relit
-    // à chaque changement du modèle.
+    // Le dossier personnel, les dossiers XDG de la machine montrée (ceux de
+    // ~/.config/user-dirs.dirs, cf. xdg-user-dirs), puis la configuration
+    // NixOS. Le dossier personnel ne s'allume que chez lui (`exact`) : il
+    // engloberait les autres favoris.
     // Sur un serveur, sa configuration NixOS s'il en a une. Pas de favori
     // pour la racine : il engloberait tout le reste, donc resterait allumé ;
     // le disque « / » de la bande du bas, le chemin et ↑ y mènent.
     readonly property var extraPlaces: !root.remote
         ? [{ label: "nixos", icon: "../assets/nixos.svg", path: "/etc/nixos" }]
         : (root.machine.nixos ? [{ label: "nixos", icon: "../assets/nixos.svg", path: root.rootDir + "/etc/nixos" }] : [])
-    // Les icônes des dossiers XDG, en français ou en anglais : celle du
-    // thème, puis le glyphe Phosphor.
-    readonly property var placeIcons: ({
-        Bureau: [["user-desktop", "folder-desktop"], "place-desktop"],
-        Desktop: [["user-desktop", "folder-desktop"], "place-desktop"],
-        Documents: [["folder-documents"], "documents"],
-        "Téléchargements": [["folder-download", "folder-downloads"], "downloads"],
-        Downloads: [["folder-download", "folder-downloads"], "downloads"],
-        Images: [["folder-pictures"], "pictures"],
-        Pictures: [["folder-pictures"], "pictures"],
-        Musique: [["folder-music"], "music"],
-        Music: [["folder-music"], "music"],
-        "Vidéos": [["folder-videos"], "videos"],
-        Videos: [["folder-videos"], "videos"],
-        "Modèles": [["folder-templates"], "folder"],
-        Templates: [["folder-templates"], "folder"],
-        Public: [["folder-publicshare"], "folder"],
-        code: [["folder-code"], "folder"],
-        Projets: [["folder-projects"], "folder"],
-        Projects: [["folder-projects"], "folder"]
-    })
-    function placeIcon(name) {
-        var known = root.placeIcons[name];
-        return known ? root.themed(known[0].concat(["folder"]), known[1])
-                     : root.themed(["folder"], "folder");
+
+    // Les dossiers XDG, dans l'ordre des favoris : leur clé dans
+    // user-dirs.dirs, les icônes du thème, le glyphe à défaut, et le nom
+    // par défaut (anglais puis français) quand le fichier manque.
+    readonly property var xdgKinds: [
+        { key: "DOCUMENTS", icons: ["folder-documents"], glyph: "documents", names: ["Documents"] },
+        { key: "DOWNLOAD", icons: ["folder-download", "folder-downloads"], glyph: "downloads",
+          names: ["Downloads", "Téléchargements"] },
+        { key: "PROJECTS", icons: ["folder-projects", "folder-development", "folder-code"], glyph: "projects",
+          names: ["Projects", "Projets"] },
+        { key: "PICTURES", icons: ["folder-pictures"], glyph: "pictures", names: ["Pictures", "Images"] },
+        { key: "VIDEOS", icons: ["folder-videos"], glyph: "videos", names: ["Videos", "Vidéos"] },
+        { key: "MUSIC", icons: ["folder-music"], glyph: "music", names: ["Music", "Musique"] },
+        { key: "DESKTOP", icons: ["user-desktop", "folder-desktop"], glyph: "place-desktop",
+          names: ["Desktop", "Bureau"] },
+        { key: "PUBLICSHARE", icons: ["folder-publicshare"], glyph: "public", names: ["Public"] },
+        { key: "TEMPLATES", icons: ["folder-templates"], glyph: "templates", names: ["Templates", "Modèles"] }
+    ]
+    function xdgIcon(kind) {
+        return root.themed(kind.icons.concat(["folder"]), kind.glyph);
     }
+
+    // user-dirs.dirs lu : clé → chemin local (sous le point de montage à
+    // distance). null : pas de fichier, les noms par défaut servent.
+    property var xdgDirs: null
+    // Chemin → sa sorte XDG, pour les icônes de la liste aussi.
+    property var xdgByPath: ({})
     property var places: root.extraPlaces
 
-    function rebuildPlaces() {
-        var out = [{ label: I18n.tr("explorer.home"), icon: root.themed(["user-home", "folder-home", "folder"], "folder"),
-                     path: root.home, exact: true }];
-        for (var i = 0; i < homeDirs.count; i++) {
-            var name = homeDirs.get(i, "fileName");
-            out.push({ label: name, icon: root.placeIcon(name),
-                       path: homeDirs.get(i, "filePath") });
+    FileView {
+        id: userDirs
+        path: root.home + "/.config/user-dirs.dirs"
+        printErrors: false
+        watchChanges: true
+        onFileChanged: reload()
+        onLoaded: root.parseUserDirs(userDirs.text())
+        onLoadFailed: {
+            root.xdgDirs = null;
+            root.rebuildPlaces();
         }
+    }
+    // Une autre machine : son fichier à elle (le dossier personnel change).
+    onHomeChanged: {
+        root.xdgDirs = null;
+        root.rebuildPlaces();
+    }
+
+    // Des lignes XDG_DOCUMENTS_DIR="$HOME/Documents" ; un dossier réglé sur
+    // le dossier personnel lui-même est désactivé.
+    function parseUserDirs(text) {
+        var dirs = {};
+        var homeVirt = root.remote ? root.machine.home : root.localHome;
+        text.split("\n").forEach(line => {
+            var m = line.match(/^\s*XDG_([A-Z]+)_DIR\s*=\s*"(.*)"\s*$/);
+            if (!m)
+                return;
+            var v = m[2].replace(/^\$HOME/, homeVirt).replace(/\/+$/, "");
+            if (v === "" || v === homeVirt || v.charAt(0) !== "/")
+                return;
+            dirs[m[1]] = root.remote ? root.rootDir + v : v;
+        });
+        root.xdgDirs = dirs;
+        root.rebuildPlaces();
+    }
+
+    function rebuildPlaces() {
+        // Les dossiers présents du dossier personnel (pour les noms par
+        // défaut, et pour écarter un dossier XDG qui n'existe pas).
+        var present = {};
+        for (var i = 0; i < homeDirs.count; i++)
+            present[homeDirs.get(i, "filePath")] = true;
+
+        var out = [{ label: I18n.tr("explorer.home"), icon: root.themed(["user-home", "folder-home", "folder"], "folder"),
+                     glyph: root.glyph("home"), path: root.home, exact: true }];
+        var byPath = {};
+        root.xdgKinds.forEach(kind => {
+            var p = "";
+            if (root.xdgDirs) {
+                p = root.xdgDirs[kind.key] || "";
+                // Sous le dossier personnel, il doit exister ; ailleurs, on
+                // lui fait confiance.
+                if (p !== "" && root.parentOf(p) === root.home && !present[p])
+                    p = "";
+            } else {
+                for (var k = 0; k < kind.names.length && p === ""; k++)
+                    if (present[root.home + "/" + kind.names[k]])
+                        p = root.home + "/" + kind.names[k];
+            }
+            // Deux sortes sur un même dossier (Images et Vidéos) : un favori.
+            if (p === "" || byPath[p])
+                return;
+            byPath[p] = kind;
+            out.push({ label: p.substring(p.lastIndexOf("/") + 1), icon: root.xdgIcon(kind),
+                       glyph: root.glyph(kind.glyph), path: p });
+        });
+        // Les autres clés du fichier (XDG_<NOM>_DIR ajoutés à la main ou par
+        // home-manager, xdg.userDirs.extraConfig) : à la suite, en dossier.
+        if (root.xdgDirs) {
+            var knownKeys = root.xdgKinds.map(kind => kind.key);
+            Object.keys(root.xdgDirs).sort().forEach(key => {
+                var p = root.xdgDirs[key];
+                if (knownKeys.indexOf(key) >= 0 || byPath[p]
+                        || (root.parentOf(p) === root.home && !present[p]))
+                    return;
+                var kind = { key: key, icons: [], glyph: "folder" };
+                byPath[p] = kind;
+                out.push({ label: p.substring(p.lastIndexOf("/") + 1), icon: root.xdgIcon(kind),
+                           glyph: root.glyph(kind.glyph), path: p });
+            });
+        }
+        root.xdgByPath = byPath;
         root.places = out.concat(root.extraPlaces);
     }
     // Le thème recoloré (nouvel accent) : les URL des icônes changent.
     Connections {
         target: Theme
         function on_IconsChanged() { root.rebuildPlaces(); }
+    }
+    // La langue chargée (ou changée) : le libellé du dossier personnel suit.
+    Connections {
+        target: I18n
+        function onDictsChanged() { root.rebuildPlaces(); }
+        function onLangChanged() { root.rebuildPlaces(); }
     }
 
     FolderListModel {
@@ -680,6 +1184,8 @@ Item {
         onTriggered: root.refreshDisks()
     }
     onMachineChanged: {
+        root.backStack = [];
+        root.forwardStack = [];
         root.disks = [];
         root.refreshDisks();
     }
@@ -712,15 +1218,55 @@ Item {
         showDirsFirst: true
         showDotAndDotDot: false
         showHidden: root.showHidden
-        sortField: FolderListModel.Name
+        sortField: root.sortKey === 1 ? FolderListModel.Size
+                 : root.sortKey === 2 ? FolderListModel.Time : FolderListModel.Name
+        sortReversed: root.sortReversed
         sortCaseSensitive: false
+        onCountChanged: Qt.callLater(root.rebuildEntries)
+        onStatusChanged: Qt.callLater(root.rebuildEntries)
+    }
+    // Un fichier renommé ou retouché sur le disque (le nombre ne bouge pas),
+    // un autre tri : la liste se relit aussi.
+    Connections {
+        target: folder
+        function onDataChanged() { Qt.callLater(root.rebuildEntries); }
+        function onModelReset() { Qt.callLater(root.rebuildEntries); }
+        function onRowsMoved() { Qt.callLater(root.rebuildEntries); }
     }
 
-    // Le bouton « précédent » de la souris remonte.
+    // Les boutons « précédent » et « suivant » de la souris parcourent
+    // l'historique.
     MouseArea {
         anchors.fill: parent
-        acceptedButtons: Qt.BackButton
-        onClicked: root.up()
+        acceptedButtons: Qt.BackButton | Qt.ForwardButton
+        onClicked: (mouse) => {
+            if (mouse.button === Qt.BackButton)
+                root.back();
+            else
+                root.forward();
+        }
+    }
+
+    // Les raccourcis de tout l'onglet : ce que la grille, le champ ou un
+    // bouton n'a pas pris remonte jusqu'ici.
+    Keys.onPressed: (event) => {
+        var ctrl = (event.modifiers & Qt.ControlModifier) !== 0;
+        var alt = (event.modifiers & Qt.AltModifier) !== 0;
+        if ((ctrl && event.key === Qt.Key_L) || event.key === Qt.Key_F6)
+            root.startEditing("");
+        else if (ctrl && event.key === Qt.Key_F)
+            root.openFilter();
+        else if (ctrl && event.key === Qt.Key_H)
+            root.showHidden = !root.showHidden;
+        else if (alt && event.key === Qt.Key_Left)
+            root.back();
+        else if (alt && event.key === Qt.Key_Right)
+            root.forward();
+        else if (alt && event.key === Qt.Key_Up)
+            root.up();
+        else
+            return;
+        event.accepted = true;
     }
 
     // ── La machine, au-dessus des favoris ────────────────────────
@@ -778,9 +1324,9 @@ Item {
 
     Rectangle {
         id: placesCard
-        y: root.compact ? header.y + root.headerH + 6 : root.switchH + 8
+        y: root.compact ? header.y + root.headerH + 8 : root.switchH + 8
         width: root.compact ? root.width : root.placesW
-        height: root.compact ? 34 : parent.height - y - root.diskSpace
+        height: root.compact ? 30 : parent.height - y - root.diskSpace
         radius: Theme.radius
         color: root.compact ? "transparent" : Qt.alpha(Theme.textPrimary, 0.05)
 
@@ -788,7 +1334,7 @@ Item {
         ListView {
             anchors.fill: parent
             anchors.margins: root.compact ? 0 : 6
-            spacing: root.compact ? 4 : 1
+            spacing: root.compact ? 5 : 1
             clip: true
             boundsBehavior: Flickable.StopAtBounds
             orientation: root.compact ? ListView.Horizontal : ListView.Vertical
@@ -801,35 +1347,51 @@ Item {
                 readonly property bool here: root.path === placeRow.modelData.path
                                              || (!placeRow.modelData.exact
                                                  && root.path.indexOf(placeRow.modelData.path + "/") === 0)
-                width: root.compact ? placeLabel.implicitWidth + 10 + 18 + 9 + 12 : ListView.view.width
-                height: root.compact ? 34 : root.placeH
+                // Étroit, des boutons-icônes, sans nom : le favori où l'on
+                // est s'allume.
+                readonly property bool labelled: !root.compact
+                width: !root.compact ? placesCard.width - 12
+                     : placeRow.labelled ? placeLabel.implicitWidth + 11 + 16 + 8 + 12 : 38
+                height: root.compact ? 30 : root.placeH
+                Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
 
+                // Étroit, des pastilles : un liseré tant qu'elles sont éteintes.
                 Rectangle {
                     anchors.fill: parent
-                    radius: Theme.radiusSmall
+                    radius: root.compact ? height / 2 : Theme.radiusSmall
                     color: placeRow.here ? Theme.selectedFill
-                                         : Qt.alpha(Theme.textPrimary, placeMa.containsMouse ? 0.07 : 0)
+                                         : Qt.alpha(Theme.textPrimary, placeMa.containsMouse ? 0.08
+                                                                       : root.compact ? 0.03 : 0)
+                    border.width: root.compact && !placeRow.here ? 1 : 0
+                    border.color: Theme.dividerColor
                     Behavior on color { ColorAnimation { duration: 140 } }
                 }
 
                 FileIcon {
                     id: placeIcon
                     anchors.left: parent.left
-                    anchors.leftMargin: 10
+                    anchors.leftMargin: root.compact ? 11 : 10
                     anchors.verticalCenter: parent.verticalCenter
-                    iconSize: 18
-                    source: placeRow.modelData.icon
+                    iconSize: root.compact ? 16 : 18
+                    // Étroit, le glyphe de la sorte (plus lisible qu'un
+                    // dossier du thème à cette taille), teint ; nixos garde
+                    // son logo.
+                    source: root.compact && placeRow.modelData.glyph ? placeRow.modelData.glyph
+                                                                      : placeRow.modelData.icon
+                    tint: placeRow.here ? Theme.accentColor : Theme.textSecondary
                 }
 
                 Text {
                     id: placeLabel
                     anchors.left: placeIcon.right
-                    anchors.leftMargin: 9
-                    anchors.right: parent.right
-                    anchors.rightMargin: 8
+                    anchors.leftMargin: root.compact ? 8 : 9
                     anchors.verticalCenter: parent.verticalCenter
+                    // Étroit, la pastille prend la largeur du nom (rien à
+                    // élider) ; large, le nom tient dans la colonne.
+                    width: root.compact ? implicitWidth : placeRow.width - x - 8
+                    visible: placeRow.labelled
                     text: placeRow.modelData.label
-                    elide: Text.ElideRight
+                    elide: root.compact ? Text.ElideNone : Text.ElideRight
                     font.family: "Inter"
                     font.pixelSize: 12
                     font.weight: placeRow.here ? Font.DemiBold : Font.Medium
@@ -959,7 +1521,11 @@ Item {
         }
     }
 
-    // ── Le chemin et les actions ─────────────────────────────────
+    // ── La navigation et le chemin ───────────────────────────────
+    //   (←) (→) (↑)  ( ▭  ~ › code › karenine               ✎ )  (⌕)
+    // Le chemin se lit en segments cliquables. Un clic à côté d'eux, le
+    // crayon, Ctrl+L, ou « / » et « ~ » tapés dans la liste le rendent
+    // éditable (cf. startEditing). La loupe le change en filtre du dossier.
     Item {
         id: header
         x: root.sideW
@@ -967,119 +1533,825 @@ Item {
         width: root.width - x
         height: root.headerH
 
-        GlassButton {
-            id: upBtn
+        Row {
+            id: nav
+            anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            implicitHeight: 30
-            icon: "../assets/icons/up.svg"
-            opacity: root.path === root.rootDir ? 0.4 : 1
-            onClicked: root.up()
+            spacing: 4
+
+            GlassButton {
+                implicitHeight: 30
+                icon: "../assets/icons/arrow-left.svg"
+                opacity: root.backStack.length > 0 ? 1 : 0.35
+                onClicked: root.back()
+            }
+            GlassButton {
+                implicitHeight: 30
+                icon: "../assets/icons/arrow-right.svg"
+                opacity: root.forwardStack.length > 0 ? 1 : 0.35
+                onClicked: root.forward()
+            }
+            GlassButton {
+                implicitHeight: 30
+                icon: "../assets/icons/up.svg"
+                opacity: root.path === root.rootDir ? 0.35 : 1
+                onClicked: root.up()
+            }
         }
 
-        // Les segments ; trop longs, le début glisse hors de vue et la fin
-        // (le dossier courant) reste lisible.
-        Flickable {
-            id: crumbView
-            anchors.left: upBtn.right
+        Rectangle {
+            id: address
+            // Ce que montre la barre : le champ du chemin, celui du filtre,
+            // ou les segments.
+            readonly property bool typing: root.editing || root.filtering
+            anchors.left: nav.right
             anchors.leftMargin: 8
-            anchors.right: actions.left
-            anchors.rightMargin: 8
+            anchors.right: searchBtn.left
+            anchors.rightMargin: 6
             anchors.verticalCenter: parent.verticalCenter
-            height: 26
-            contentWidth: crumbRow.width
-            contentX: Math.max(0, contentWidth - width)
-            flickableDirection: Flickable.HorizontalFlick
-            boundsBehavior: Flickable.StopAtBounds
-            clip: true
+            height: 30
+            radius: Theme.radiusSmall
+            color: address.typing ? Theme.bgInput
+                                  : Qt.alpha(Theme.textPrimary, addressMa.containsMouse ? 0.08 : 0.05)
+            border.width: 1
+            border.color: root.addressError ? Qt.alpha(Theme.colorDanger, 0.75)
+                        : address.typing ? Qt.alpha(Theme.accentColor, 0.55) : "transparent"
+            Behavior on color { ColorAnimation { duration: 140 } }
+            Behavior on border.color { ColorAnimation { duration: 140 } }
 
-            Row {
-                id: crumbRow
-                height: parent.height
-                spacing: 2
+            // Un chemin introuvable : la barre fait non de la tête.
+            transform: Translate { id: shakeShift }
+            SequentialAnimation {
+                id: shake
+                NumberAnimation { target: shakeShift; property: "x"; to: -6; duration: 45 }
+                NumberAnimation { target: shakeShift; property: "x"; to: 5; duration: 70 }
+                NumberAnimation { target: shakeShift; property: "x"; to: -3; duration: 60 }
+                NumberAnimation { target: shakeShift; property: "x"; to: 0; duration: 50 }
+            }
 
-                Repeater {
-                    model: root.crumbs
+            // Tout ce qui n'est pas un segment rend le chemin éditable.
+            MouseArea {
+                id: addressMa
+                anchors.fill: parent
+                hoverEnabled: true
+                enabled: !address.typing
+                cursorShape: Qt.IBeamCursor
+                onClicked: root.startEditing("")
+            }
 
-                    Row {
-                        id: crumb
-                        required property var modelData
-                        required property int index
-                        readonly property bool last: crumb.index === root.crumbs.length - 1
-                        height: crumbRow.height
-                        spacing: 2
+            NixIcon {
+                id: addressGlyph
+                anchors.left: parent.left
+                anchors.leftMargin: 10
+                anchors.verticalCenter: parent.verticalCenter
+                iconSize: 14
+                source: root.filtering && !root.editing ? "../assets/icons/search.svg"
+                                                        : "../assets/icons/folder.svg"
+                color: address.typing ? Theme.accentColor : Theme.textDim
+            }
 
-                        Text {
-                            visible: crumb.index > 0
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: "›"
-                            font.family: "Inter"
-                            font.pixelSize: 13
-                            color: Theme.textDim
-                        }
+            // ── Les segments ──
+            // Trop longs, le début glisse hors de vue et la fin (le dossier
+            // courant) reste lisible.
+            Flickable {
+                id: crumbView
+                visible: !address.typing
+                anchors.left: addressGlyph.right
+                anchors.leftMargin: 4
+                anchors.right: editHint.left
+                anchors.rightMargin: 4
+                anchors.verticalCenter: parent.verticalCenter
+                height: 26
+                contentWidth: crumbRow.width
+                contentX: Math.max(0, contentWidth - width)
+                interactive: contentWidth > width
+                flickableDirection: Flickable.HorizontalFlick
+                boundsBehavior: Flickable.StopAtBounds
+                clip: true
 
-                        Rectangle {
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: crumbLabel.implicitWidth + 14
-                            height: 24
-                            radius: 6
-                            color: Qt.alpha(Theme.textPrimary, crumbMa.containsMouse && !crumb.last ? 0.08 : 0)
-                            Behavior on color { ColorAnimation { duration: 140 } }
+                // Le vide autour des segments, dans la vue : l'édition aussi.
+                MouseArea {
+                    z: -1
+                    width: Math.max(crumbView.width, crumbRow.width)
+                    height: crumbView.height
+                    cursorShape: Qt.IBeamCursor
+                    onClicked: root.startEditing("")
+                }
 
-                            Text {
-                                id: crumbLabel
-                                anchors.centerIn: parent
-                                text: crumb.modelData.label
-                                font.family: "Inter"
-                                font.pixelSize: 12
-                                font.weight: crumb.last ? Font.DemiBold : Font.Medium
-                                color: crumb.last ? Theme.textPrimary : Theme.textSecondary
+                Row {
+                    id: crumbRow
+                    height: parent.height
+                    spacing: 0
+
+                    Repeater {
+                        model: root.crumbs
+
+                        Row {
+                            id: crumb
+                            required property var modelData
+                            required property int index
+                            readonly property bool last: crumb.index === root.crumbs.length - 1
+                            height: crumbRow.height
+
+                            NixIcon {
+                                visible: crumb.index > 0
+                                anchors.verticalCenter: parent.verticalCenter
+                                iconSize: 9
+                                source: "../assets/icons/chevron-down.svg"
+                                rotation: -90
+                                color: Theme.textDim
                             }
 
-                            MouseArea {
-                                id: crumbMa
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: crumb.last ? Qt.ArrowCursor : Qt.PointingHandCursor
-                                onClicked: root.go(crumb.modelData.path)
+                            Rectangle {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: crumbLabel.implicitWidth + 12
+                                height: 22
+                                radius: 5
+                                color: Qt.alpha(Theme.textPrimary, crumbMa.containsMouse && !crumb.last ? 0.1 : 0)
+                                Behavior on color { ColorAnimation { duration: 120 } }
+
+                                Text {
+                                    id: crumbLabel
+                                    anchors.centerIn: parent
+                                    text: crumb.modelData.label
+                                    font.family: "Inter"
+                                    font.pixelSize: 12
+                                    font.weight: crumb.last ? Font.DemiBold : Font.Medium
+                                    color: crumb.last ? Theme.textPrimary : Theme.textSecondary
+                                }
+
+                                MouseArea {
+                                    id: crumbMa
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: crumb.last ? Qt.IBeamCursor : Qt.PointingHandCursor
+                                    onClicked: crumb.last ? root.startEditing("") : root.go(crumb.modelData.path)
+                                }
                             }
                         }
                     }
                 }
             }
+
+            // Le crayon, au survol : la barre s'édite.
+            NixIcon {
+                id: editHint
+                visible: !address.typing
+                anchors.right: parent.right
+                anchors.rightMargin: 9
+                anchors.verticalCenter: parent.verticalCenter
+                iconSize: 13
+                source: "../assets/icons/pencil.svg"
+                color: Theme.textSecondary
+                opacity: addressMa.containsMouse ? 0.9 : 0
+                Behavior on opacity { NumberAnimation { duration: 140 } }
+            }
+
+            // ── Le chemin, tapé ──
+            TextInput {
+                id: pathInput
+                visible: root.editing
+                anchors.left: addressGlyph.right
+                anchors.leftMargin: 8
+                anchors.right: parent.right
+                anchors.rightMargin: 10
+                anchors.verticalCenter: parent.verticalCenter
+                verticalAlignment: TextInput.AlignVCenter
+                font.family: "Inter"
+                font.pixelSize: 12
+                font.weight: Font.Medium
+                color: Theme.textPrimary
+                selectionColor: Qt.alpha(Theme.accentColor, 0.45)
+                selectedTextColor: Theme.textPrimary
+                selectByMouse: true
+                clip: true
+
+                onTextEdited: root.pathEdited(pathInput.text)
+                onAccepted: root.acceptPath()
+                onActiveFocusChanged: if (!activeFocus && root.editing) root.finishEditing()
+
+                Keys.onPressed: (event) => {
+                    var n = root.suggestions.length;
+                    if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+                        root.complete(event.key === Qt.Key_Backtab);
+                    } else if (event.key === Qt.Key_Down && n > 0) {
+                        root.suggestIndex = (root.suggestIndex + 1) % n;
+                    } else if (event.key === Qt.Key_Up && n > 0) {
+                        root.suggestIndex = root.suggestIndex <= 0 ? n - 1 : root.suggestIndex - 1;
+                    } else if (event.key === Qt.Key_Escape) {
+                        if (root.suggestIndex >= 0)
+                            root.suggestIndex = -1;
+                        else
+                            root.finishEditing(true);
+                    } else {
+                        return;
+                    }
+                    event.accepted = true;
+                }
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: pathInput.text === ""
+                    text: I18n.tr("explorer.pathPlaceholder")
+                    font: pathInput.font
+                    color: Theme.textDim
+                }
+            }
+
+            // ── Le filtre ──
+            TextInput {
+                id: filterInput
+                visible: root.filtering && !root.editing
+                anchors.left: addressGlyph.right
+                anchors.leftMargin: 8
+                anchors.right: filterClear.left
+                anchors.rightMargin: 6
+                anchors.verticalCenter: parent.verticalCenter
+                verticalAlignment: TextInput.AlignVCenter
+                font.family: "Inter"
+                font.pixelSize: 12
+                font.weight: Font.Medium
+                color: Theme.textPrimary
+                selectionColor: Qt.alpha(Theme.accentColor, 0.45)
+                selectedTextColor: Theme.textPrimary
+                selectByMouse: true
+                clip: true
+
+                onTextEdited: root.filter = filterInput.text
+                onActiveFocusChanged: if (!activeFocus && filterInput.text === "") root.filterOpen = false
+                // Entrée : le seul résultat s'ouvre ; sinon la liste prend la main.
+                onAccepted: {
+                    if (root.entries.length === 1)
+                        root.activate(0);
+                    else
+                        root.focusGrid();
+                }
+                Keys.onPressed: (event) => {
+                    if (event.key === Qt.Key_Escape) {
+                        root.closeFilter();
+                    } else if (event.key === Qt.Key_Down) {
+                        root.focusGrid();
+                    } else {
+                        return;
+                    }
+                    event.accepted = true;
+                }
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: filterInput.text === ""
+                    text: I18n.tr("explorer.filter")
+                    font: filterInput.font
+                    color: Theme.textDim
+                }
+            }
+            Rectangle {
+                id: filterClear
+                visible: root.filtering && !root.editing
+                anchors.right: parent.right
+                anchors.rightMargin: 6
+                anchors.verticalCenter: parent.verticalCenter
+                width: 20
+                height: 20
+                radius: 10
+                color: Qt.alpha(Theme.textPrimary, filterClearMa.containsMouse ? 0.12 : 0)
+                NixIcon {
+                    anchors.centerIn: parent
+                    iconSize: 9
+                    source: "../assets/icons/close.svg"
+                    color: Theme.textSecondary
+                }
+                MouseArea {
+                    id: filterClearMa
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.closeFilter()
+                }
+            }
         }
 
-        Row {
-            id: actions
+        GlassButton {
+            id: searchBtn
             anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            implicitHeight: 30
+            icon: "../assets/icons/search.svg"
+            accent: root.filtering
+            onClicked: root.filtering ? root.closeFilter() : root.openFilter()
+        }
+    }
+
+    // Un titre de colonne de la liste : un clic trie par lui, un second
+    // inverse l'ordre.
+    component SortLabel: Item {
+        id: sortLabel
+        property string label
+        property int key
+        property bool alignRight: false
+        readonly property bool on: root.sortKey === sortLabel.key
+        implicitWidth: sortText.implicitWidth + 14
+        
+        Row {
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.right: sortLabel.alignRight ? parent.right : undefined
+            anchors.left: sortLabel.alignRight ? undefined : parent.left
+            layoutDirection: sortLabel.alignRight ? Qt.RightToLeft : Qt.LeftToRight
+            spacing: 4
+            Text {
+                id: sortText
+                anchors.verticalCenter: parent.verticalCenter
+                text: sortLabel.label
+                font.family: "Inter"
+                font.pixelSize: 10
+                font.weight: sortLabel.on ? Font.DemiBold : Font.Medium
+                font.letterSpacing: 0.3
+                color: sortLabel.on ? Theme.textSecondary
+                                    : sortMa.containsMouse ? Theme.textSecondary : Theme.textDim
+            }
+            NixIcon {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: sortLabel.on
+                iconSize: 8
+                source: "../assets/icons/chevron-down.svg"
+                rotation: root.sortReversed ? 180 : 0
+                color: Theme.textSecondary
+            }
+        }
+        MouseArea {
+            id: sortMa
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.sortBy(sortLabel.key)
+        }
+    }
+
+    // ── Le contenu du dossier ────────────────────────────────────
+    // En tuiles (large), ou en liste : l'icône, le nom, puis la taille et la
+    // date quand il y a la place ; les titres de colonnes trient.
+    Rectangle {
+        id: content
+        x: root.sideW
+        y: root.compact ? placesCard.y + placesCard.height + 8 : root.headerH + 8
+        width: root.width - x
+        height: root.height - y - root.diskSpace - root.footerH - 2
+        radius: Theme.radius
+        color: Qt.alpha(Theme.textPrimary, 0.03)
+        border.width: 1
+        border.color: Theme.dividerColor
+
+        // ── Les titres de colonnes ──
+        Item {
+            id: columnsHead
+            visible: root.listView
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: 5
+            height: root.listView ? 26 : 0
+
+            SortLabel {
+                height: parent.height
+                x: 38
+                label: I18n.tr("explorer.colName")
+                key: 0
+            }
+            SortLabel {
+                height: parent.height
+                visible: root.details
+                x: parent.width - root.dateW - root.sizeW - 18
+                width: root.sizeW
+                alignRight: true
+                label: I18n.tr("explorer.colSize")
+                key: 1
+            }
+            SortLabel {
+                height: parent.height
+                visible: root.details
+                x: parent.width - root.dateW - 10
+                width: root.dateW
+                alignRight: true
+                label: I18n.tr("explorer.colModified")
+                key: 2
+            }
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 1
+                color: Theme.dividerColor
+            }
+        }
+
+        // Vide, ou rien ne correspond au filtre.
+        Column {
+            anchors.centerIn: grid
+            visible: grid.count === 0
+            spacing: 10
+            NixIcon {
+                anchors.horizontalCenter: parent.horizontalCenter
+                iconSize: 30
+                source: root.filter !== "" ? "../assets/icons/search.svg" : "../assets/icons/folder.svg"
+                color: Theme.textDim
+                visible: folder.status !== FolderListModel.Loading
+            }
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: folder.status === FolderListModel.Loading ? I18n.tr("common.loading")
+                    : root.filter !== "" ? I18n.tr("explorer.noMatch", { q: root.filter })
+                    : I18n.tr("explorer.emptyFolder")
+                font.family: "Inter"
+                font.pixelSize: 12
+                color: Theme.textSecondary
+            }
+        }
+
+        // Hors de la grille : posé dedans, il défilerait avec les tuiles.
+        FocusRing {
+            anchors.fill: parent
+            watch: grid
+            radius: Theme.radius
+            gap: 2
+        }
+
+        GridView {
+            id: grid
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: columnsHead.bottom
+            anchors.bottom: parent.bottom
+            anchors.margins: 5
+            anchors.topMargin: root.listView ? 3 : 5
+
+            model: root.entries
+            readonly property int columns: root.listView ? 1 : Math.max(1, Math.floor(width / 104))
+            cellWidth: width / columns
+            cellHeight: root.listView ? 34 : 104
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            currentIndex: -1
+            highlightFollowsCurrentItem: false
+            keyNavigationEnabled: false
+            onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, GridView.Contain)
+
+            // Un arrêt de Tab ; la sélection apparaît en y arrivant.
+            activeFocusOnTab: true
+            onActiveFocusChanged: if (activeFocus && currentIndex < 0 && count > 0) currentIndex = 0
+
+            // Un clic dans le vide, sous les tuiles, vide la sélection.
+            MouseArea {
+                z: -1
+                width: grid.width
+                height: Math.max(grid.contentHeight, grid.height)
+                onClicked: {
+                    root.clearSelection();
+                    grid.forceActiveFocus();
+                }
+            }
+
+            // Les premières lettres d'un nom, tapées vite, y sautent.
+            property string typed: ""
+            Timer {
+                id: typedReset
+                interval: 900
+                onTriggered: grid.typed = ""
+            }
+            function jumpTo(prefix) {
+                var p = prefix.toLowerCase();
+                for (var i = 0; i < root.entries.length; i++) {
+                    if (root.entries[i].name.toLowerCase().indexOf(p) === 0) {
+                        grid.currentIndex = i;
+                        return;
+                    }
+                }
+            }
+
+            // Aller à `index` ; avec Maj, la sélection s'étend de l'ancre jusque-là.
+            function moveTo(index, extend) {
+                if (extend) {
+                    if (root.anchorIndex < 0)
+                        root.anchorIndex = Math.max(0, grid.currentIndex);
+                    root.selectRange(index);
+                }
+                grid.currentIndex = index;
+            }
+
+            // ← → restent dans la grille (le hub ne change pas d'onglet sous
+            // les doigts) ; ↑ depuis la première rangée en sort. Maj+flèches
+            // étendent la sélection, Espace ajoute ou retire, Ctrl+A prend tout ;
+            // Échap vide la sélection, puis le filtre. « / » ou « ~ » ouvrent
+            // le chemin à l'édition. Avec Alt, rien : c'est l'historique.
+            Keys.onPressed: (event) => {
+                if (event.modifiers & Qt.AltModifier)
+                    return;
+                var n = grid.count;
+                var i = grid.currentIndex;
+                var c = grid.columns;
+                var shift = (event.modifiers & Qt.ShiftModifier) !== 0;
+                var ctrl = (event.modifiers & Qt.ControlModifier) !== 0;
+                if (event.key === Qt.Key_Left && n > 0) {
+                    grid.moveTo(Math.max(0, i - 1), shift);
+                } else if (event.key === Qt.Key_Right && n > 0) {
+                    grid.moveTo(Math.min(n - 1, i + 1), shift);
+                } else if (event.key === Qt.Key_Up && i >= c) {
+                    grid.moveTo(i - c, shift);
+                } else if (event.key === Qt.Key_Down && n > 0 && i + c < n) {
+                    grid.moveTo(i < 0 ? 0 : i + c, shift);
+                } else if (event.key === Qt.Key_Home && n > 0) {
+                    grid.moveTo(0, shift);
+                } else if (event.key === Qt.Key_End && n > 0) {
+                    grid.moveTo(n - 1, shift);
+                } else if (event.key === Qt.Key_Space && i >= 0) {
+                    root.toggle(i);
+                } else if (ctrl && event.key === Qt.Key_A) {
+                    root.selectAll();
+                } else if (event.key === Qt.Key_Escape && root.selectedCount > 0) {
+                    root.clearSelection();
+                } else if (event.key === Qt.Key_Escape && root.filtering) {
+                    root.closeFilter();
+                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                    if (root.selectedCount > 1)
+                        root.openSelection();
+                    else
+                        root.activate(i);
+                } else if (event.key === Qt.Key_Backspace) {
+                    root.up();
+                    grid.currentIndex = 0;
+                } else if (!ctrl && (event.text === "/" || event.text === "~")) {
+                    root.startEditing(event.text);
+                } else if (event.text.length === 1 && event.text > " " && !ctrl) {
+                    grid.typed += event.text;
+                    typedReset.restart();
+                    grid.jumpTo(grid.typed);
+                } else {
+                    return;
+                }
+                event.accepted = true;
+            }
+
+            delegate: Item {
+                id: tile
+                required property int index
+                required property var modelData
+                readonly property string fileName: tile.modelData.name
+                readonly property string filePath: tile.modelData.path
+                readonly property bool fileIsDir: tile.modelData.isDir
+                readonly property bool hidden: tile.fileName.charAt(0) === "."
+
+                readonly property bool current: grid.currentIndex === tile.index
+                readonly property bool selected: root.isSelected(tile.filePath)
+                readonly property string icon: root.iconFor(tile.filePath, tile.fileIsDir,
+                                                            tile.modelData.suffix, tile.fileName)
+                // Une miniature (l'image elle-même), pas une icône du thème.
+                readonly property bool thumb: tile.icon === root.urlOf(tile.filePath)
+                // Ce qu'un glisser parti d'ici emporte.
+                readonly property var carried: root.dragPaths(tile.filePath)
+
+                width: grid.cellWidth
+                height: grid.cellHeight
+
+                // Sélectionnée : teintée franchement ; retenue au clavier :
+                // liserée ; survolée : à peine marquée.
+                Rectangle {
+                    anchors.fill: parent
+                    anchors.margins: root.listView ? 1 : 3
+                    radius: Theme.radiusSmall
+                    color: tile.selected ? Qt.alpha(Theme.accentColor, 0.2)
+                         : tileMa.containsMouse ? Qt.alpha(Theme.textPrimary, 0.06) : "transparent"
+                    border.width: tile.current && grid.activeFocus ? 1 : 0
+                    border.color: Qt.alpha(Theme.accentColor, 0.7)
+                    Behavior on color { ColorAnimation { duration: 110 } }
+                }
+
+                // La miniature d'une image, ou l'icône du thème (un glyphe à
+                // défaut : les dossiers à l'accent, les fichiers en retrait).
+                Item {
+                    id: tileImage
+                    x: root.listView ? 10 : (parent.width - width) / 2
+                    y: root.listView ? (parent.height - height) / 2 : 14
+                    width: root.listView ? 20 : 46
+                    height: width
+                    // Un fichier caché, un peu effacé.
+                    opacity: tile.hidden ? 0.55 : 1
+
+                    Rectangle {
+                        anchors.fill: parent
+                        anchors.margins: -1
+                        visible: tile.thumb
+                        radius: 4
+                        color: Qt.alpha(Theme.textPrimary, 0.06)
+                    }
+                    Image {
+                        anchors.fill: parent
+                        visible: tile.thumb
+                        source: tile.thumb ? tile.icon : ""
+                        sourceSize.width: 96
+                        sourceSize.height: 96
+                        fillMode: Image.PreserveAspectCrop
+                        asynchronous: true
+                        smooth: true
+                    }
+                    FileIcon {
+                        anchors.centerIn: parent
+                        visible: !tile.thumb
+                        iconSize: tileImage.width
+                        source: tile.thumb ? "" : tile.icon
+                        tint: tile.fileIsDir ? Theme.accentColor : Theme.textSecondary
+                    }
+                }
+
+                Text {
+                    id: tileName
+                    x: root.listView ? tileImage.x + tileImage.width + 10 : 6
+                    y: root.listView ? (parent.height - height) / 2 : tileImage.y + tileImage.height + 8
+                    width: root.listView
+                           ? parent.width - x - (root.details ? root.sizeW + root.dateW + 30 : 10)
+                           : parent.width - 12
+                    text: tile.fileName
+                    horizontalAlignment: root.listView ? Text.AlignLeft : Text.AlignHCenter
+                    wrapMode: root.listView ? Text.NoWrap : Text.WrapAnywhere
+                    maximumLineCount: root.listView ? 1 : 2
+                    elide: Text.ElideMiddle
+                    font.family: "Inter"
+                    font.pixelSize: root.listView ? 13 : 11
+                    font.weight: tile.fileIsDir ? Font.DemiBold : Font.Medium
+                    lineHeight: 0.95
+                    color: tile.hidden ? Theme.textSecondary : Theme.textPrimary
+                }
+
+                // La taille (des fichiers) et la date, en liste.
+                Text {
+                    visible: root.listView && root.details
+                    anchors.verticalCenter: parent.verticalCenter
+                    x: parent.width - root.dateW - root.sizeW - 18
+                    width: root.sizeW
+                    horizontalAlignment: Text.AlignRight
+                    text: tile.fileIsDir ? "—" : root.humanSize(tile.modelData.size)
+                    font.family: "Inter"
+                    font.pixelSize: 11
+                    font.features: { "tnum": 1 }
+                    color: tile.fileIsDir ? Theme.textSubtle : Theme.textDim
+                }
+                Text {
+                    visible: root.listView && root.details
+                    anchors.verticalCenter: parent.verticalCenter
+                    x: parent.width - root.dateW - 10
+                    width: root.dateW
+                    horizontalAlignment: Text.AlignRight
+                    text: root.shortDate(tile.modelData.modified)
+                    elide: Text.ElideLeft
+                    font.family: "Inter"
+                    font.pixelSize: 11
+                    font.features: { "tnum": 1 }
+                    color: Theme.textDim
+                }
+
+                // Le nombre d'éléments emportés, sur la tuile tenue : il figure
+                // aussi sur la vignette du glisser, capturée à l'appui.
+                Rectangle {
+                    anchors.horizontalCenter: tileImage.right
+                    anchors.verticalCenter: tileImage.bottom
+                    visible: tileMa.pressed && tile.carried.length > 1
+                    width: Math.max(20, badgeLabel.implicitWidth + 10)
+                    height: 20
+                    radius: 10
+                    color: Theme.glow(0)
+
+                    Text {
+                        id: badgeLabel
+                        anchors.centerIn: parent
+                        text: tile.carried.length
+                        font.family: "Inter"
+                        font.pixelSize: 11
+                        font.weight: Font.DemiBold
+                        color: Theme.selectedTextColor
+                    }
+                }
+
+                // Le porteur du glisser vers les autres applications. La tuile ne
+                // bouge pas : ce proxy invisible est la cible du drag, et son
+                // passage en Drag.active démarre le glisser système (le montage
+                // de dragType Automatic).
+                // Une tuile sélectionnée emporte toute la sélection.
+                Item {
+                    id: dragProxy
+                    width: tile.width
+                    height: tile.height
+                    opacity: 0
+
+                    Drag.active: tileMa.drag.active
+                    Drag.dragType: Drag.Automatic
+                    Drag.supportedActions: Qt.CopyAction
+                    Drag.proposedAction: Qt.CopyAction
+                    Drag.mimeData: ({
+                        "text/uri-list": tile.carried.map(p => root.urlOf(p) + "\r\n").join(""),
+                        "text/plain": tile.carried.join("\n")
+                    })
+
+                    Drag.onDragStarted: DragState.begin(tile.filePath)
+                    // Déposé dans une application : la barre s'efface pour lui
+                    // laisser la main (et le clavier). Annulé, elle reste.
+                    Drag.onDragFinished: (dropAction) => {
+                        DragState.end();
+                        dragProxy.x = 0;
+                        dragProxy.y = 0;
+                        if (dropAction !== Qt.IgnoreAction) {
+                            root.clearSelection();
+                            root.opened();
+                        }
+                    }
+                }
+
+                // Comme dans un gestionnaire de fichiers : un clic sélectionne
+                // la tuile seule, Ctrl+clic l'ajoute ou la retire, Maj+clic prend
+                // la plage depuis la dernière cliquée ; un double clic entre
+                // dans le dossier ou ouvre le fichier.
+                MouseArea {
+                    id: tileMa
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    drag.target: dragProxy
+                    drag.threshold: 10
+
+                    // La vignette du glisser : la tuile telle qu'elle est à
+                    // l'appui, avec le nombre d'éléments emportés.
+                    onPressed: {
+                        tile.grabToImage(function (result) {
+                            dragProxy.Drag.imageSource = result.url;
+                        });
+                    }
+                    // Filet de sécurité : un glisser annulé sans dragFinished ne
+                    // doit pas laisser la barre bloquée ouverte.
+                    onReleased: {
+                        DragState.end();
+                        dragProxy.x = 0;
+                        dragProxy.y = 0;
+                    }
+                    // N'est pas émis après un glissé.
+                    onClicked: (mouse) => {
+                        grid.forceActiveFocus();
+                        grid.currentIndex = tile.index;
+                        if (mouse.modifiers & Qt.ShiftModifier)
+                            root.selectRange(tile.index);
+                        else if (mouse.modifiers & Qt.ControlModifier)
+                            root.toggle(tile.index);
+                        else
+                            root.selectOnly(tile.index);
+                    }
+                    onDoubleClicked: {
+                        root.clearSelection();
+                        root.activate(tile.index);
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Le pied : où l'on en est, et l'affichage ─────────────────
+    //   24 éléments                                  (◉) (▦) (▭) (>_)
+    //   3 sélectionnés · 4,2 Mo  ×  (▯)
+    Item {
+        id: footer
+        x: root.sideW
+        y: content.y + content.height + 2
+        width: root.width - x
+        height: root.footerH
+
+        Row {
+            id: footerLeft
+            anchors.left: parent.left
+            anchors.leftMargin: 4
             anchors.verticalCenter: parent.verticalCenter
             spacing: 6
 
-            // La sélection en cours : combien, et de quoi la vider.
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.min(implicitWidth, footer.width - footerRight.width - 80)
+                elide: Text.ElideRight
+                text: root.selectedCount > 0
+                      ? I18n.trn("explorer.selected", root.selectedCount)
+                        + (root.selectedSize > 0 ? "  ·  " + root.humanSize(root.selectedSize) : "")
+                      : root.filter !== "" ? I18n.trn("explorer.matches", root.entries.length)
+                      : I18n.trn("explorer.items", root.entries.length)
+                font.family: "Inter"
+                font.pixelSize: 11
+                font.weight: root.selectedCount > 0 ? Font.DemiBold : Font.Medium
+                font.features: { "tnum": 1 }
+                color: root.selectedCount > 0 ? Theme.textPrimary : Theme.textDim
+            }
+            // Vider la sélection.
             Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: root.selectedCount > 0
-                width: countLabel.implicitWidth + 36
-                height: 30
-                radius: Theme.radiusSmall
-                color: Qt.alpha(Theme.glow(0), clearMa.containsMouse ? 0.26 : 0.18)
-                Behavior on color { ColorAnimation { duration: 140 } }
-
-                Text {
-                    id: countLabel
-                    anchors.left: parent.left
-                    anchors.leftMargin: 12
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: I18n.trn("explorer.selected", root.selectedCount)
-                    font.family: "Inter"
-                    font.pixelSize: 12
-                    font.weight: Font.Medium
-                    color: Theme.textPrimary
-                }
+                width: 20
+                height: 20
+                radius: 10
+                color: Qt.alpha(Theme.textPrimary, clearMa.containsMouse ? 0.12 : 0.05)
                 NixIcon {
-                    anchors.right: parent.right
-                    anchors.rightMargin: 11
-                    anchors.verticalCenter: parent.verticalCenter
-                    iconSize: 10
+                    anchors.centerIn: parent
+                    iconSize: 8
                     source: "../assets/icons/close.svg"
                     color: Theme.textSecondary
                 }
@@ -1091,26 +2363,39 @@ Item {
                     onClicked: root.clearSelection()
                 }
             }
-
             // La sélection vers le téléphone (KDE Connect) ; estompé tant
             // qu'aucun n'est à portée.
             GlassButton {
-                implicitHeight: 30
+                anchors.verticalCenter: parent.verticalCenter
                 visible: root.selectedCount > 0
+                implicitHeight: 24
                 icon: "../assets/icons/phone.svg"
                 opacity: root.phone ? 1 : 0.4
                 onClicked: root.sendToPhone()
             }
+        }
+
+        Row {
+            id: footerRight
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 4
 
             // Les fichiers cachés : allumé, ils apparaissent.
             GlassButton {
-                implicitHeight: 30
+                implicitHeight: 24
                 icon: "../assets/icons/eye.svg"
                 accent: root.showHidden
                 onClicked: root.showHidden = !root.showHidden
             }
+            // Tuiles ou liste.
             GlassButton {
-                implicitHeight: 30
+                implicitHeight: 24
+                icon: Widgets.explorerListView ? "../assets/icons/view-grid.svg" : "../assets/icons/view-list.svg"
+                onClicked: Widgets.explorerListView = !Widgets.explorerListView
+            }
+            GlassButton {
+                implicitHeight: 24
                 icon: "../assets/icons/folder.svg"
                 onClicked: {
                     DefaultApps.openInExplorer(root.path);
@@ -1118,7 +2403,7 @@ Item {
                 }
             }
             GlassButton {
-                implicitHeight: 30
+                implicitHeight: 24
                 icon: "../assets/icons/terminal.svg"
                 onClicked: {
                     // À distance : une session ssh, dans le même dossier.
@@ -1133,321 +2418,118 @@ Item {
         }
     }
 
-    // ── Le contenu du dossier ────────────────────────────────────
-    Text {
-        anchors.centerIn: grid
-        visible: grid.count === 0
-        text: folder.status === FolderListModel.Loading ? "…" : I18n.tr("explorer.emptyFolder")
-        font.family: "Inter"
-        font.pixelSize: 13
-        color: Theme.textSecondary
-    }
+    // ── Les propositions, sous le chemin tapé ────────────────────
+    //   ( ~/code/ka|                                   )
+    //   ╭──────────────────────────────────────────────╮
+    //   │ ▭ karenine                                   │
+    //   │ ▭ kakoune                                    │
+    //   │ Tab complète · Entrée ouvre · Échap annule   │
+    //   ╰──────────────────────────────────────────────╯
+    Rectangle {
+        id: suggestBox
+        visible: root.editing && root.suggestions.length > 0
+        x: header.x + address.x
+        y: header.y + header.height + 4
+        z: 30
+        width: address.width
+        height: suggestCol.implicitHeight + 10
+        radius: Theme.radiusSmall
+        color: Theme.bgElevated
+        border.width: 1
+        border.color: Qt.alpha(Theme.accentColor, 0.3)
 
-    // Hors de la grille : posé dedans, il défilerait avec les tuiles.
-    FocusRing {
-        anchors.fill: grid
-        watch: grid
-        radius: Theme.radius
-        gap: 2
-    }
+        Column {
+            id: suggestCol
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: 5
 
-    GridView {
-        id: grid
-        x: root.sideW
-        y: root.compact ? placesCard.y + placesCard.height + 8 : root.headerH + 8
-        width: root.width - x
-        height: root.height - y - root.diskSpace
+            Repeater {
+                model: root.suggestions
 
-        model: folder
-        // Étroit : une ligne par élément, l'icône puis le nom.
-        readonly property int columns: root.compact ? 1 : Math.max(1, Math.floor(width / 96))
-        cellWidth: width / columns
-        cellHeight: root.compact ? 38 : 88
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
-        currentIndex: -1
-        highlightFollowsCurrentItem: false
-        keyNavigationEnabled: false
-        onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, GridView.Contain)
+                Rectangle {
+                    id: sugg
+                    required property var modelData
+                    required property int index
+                    readonly property bool on: root.suggestIndex === sugg.index
+                    width: suggestCol.width
+                    height: 28
+                    radius: 6
+                    color: sugg.on ? Theme.selectedFill
+                                   : Qt.alpha(Theme.textPrimary, suggMa.containsMouse ? 0.06 : 0)
 
-        // Un arrêt de Tab ; la sélection apparaît en y arrivant.
-        activeFocusOnTab: true
-        onActiveFocusChanged: if (activeFocus && currentIndex < 0 && count > 0) currentIndex = 0
-
-        // Un clic dans le vide, sous les tuiles, vide la sélection.
-        MouseArea {
-            z: -1
-            width: grid.width
-            height: Math.max(grid.contentHeight, grid.height)
-            onClicked: root.clearSelection()
-        }
-
-        // Les premières lettres d'un nom, tapées vite, y sautent.
-        property string typed: ""
-        Timer {
-            id: typedReset
-            interval: 900
-            onTriggered: grid.typed = ""
-        }
-        function jumpTo(prefix) {
-            var p = prefix.toLowerCase();
-            for (var i = 0; i < folder.count; i++) {
-                if (String(folder.get(i, "fileName")).toLowerCase().indexOf(p) === 0) {
-                    grid.currentIndex = i;
-                    return;
-                }
-            }
-        }
-
-        // Aller à `index` ; avec Maj, la sélection s'étend de l'ancre jusque-là.
-        function moveTo(index, extend) {
-            if (extend) {
-                if (root.anchorIndex < 0)
-                    root.anchorIndex = Math.max(0, grid.currentIndex);
-                root.selectRange(index);
-            }
-            grid.currentIndex = index;
-        }
-
-        // ← → restent dans la grille (le hub ne change pas d'onglet sous
-        // les doigts) ; ↑ depuis la première rangée en sort. Maj+flèches
-        // étendent la sélection, Espace ajoute ou retire, Ctrl+A prend tout ;
-        // Échap vide la sélection, puis rend le clavier au champ.
-        Keys.onPressed: (event) => {
-            var n = grid.count;
-            var i = grid.currentIndex;
-            var c = grid.columns;
-            var shift = (event.modifiers & Qt.ShiftModifier) !== 0;
-            var ctrl = (event.modifiers & Qt.ControlModifier) !== 0;
-            if (event.key === Qt.Key_Left && n > 0) {
-                grid.moveTo(Math.max(0, i - 1), shift);
-            } else if (event.key === Qt.Key_Right && n > 0) {
-                grid.moveTo(Math.min(n - 1, i + 1), shift);
-            } else if (event.key === Qt.Key_Up && i >= c) {
-                grid.moveTo(i - c, shift);
-            } else if (event.key === Qt.Key_Down && n > 0 && i + c < n) {
-                grid.moveTo(i < 0 ? 0 : i + c, shift);
-            } else if (event.key === Qt.Key_Home && n > 0) {
-                grid.moveTo(0, shift);
-            } else if (event.key === Qt.Key_End && n > 0) {
-                grid.moveTo(n - 1, shift);
-            } else if (event.key === Qt.Key_Space && i >= 0) {
-                root.toggle(i);
-            } else if (ctrl && event.key === Qt.Key_A) {
-                root.selectAll();
-            } else if (event.key === Qt.Key_Escape && root.selectedCount > 0) {
-                root.clearSelection();
-            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                if (root.selectedCount > 1)
-                    root.openSelection();
-                else
-                    root.activate(i);
-            } else if (event.key === Qt.Key_Backspace) {
-                root.up();
-                grid.currentIndex = 0;
-            } else if (event.text.length === 1 && event.text > " " && !ctrl
-                       && !(event.modifiers & Qt.AltModifier)) {
-                grid.typed += event.text;
-                typedReset.restart();
-                grid.jumpTo(grid.typed);
-            } else {
-                return;
-            }
-            event.accepted = true;
-        }
-
-        delegate: Item {
-            id: tile
-            required property int index
-            required property string fileName
-            required property string filePath
-            required property bool fileIsDir
-            required property string fileSuffix
-
-            readonly property bool current: grid.currentIndex === tile.index
-            readonly property bool selected: root.isSelected(tile.filePath)
-            readonly property string icon: root.iconFor(tile.filePath, tile.fileIsDir, tile.fileSuffix, tile.fileName)
-            // Une miniature (l'image elle-même), pas une icône du thème.
-            readonly property bool thumb: tile.icon === root.urlOf(tile.filePath)
-            // Ce qu'un glisser parti d'ici emporte.
-            readonly property var carried: root.dragPaths(tile.filePath)
-
-            width: grid.cellWidth
-            height: grid.cellHeight
-
-            // Sélectionnée : teintée franchement ; retenue au clavier : teintée ;
-            // survolée : à peine marquée.
-            Rectangle {
-                anchors.fill: parent
-                anchors.margins: 3
-                radius: Theme.radiusSmall
-                color: tile.selected ? Qt.alpha(Theme.accentColor, 0.22)
-                     : tile.current ? Theme.selectedFill : Theme.hoverOverlay
-                opacity: tile.current || tile.selected || tileMa.containsMouse ? 1 : 0
-                Behavior on opacity { NumberAnimation { duration: 120 } }
-                Behavior on color { ColorAnimation { duration: 120 } }
-            }
-
-            // La miniature d'une image, ou l'icône du thème (un glyphe à
-            // défaut : les dossiers à l'accent, les fichiers en retrait).
-            Item {
-                id: tileImage
-                x: root.compact ? 10 : (parent.width - width) / 2
-                y: root.compact ? (parent.height - height) / 2 : 10
-                width: root.compact ? 22 : 36
-                height: width
-                // Un fichier caché, un peu effacé.
-                opacity: tile.fileName.charAt(0) === "." ? 0.55 : 1
-
-                Image {
-                    anchors.fill: parent
-                    visible: tile.thumb
-                    source: tile.thumb ? tile.icon : ""
-                    sourceSize.width: 72
-                    sourceSize.height: 72
-                    fillMode: Image.PreserveAspectCrop
-                    asynchronous: true
-                    smooth: true
-                }
-                FileIcon {
-                    anchors.centerIn: parent
-                    visible: !tile.thumb
-                    iconSize: tileImage.width
-                    source: tile.thumb ? "" : tile.icon
-                    tint: tile.fileIsDir ? Theme.accentColor : Theme.textSecondary
-                }
-            }
-
-            Text {
-                x: root.compact ? tileImage.x + tileImage.width + 12 : 6
-                y: root.compact ? (parent.height - height) / 2 : tileImage.y + tileImage.height + 6
-                width: root.compact ? parent.width - x - 10 : parent.width - 12
-                text: tile.fileName
-                horizontalAlignment: root.compact ? Text.AlignLeft : Text.AlignHCenter
-                wrapMode: root.compact ? Text.NoWrap : Text.WrapAnywhere
-                maximumLineCount: root.compact ? 1 : 2
-                elide: Text.ElideMiddle
-                font.family: "Inter"
-                font.pixelSize: root.compact ? 13 : 11
-                font.weight: Font.Medium
-                lineHeight: 0.95
-                color: tile.fileName.charAt(0) === "." ? Theme.textSecondary : Theme.textPrimary
-            }
-
-            // Le nombre d'éléments emportés, sur la tuile tenue : il figure
-            // aussi sur la vignette du glisser, capturée à l'appui.
-            Rectangle {
-                anchors.horizontalCenter: tileImage.right
-                anchors.verticalCenter: tileImage.bottom
-                visible: tileMa.pressed && tile.carried.length > 1
-                width: Math.max(20, badgeLabel.implicitWidth + 10)
-                height: 20
-                radius: 10
-                color: Theme.glow(0)
-
-                Text {
-                    id: badgeLabel
-                    anchors.centerIn: parent
-                    text: tile.carried.length
-                    font.family: "Inter"
-                    font.pixelSize: 11
-                    font.weight: Font.DemiBold
-                    color: Theme.selectedTextColor
-                }
-            }
-
-            // Le porteur du glisser vers les autres applications. La tuile ne
-            // bouge pas : ce proxy invisible est la cible du drag, et son
-            // passage en Drag.active démarre le glisser système (le montage
-            // de dragType Automatic,).
-            // Une tuile sélectionnée emporte toute la sélection.
-            Item {
-                id: dragProxy
-                width: tile.width
-                height: tile.height
-                opacity: 0
-
-                Drag.active: tileMa.drag.active
-                Drag.dragType: Drag.Automatic
-                Drag.supportedActions: Qt.CopyAction
-                Drag.proposedAction: Qt.CopyAction
-                Drag.mimeData: ({
-                    "text/uri-list": tile.carried.map(p => root.urlOf(p) + "\r\n").join(""),
-                    "text/plain": tile.carried.join("\n")
-                })
-
-                Drag.onDragStarted: DragState.begin(tile.filePath)
-                // Déposé dans une application : la barre s'efface pour lui
-                // laisser la main (et le clavier). Annulé, elle reste.
-                Drag.onDragFinished: (dropAction) => {
-                    DragState.end();
-                    dragProxy.x = 0;
-                    dragProxy.y = 0;
-                    if (dropAction !== Qt.IgnoreAction) {
-                        root.clearSelection();
-                        root.opened();
+                    FileIcon {
+                        id: suggIcon
+                        anchors.left: parent.left
+                        anchors.leftMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        iconSize: 16
+                        source: root.iconFor(sugg.modelData.path, sugg.modelData.isDir, sugg.modelData.suffix,
+                                             sugg.modelData.name)
+                        tint: sugg.modelData.isDir ? Theme.accentColor : Theme.textSecondary
+                    }
+                    // Ce qui correspond à ce qu'on a tapé, en gras.
+                    Text {
+                        anchors.left: suggIcon.right
+                        anchors.leftMargin: 9
+                        anchors.right: parent.right
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        textFormat: Text.StyledText
+                        text: root.highlight(sugg.modelData.name, sugg.modelData.at, root.suggestBase.length)
+                              + (sugg.modelData.isDir ? "/" : "")
+                        elide: Text.ElideMiddle
+                        font.family: "Inter"
+                        font.pixelSize: 12
+                        color: sugg.on ? Theme.textPrimary : Theme.textSecondary
+                    }
+                    MouseArea {
+                        id: suggMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        // Un dossier se complète (on continue à taper), un
+                        // fichier s'ouvre dans son dossier.
+                        onClicked: {
+                            root.takeSuggestion(sugg.index);
+                            if (!sugg.modelData.isDir)
+                                root.acceptPath();
+                            else
+                                pathInput.forceActiveFocus();
+                        }
                     }
                 }
             }
 
-            // Comme dans un gestionnaire de fichiers : un clic sélectionne
-            // la tuile seule, Ctrl+clic l'ajoute ou la retire, Maj+clic prend
-            // la plage depuis la dernière cliquée ; un double clic entre
-            // dans le dossier ou ouvre le fichier.
-            MouseArea {
-                id: tileMa
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                drag.target: dragProxy
-                drag.threshold: 10
-
-                // La vignette du glisser : la tuile telle qu'elle est à
-                // l'appui, avec le nombre d'éléments emportés.
-                onPressed: {
-                    tile.grabToImage(function (result) {
-                        dragProxy.Drag.imageSource = result.url;
-                    });
-                }
-                // Filet de sécurité : un glisser annulé sans dragFinished ne
-                // doit pas laisser la barre bloquée ouverte.
-                onReleased: {
-                    DragState.end();
-                    dragProxy.x = 0;
-                    dragProxy.y = 0;
-                }
-                // N'est pas émis après un glissé.
-                onClicked: (mouse) => {
-                    grid.currentIndex = tile.index;
-                    if (mouse.modifiers & Qt.ShiftModifier)
-                        root.selectRange(tile.index);
-                    else if (mouse.modifiers & Qt.ControlModifier)
-                        root.toggle(tile.index);
-                    else
-                        root.selectOnly(tile.index);
-                }
-                onDoubleClicked: {
-                    root.clearSelection();
-                    root.activate(tile.index);
-                }
+            Text {
+                width: suggestCol.width
+                topPadding: 4
+                leftPadding: 8
+                bottomPadding: 1
+                text: I18n.tr("explorer.pathHint")
+                elide: Text.ElideRight
+                font.family: "Inter"
+                font.pixelSize: 10
+                color: Theme.textDim
             }
         }
     }
 
     // ── La connexion en cours, ou son échec ──────────────────────
-    // Une pastille en bas de la grille : le dossier d'avant reste affiché
+    // Une pastille en bas de la liste : le dossier d'avant reste affiché
     // en attendant. Un clic sur l'erreur la congédie. Hors connexion, elle
-    // dit aussi où en est l'envoi au téléphone.
+    // dit aussi où en est l'envoi au téléphone, ou un chemin introuvable.
     Rectangle {
         id: statusPill
         // La croix qui suit une erreur : sa place, écart compris.
         readonly property real closeWidth: root.error !== "" ? 10 + 10 : 0
-        anchors.horizontalCenter: grid.horizontalCenter
-        anchors.bottom: grid.bottom
-        anchors.bottomMargin: 8
+        anchors.horizontalCenter: content.horizontalCenter
+        anchors.bottom: content.bottom
+        anchors.bottomMargin: 10
         z: 5
         visible: root.connecting !== "" || root.error !== "" || root.notice !== ""
-        width: Math.min(statusLabel.implicitWidth + statusPill.closeWidth + 28, grid.width - 20)
+        width: Math.min(statusLabel.implicitWidth + statusPill.closeWidth + 28, content.width - 20)
         height: 30
         radius: Theme.radiusSmall
         color: Theme.bgElevated
