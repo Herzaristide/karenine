@@ -1,3 +1,0 @@
-StubSource {
-    type: "note"
-}

@@ -48,6 +48,14 @@ fn build_command(args: &[String]) -> Option<(serde_json::Value, bool)> {
             ),
             _ => return None,
         },
+        "claude" => match arg(2) {
+            None | Some("watch") => (json!({"cmd": "claude_watch"}), true),
+            Some("focus") => (
+                json!({"cmd": "claude_focus", "pid": arg(3)?.parse::<u32>().ok()?}),
+                false,
+            ),
+            _ => return None,
+        },
         "phone" => match arg(2) {
             None | Some("watch") => (json!({"cmd": "phone_watch"}), true),
             Some("screen") => (json!({"cmd": "phone_screen", "name": arg(3)?}), false),
@@ -155,6 +163,7 @@ fn usage() -> ! {
            record stop [audio|screen] | status | watch\n\
            servers [list] | watch [name]          Tailnet devices / their stats (ssh)\n\
            servers on|off|reboot <name>           Wake-on-LAN / power off, reboot (ssh)\n\
+           claude [watch] | focus <pid>           Claude Code sessions / bring one's terminal forward\n\
            phone [watch]                          KDE Connect phones: battery, network\n\
            phone ring|ping|browse|clipboard|accept|reject <device>\n\
            phone share <device> <path>\n\

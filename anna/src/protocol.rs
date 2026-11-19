@@ -39,8 +39,9 @@ pub enum Command {
     },
 
     // ── tailnet devices (tailscale + ssh) ─────────────────────────────────
-    /// Keep connection open; daemon pushes `{"servers":[ServerStats…]}` every
-    /// few seconds, re-reading the list each time. With `name`, only that
+    /// Keep connection open; daemon pushes `{"servers":[ServerStats…],
+    /// "local":{hostname, drives, services}}` every few seconds, re-reading
+    /// the list each time. With `name`, only that
     /// device is asked over ssh (the one the shell shows); the others report
     /// what Tailscale says of them.
     ServersWatch {
@@ -54,6 +55,22 @@ pub enum Command {
     ServersPower {
         name: String,
         action: String,
+    },
+
+    // ── Claude Code sessions (see claude/sessions.rs) ─────────────────────
+    /// Keep connection open; daemon pushes `{"claude":{"live":[Session…],
+    /// "recent":[Session…]}}` every 2 s.
+    ClaudeWatch,
+    /// What a Claude Code hook saw (the JSON it got on stdin), sent by
+    /// `anna claude-event`. No reply.
+    ClaudeEvent {
+        #[serde(default)]
+        event: serde_json::Value,
+    },
+    /// Bring the terminal running session process `pid` to the front:
+    /// `{"ok":true}` or `{"ok":false,"error":"…"}`.
+    ClaudeFocus {
+        pid: u32,
     },
 
     // ── phones (KDE Connect, see phone.rs) ────────────────────────────────

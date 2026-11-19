@@ -39,6 +39,7 @@
 //!   - theme    : accent/palette (set/mode/palette-color/get/watch)
 //!   - hwstats  : hardware stats (hwstats_get / hwstats_watch)
 //!   - servers  : tailnet devices, stats over ssh (servers_watch / servers_list)
+//!   - claude   : Claude Code sessions (claude_watch / claude_event / claude_focus)
 //!   - phone    : KDE Connect phones (phone_watch / phone_action)
 //!   - gesture  : webcam control (gesture_get/set/toggle/watch)
 //!   - pilot    : the desk pilot and its voice (pilot_*/voice_*)
@@ -105,7 +106,11 @@ async fn main() {
                 tokio::time::sleep(Duration::from_secs(3600)).await;
             }
         }
-        Some("gesture" | "pilot" | "voice" | "servers" | "phone" | "record") => {
+        // Run by a Claude Code hook: what it saw, to the daemon (claude/sessions.rs).
+        Some("claude-event") => {
+            claude::sessions::hook();
+        }
+        Some("gesture" | "pilot" | "voice" | "servers" | "phone" | "record" | "claude") => {
             client::run(&args);
         }
         // The « Notes » tab: works on its files directly, no daemon needed.
@@ -431,8 +436,13 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 interval.tick().await;
-                let stats = servers::sample_all(&mut memory, name.as_deref()).await;
-                let json = serde_json::json!({ "servers": stats }).to_string();
+                // This machine's disks and services ride along: Tailscale
+                // lists only the others.
+                let (stats, local) = tokio::join!(
+                    servers::sample_all(&mut memory, name.as_deref()),
+                    servers::sample_local()
+                );
+                let json = serde_json::json!({ "servers": stats, "local": local }).to_string();
                 if write_line(&mut writer, &json).await.is_err() {
                     break; // socket closed
                 }
@@ -449,6 +459,36 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
                 Ok(()) => serde_json::json!({ "ok": true }),
                 Err(e) => serde_json::json!({ "ok": false, "error": e }),
             };
+            let _ = write_line(&mut writer, &reply.to_string()).await;
+        }
+
+        // ── Claude Code sessions ─────────────────────────────────────────
+        Command::ClaudeWatch => {
+            let mut interval = tokio::time::interval(Duration::from_secs(2));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                interval.tick().await;
+                let snapshot = tokio::task::spawn_blocking(claude::sessions::sample)
+                    .await
+                    .unwrap_or_default();
+                let json = serde_json::json!({ "claude": snapshot }).to_string();
+                if write_line(&mut writer, &json).await.is_err() {
+                    break; // socket closed
+                }
+            }
+        }
+
+        Command::ClaudeEvent { event } => {
+            claude::sessions::record(&event);
+        }
+
+        Command::ClaudeFocus { pid } => {
+            let reply =
+                match tokio::task::spawn_blocking(move || claude::sessions::focus(pid)).await {
+                    Ok(Ok(())) => serde_json::json!({ "ok": true }),
+                    Ok(Err(e)) => serde_json::json!({ "ok": false, "error": e }),
+                    Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }),
+                };
             let _ = write_line(&mut writer, &reply.to_string()).await;
         }
 

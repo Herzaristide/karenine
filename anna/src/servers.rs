@@ -89,6 +89,40 @@ pub struct ServerStats {
     pub disks: Vec<RemoteDisk>,
     /// Its main GPU (NVIDIA, else the AMD card with the most VRAM).
     pub gpu: Option<RemoteGpu>,
+    /// Its physical disks, each with what its filesystems hold.
+    pub drives: Vec<Drive>,
+    /// The AI services it runs (ComfyUI, Ollama), when installed.
+    pub services: Vec<Service>,
+}
+
+/// A physical disk: what `lsblk` calls a `disk`, with the space its
+/// filesystems take and hold, whatever lies between (partitions, LUKS, LVM).
+#[derive(Serialize, Default, Clone, Debug, PartialEq)]
+pub struct Drive {
+    /// `nvme0n1`, `sda`.
+    pub name: String,
+    /// Its model, or its name when it has none.
+    pub model: String,
+    /// `NVMe`, `SSD`, `HDD` or `USB`.
+    pub kind: String,
+    /// Bytes: the disk, then the filesystems on it (size and used).
+    pub size: u64,
+    pub fs_size: u64,
+    pub fs_used: u64,
+    /// Where it is mounted (`/`, `/data`…), the main mount first.
+    pub mounts: Vec<String>,
+}
+
+/// A systemd service (`comfyui`, `ollama`) and what it is doing.
+#[derive(Serialize, Default, Clone, Debug, PartialEq)]
+pub struct Service {
+    pub name: String,
+    /// systemd's ActiveState: `active`, `inactive`, `failed`, `activating`…
+    pub state: String,
+    /// ComfyUI: prompts running or waiting, -1 when unknown.
+    pub queue: i32,
+    /// Ollama: the models loaded in memory.
+    pub models: Vec<String>,
 }
 
 #[derive(Serialize, Default, Clone, Debug, PartialEq)]
@@ -274,6 +308,18 @@ if [ \"$nv\" != suspended ] && [ \"$1\" = 1 ]; then \
 nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu \
 --format=csv,noheader,nounits 2>/dev/null | sed \"s/^/nvidia /\"; fi' sh";
 
+/// After the GPUs: the physical disks, the AI services and what they do.
+/// Plain commands only (the login shell may be fish); each may be missing,
+/// its section then stays empty.
+const EXTRA: &str = "echo @@; \
+lsblk -b -P -o NAME,PKNAME,TYPE,SIZE,FSSIZE,FSUSED,MODEL,ROTA,TRAN,MOUNTPOINT 2>/dev/null; echo @@; \
+systemctl show -p Id,LoadState,ActiveState comfyui.service ollama.service 2>/dev/null; echo @@; \
+curl -s -m 1 http://127.0.0.1:8188/queue 2>/dev/null; echo; echo @@; \
+curl -s -m 1 http://127.0.0.1:11434/api/ps 2>/dev/null; echo";
+
+/// The services worth showing, as systemd names them.
+const SERVICES: [&str; 2] = ["comfyui", "ollama"];
+
 /// An active card is read live at most this often (see the module doc).
 const GPU_EVERY: Duration = Duration::from_secs(15);
 
@@ -306,7 +352,10 @@ pub async fn sample_all(memory: &mut Memory, only: Option<&str>) -> Vec<ServerSt
             let asked = only.is_none_or(|n| n == s.name);
             tokio::spawn(async move {
                 let result = if asked && s.online && !s.host.is_empty() {
-                    let script = format!("{SCRIPT}{GPU_SCRIPT} {} {}", live as u8, names as u8);
+                    let script = format!(
+                        "{SCRIPT}{GPU_SCRIPT} {} {}; {EXTRA}",
+                        live as u8, names as u8
+                    );
                     Some(run_script(&s.host, &script).await)
                 } else {
                     None
@@ -629,7 +678,190 @@ fn parse(server: &Server, text: &str, memory: &mut Memory) -> ServerStats {
 
     s.disks = parse_df(part(5));
     s.hostname = part(6).to_string();
+    s.drives = parse_lsblk(part(11));
+    s.services = parse_services(part(12), part(13), part(14));
     s
+}
+
+/// What this machine says of its own disks and services, with the same
+/// commands as a server (Tailscale lists only the others).
+#[derive(Serialize, Default)]
+pub struct Local {
+    pub hostname: String,
+    pub drives: Vec<Drive>,
+    pub services: Vec<Service>,
+}
+
+pub async fn sample_local() -> Local {
+    let script = format!("hostname; {EXTRA}");
+    let child = tokio::process::Command::new("sh")
+        .args(["-c", &script])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .output();
+    let Ok(Ok(out)) = tokio::time::timeout(Duration::from_secs(4), child).await else {
+        return Local::default();
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let parts: Vec<&str> = text.split("@@").map(str::trim).collect();
+    let part = |i: usize| parts.get(i).copied().unwrap_or("");
+    Local {
+        hostname: part(0).to_string(),
+        drives: parse_lsblk(part(1)),
+        services: parse_services(part(2), part(3), part(4)),
+    }
+}
+
+/// `KEY="value" KEY="value"…`, as `lsblk -P` prints a device.
+fn pairs(line: &str) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let mut rest = line.trim();
+    while let Some(eq) = rest.find("=\"") {
+        let key = rest[..eq].trim().to_string();
+        let after = &rest[eq + 2..];
+        let Some(end) = after.find('"') else {
+            break;
+        };
+        out.insert(key, after[..end].to_string());
+        rest = &after[end + 1..];
+    }
+    out
+}
+
+/// The physical disks of `lsblk -b -P`, each with the filesystems found
+/// under it (through partitions, LUKS, LVM). Swap in RAM, loops and optical
+/// drives are left out.
+fn parse_lsblk(text: &str) -> Vec<Drive> {
+    let nodes: Vec<HashMap<String, String>> = text
+        .lines()
+        .map(pairs)
+        .filter(|n| n.contains_key("NAME"))
+        .collect();
+    let get = |n: &HashMap<String, String>, k: &str| n.get(k).cloned().unwrap_or_default();
+    let num = |n: &HashMap<String, String>, k: &str| get(n, k).parse::<u64>().unwrap_or(0);
+    let by_name: HashMap<String, &HashMap<String, String>> =
+        nodes.iter().map(|n| (get(n, "NAME"), n)).collect();
+
+    let mut drives: Vec<Drive> = nodes
+        .iter()
+        .filter(|n| get(n, "TYPE") == "disk")
+        .filter(|n| {
+            let name = get(n, "NAME");
+            !["zram", "loop", "ram", "sr"]
+                .iter()
+                .any(|p| name.starts_with(p))
+        })
+        .map(|n| {
+            let name = get(n, "NAME");
+            let tran = get(n, "TRAN");
+            Drive {
+                kind: if tran == "nvme" || name.starts_with("nvme") {
+                    "NVMe"
+                } else if tran == "usb" {
+                    "USB"
+                } else if get(n, "ROTA") == "1" {
+                    "HDD"
+                } else {
+                    "SSD"
+                }
+                .to_string(),
+                model: match get(n, "MODEL").replace('_', " ").trim() {
+                    "" => name.clone(),
+                    m => m.to_string(),
+                },
+                size: num(n, "SIZE"),
+                name,
+                ..Default::default()
+            }
+        })
+        .collect();
+
+    // Each filesystem counts once, on the disk it sits on.
+    for n in &nodes {
+        let fs_size = num(n, "FSSIZE");
+        if fs_size == 0 {
+            continue;
+        }
+        let mut cur = get(n, "PKNAME");
+        let mut root = if get(n, "TYPE") == "disk" {
+            get(n, "NAME")
+        } else {
+            String::new()
+        };
+        for _ in 0..16 {
+            if cur.is_empty() {
+                break;
+            }
+            match by_name.get(&cur) {
+                Some(p) if get(p, "TYPE") == "disk" => {
+                    root = cur.clone();
+                    break;
+                }
+                Some(p) => cur = get(p, "PKNAME"),
+                None => break,
+            }
+        }
+        if let Some(d) = drives.iter_mut().find(|d| d.name == root) {
+            d.fs_size += fs_size;
+            d.fs_used += num(n, "FSUSED");
+            let mount = get(n, "MOUNTPOINT");
+            if !mount.is_empty() && mount != "[SWAP]" && !d.mounts.contains(&mount) {
+                d.mounts.push(mount);
+            }
+        }
+    }
+    for d in &mut drives {
+        // The shortest mount (`/` before `/boot`, `/data` before
+        // `/data/models`) names the disk best.
+        d.mounts.sort_by_key(|m| (m.len(), m.clone()));
+    }
+    drives
+}
+
+/// The services of `systemctl show` (blank-line separated blocks) that are
+/// installed, with ComfyUI's queue and Ollama's loaded models when their
+/// API answered.
+fn parse_services(show: &str, comfy_queue: &str, ollama_ps: &str) -> Vec<Service> {
+    let mut out = Vec::new();
+    for block in show.split("\n\n") {
+        let field = |k: &str| {
+            block
+                .lines()
+                .find_map(|l| l.strip_prefix(&format!("{k}=")))
+                .unwrap_or_default()
+                .to_string()
+        };
+        let name = field("Id").trim_end_matches(".service").to_string();
+        if !SERVICES.contains(&name.as_str()) || field("LoadState") != "loaded" {
+            continue;
+        }
+        let mut svc = Service {
+            state: field("ActiveState"),
+            queue: -1,
+            ..Default::default()
+        };
+        if name == "comfyui" {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(comfy_queue.trim()) {
+                let len = |k: &str| v.get(k).and_then(|a| a.as_array()).map_or(0, Vec::len);
+                svc.queue = (len("queue_running") + len("queue_pending")) as i32;
+            }
+        } else if let Ok(v) = serde_json::from_str::<serde_json::Value>(ollama_ps.trim()) {
+            svc.models = v
+                .get("models")
+                .and_then(|m| m.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|m| m.get("name").and_then(|n| n.as_str()))
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+        }
+        svc.name = name;
+        out.push(svc);
+    }
+    out
 }
 
 /// `(total, active)` jiffies from the aggregate `cpu` line of /proc/stat.
@@ -788,6 +1020,49 @@ fn short_gpu_name(lspci: &str) -> String {
         None => full.rsplit_once("] ").map_or(full, |(_, n)| n),
     };
     name.trim().to_string()
+}
+
+#[cfg(test)]
+mod fleet_tests {
+    use super::*;
+
+    #[test]
+    fn filesystems_count_on_the_disk_under_luks_and_lvm() {
+        let text = r#"NAME="zram0" PKNAME="" TYPE="disk" SIZE="8225554432" FSSIZE="" FSUSED="" MODEL="" ROTA="0" TRAN="" MOUNTPOINT="[SWAP]"
+NAME="nvme0n1" PKNAME="" TYPE="disk" SIZE="1024209543168" FSSIZE="" FSUSED="" MODEL="Micron_3400_MTFDKBA1T0TFH" ROTA="0" TRAN="nvme" MOUNTPOINT=""
+NAME="nvme0n1p1" PKNAME="nvme0n1" TYPE="part" SIZE="1073741824" FSSIZE="1000" FSUSED="200" MODEL="" ROTA="0" TRAN="nvme" MOUNTPOINT="/boot"
+NAME="nvme0n1p2" PKNAME="nvme0n1" TYPE="part" SIZE="1023134400512" FSSIZE="" FSUSED="" MODEL="" ROTA="0" TRAN="nvme" MOUNTPOINT=""
+NAME="crypt" PKNAME="nvme0n1p2" TYPE="crypt" SIZE="1023134400512" FSSIZE="9000" FSUSED="3000" MODEL="" ROTA="0" TRAN="" MOUNTPOINT="/"
+NAME="sda" PKNAME="" TYPE="disk" SIZE="4000000000000" FSSIZE="" FSUSED="" MODEL="WDC WD40EFRX" ROTA="1" TRAN="sata" MOUNTPOINT=""
+NAME="sda1" PKNAME="sda" TYPE="part" SIZE="4000000000000" FSSIZE="4000" FSUSED="3100" MODEL="" ROTA="1" TRAN="sata" MOUNTPOINT="/data""#;
+        let d = parse_lsblk(text);
+        assert_eq!(d.len(), 2, "zram is no disk");
+        assert_eq!(d[0].model, "Micron 3400 MTFDKBA1T0TFH");
+        assert_eq!(
+            (d[0].kind.as_str(), d[0].fs_size, d[0].fs_used),
+            ("NVMe", 10000, 3200)
+        );
+        assert_eq!(d[0].mounts, vec!["/".to_string(), "/boot".to_string()]);
+        assert_eq!((d[1].kind.as_str(), d[1].fs_used), ("HDD", 3100));
+        assert_eq!(d[1].mounts, vec!["/data".to_string()]);
+    }
+
+    #[test]
+    fn services_keep_the_installed_ones_and_what_they_do() {
+        let show = "Id=comfyui.service\nLoadState=loaded\nActiveState=active\n\n\
+                    Id=ollama.service\nLoadState=not-found\nActiveState=inactive";
+        let s = parse_services(show, r#"{"queue_running":[1],"queue_pending":[2,3]}"#, "");
+        assert_eq!(s.len(), 1);
+        assert_eq!(
+            (s[0].name.as_str(), s[0].state.as_str(), s[0].queue),
+            ("comfyui", "active", 3)
+        );
+
+        let show = "Id=ollama.service\nLoadState=loaded\nActiveState=active";
+        let s = parse_services(show, "", r#"{"models":[{"name":"qwen3:8b"}]}"#);
+        assert_eq!(s[0].models, vec!["qwen3:8b".to_string()]);
+        assert_eq!(s[0].queue, -1);
+    }
 }
 
 #[cfg(test)]

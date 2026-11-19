@@ -16,20 +16,10 @@ use std::time::Duration;
 /// Longest output handed back to the model (characters).
 const OUTPUT_MAX: usize = 4000;
 
-/// The shell's widgets (services/Widgets.qml), plus « tout ».
-const WIDGETS: [&str; 12] = [
-    "explorer",
-    "stats",
-    "telephone",
-    "notifications",
-    "notes",
-    "agenda",
-    "lecteur",
-    "musique",
-    "son",
-    "camera",
-    "reglages",
-    "tout",
+/// The tabs of the shell's right panel (services/Widgets.qml), plus
+/// « tout ».
+const WIDGETS: [&str; 9] = [
+    "explorer", "stats", "agenda", "lecteur", "musique", "claude", "reglages", "son", "tout",
 ];
 
 /// The shell's command FIFO (shell.qml), where widgets are opened.
@@ -134,11 +124,14 @@ pub fn tools() -> Value {
                     "fin": s("lendemain du dernier jour, AAAA-MM-JJ (exclu) ; défaut : début + 7 jours") }),
             &[]),
         tool("widget",
-            "Ouvre, ferme ou bascule un widget de l'interface : « explorer » (les dossiers du PC), « stats » (processeur, mémoire et carte graphique, de ce PC ou \
-             d'un serveur du réseau Tailscale par ssh, avec terminal, redémarrage, extinction et réveil, et en dessous le téléphone), « telephone » (ouvre « stats », où est la carte du téléphone relié par KDE Connect : batterie, réseau, le faire sonner), « notifications » (les notifications reçues, ne pas déranger), « notes » (les notes façon Keep : texte et images collés), « agenda » (le calendrier Google, vue mois ou semaine, et les tâches), « lecteur » (lecteur en cours, paroles), « musique » (métronome et accordeur), \
-             « son » (ouvre les réglages), « camera » (contrôle gestuel), « reglages » \
-             (sorties et entrées audio, webcam, luminosité, écran, thème). « tout » avec \
-             « fermer » referme tout.",
+            "Ouvre, ferme ou bascule un onglet du panneau de droite de l'interface : « explorer » (les fichiers de ce PC \
+             ou d'un serveur du réseau Tailscale), « stats » (toute la flotte : processeur, mémoire, carte graphique, disques \
+             et services ComfyUI et Ollama de chaque machine, avec terminal, redémarrage, extinction et réveil), « agenda » \
+             (le calendrier Google et les tâches), « lecteur » et « musique » (le lecteur en cours, puis le métronome, \
+             l'accordeur et les prises), « claude » (les sessions Claude Code : celles qui attendent une réponse, celles qui \
+             travaillent, les récentes), « reglages » et « son » (l'écran, la langue, la voix, la webcam). Le téléphone, les \
+             notifications, le son et l'énergie sont dans la barre du bas, pas ici. « tout » avec « fermer » referme le \
+             panneau.",
             json!({ "nom": json!({ "type": "string", "enum": WIDGETS }),
                     "action": json!({ "type": "string", "enum": ["ouvrir", "fermer", "basculer"],
                                       "description": "défaut : ouvrir" }) }),
