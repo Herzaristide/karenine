@@ -35,7 +35,7 @@ Item {
 
     // ── La machine relevée ───────────────────────────────────────────────
     // Celle-ci (hwstats_watch), ou un serveur du tailnet : son relevé vient
-    // d'anna (servers_watch, par ssh, toutes les 3 s).
+    // d'anna (servers_watch : node_exporter, sinon ssh, chaque seconde).
     // Le choix est celui de tous les onglets (Widgets.machine).
     readonly property string machine: Widgets.machineName
     readonly property bool remote: hwPanel.machine !== ""
@@ -43,9 +43,9 @@ Item {
     // premier.
     property var server: null
 
-    // Un relevé du serveur est là (en ligne, ssh a répondu).
+    // Un relevé du serveur est là (en ligne, node_exporter a répondu).
     readonly property bool measured: !hwPanel.remote
-        || (hwPanel.server !== null && hwPanel.server.online && hwPanel.server.ssh && !hwPanel.server.error)
+        || (hwPanel.server !== null && hwPanel.server.online && hwPanel.server.measured && !hwPanel.server.error)
 
     // Une autre machine : rien de ce qu'on montrait ne vaut pour elle.
     function reset() {
@@ -88,7 +88,7 @@ I18n.tr("stats.load", { n: s.load1.toLocaleString(I18n.locale, "f", 2) })].filte
 
     function applyServer(s) {
         hwPanel.server = s;
-        if (!s.online || !s.ssh || s.error)
+        if (!s.online || !s.measured || s.error)
             return;
         hwPanel.cpuUsage = s.cpu_usage;
         hwPanel.cpuHistory = hwPanel.pushHistory(hwPanel.cpuHistory, s.cpu_usage);

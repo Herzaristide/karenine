@@ -38,7 +38,7 @@
 //! Services exposed over `$XDG_RUNTIME_DIR/anna.sock`:
 //!   - theme    : accent/palette (set/mode/palette-color/get/watch)
 //!   - hwstats  : hardware stats (hwstats_get / hwstats_watch)
-//!   - servers  : tailnet devices, stats over ssh (servers_watch / servers_list)
+//!   - servers  : tailnet devices, stats from node_exporter (servers_watch / servers_list)
 //!   - claude   : Claude Code sessions (claude_watch / claude_event / claude_focus)
 //!   - phone    : KDE Connect phones (phone_watch / phone_action)
 //!   - gesture  : webcam control (gesture_get/set/toggle/watch)
@@ -431,7 +431,10 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
         // ── tailnet devices ──────────────────────────────────────────────
         Command::ServersWatch { name } => {
             let mut memory = servers::Memory::default();
-            let mut interval = tokio::time::interval(Duration::from_secs(3));
+            // Every second: node_exporter reads /proc at each request, so the
+            // device shown is followed live (the textfiles, GPU included,
+            // keep their own timers' pace).
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
             // A slow server delays the next round rather than stacking them.
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {

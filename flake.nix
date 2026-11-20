@@ -34,6 +34,12 @@
           # installe les templates de thème sous $out/share/anna/templates/.
           anna = pkgs.callPackage ./anna/default.nix { };
 
+          # Script du collecteur textfile de node_exporter, sur chaque
+          # serveur : ce que node_exporter ne dit pas pour anna (disques,
+          # services IA, Wake-on-LAN). Le GPU est lu par un script propre à
+          # chaque machine, dans sa config NixOS. Voir anna/metrics/node_extras.py.
+          node-extras = pkgs.callPackage ./anna/metrics/package.nix { };
+
           default = pkgs.stdenvNoCC.mkDerivation {
             pname = "karenine";
             version = "0.1.0";
@@ -63,6 +69,8 @@
         { pkgs, system }:
         {
           build = self.packages.${system}.default;
+          # flake8 tourne à la construction du script.
+          node-extras = self.packages.${system}.node-extras;
 
           # Lint QML. qmllint doit connaître les modules Qt6 (qtdeclarative :
           # QtQuick, QtQml, QtCore, QtQuick.Controls/Layouts/Effects) et le module

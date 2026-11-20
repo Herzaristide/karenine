@@ -161,7 +161,7 @@ fn usage() -> ! {
            record audio [mic|mix]                 Record the mic (mix: with the computer's sound), or stop\n\
            record screen [area|screen]            Record a region / the focused monitor, or stop\n\
            record stop [audio|screen] | status | watch\n\
-           servers [list] | watch [name]          Tailnet devices / their stats (ssh)\n\
+           servers [list] | watch [name]          Tailnet devices / their stats (node_exporter)\n\
            servers on|off|reboot <name>           Wake-on-LAN / power off, reboot (ssh)\n\
            claude [watch] | focus <pid>           Claude Code sessions / bring one's terminal forward\n\
            phone [watch]                          KDE Connect phones: battery, network\n\

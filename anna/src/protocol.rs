@@ -38,12 +38,12 @@ pub enum Command {
         interval_ms: Option<u64>,
     },
 
-    // ── tailnet devices (tailscale + ssh) ─────────────────────────────────
+    // ── tailnet devices (tailscale + node_exporter) ───────────────────────
     /// Keep connection open; daemon pushes `{"servers":[ServerStats…],
-    /// "local":{hostname, drives, services}}` every few seconds, re-reading
-    /// the list each time. With `name`, only that
-    /// device is asked over ssh (the one the shell shows); the others report
-    /// what Tailscale says of them.
+    /// "local":{hostname, drives, services}}` every second, re-reading the
+    /// list each time. With `name`, only that device's node_exporter is
+    /// asked (the one the shell shows); the others report what Tailscale
+    /// says of them.
     ServersWatch {
         #[serde(default)]
         name: Option<String>,

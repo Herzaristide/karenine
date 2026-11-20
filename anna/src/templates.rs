@@ -67,7 +67,35 @@ pub fn render_all(state: &AppState) -> io::Result<()> {
         fs::write(out_path, rendered)?;
     }
 
+    write_chromium_policy(state, &home)?;
     Ok(())
+}
+
+/// Chromium has no colour file to import: its interface is tinted from one
+/// seed colour, the `BrowserThemeColor` policy, which it re-reads live. The
+/// palette's background stands for it (Chromium derives its own tones from
+/// it: a grey seed gives matte neutral greys). Dark or light follows the
+/// portal's color-scheme (see appctl.rs), not this file.
+///
+/// Written beside the home-manager policies in
+/// ~/.config/chromium/policies/managed/, which the NixOS configuration links
+/// to /etc/chromium/policies/managed (the only directory Chromium reads on
+/// Linux). A machine without Chromium's profile gets nothing.
+fn write_chromium_policy(state: &AppState, home: &std::path::Path) -> io::Result<()> {
+    let profile = home.join(".config/chromium");
+    if !profile.is_dir() {
+        return Ok(());
+    }
+    let Some(background) = state.active_palette().get("base00") else {
+        return Ok(());
+    };
+    let dir = profile.join("policies/managed");
+    fs::create_dir_all(&dir)?;
+    let json = serde_json::json!({ "BrowserThemeColor": background });
+    // Atomic: Chromium watches the directory and may read a half-written file.
+    let tmp = dir.join(".accent.json.tmp");
+    fs::write(&tmp, format!("{json}\n"))?;
+    fs::rename(&tmp, dir.join("accent.json"))
 }
 
 // ── Substitution map ──────────────────────────────────────────────────────
@@ -122,6 +150,33 @@ mod tests {
     fn state() -> AppState {
         let dir = std::env::temp_dir().join(format!("anna-tmpl-{}", std::process::id()));
         AppState::load(dir)
+    }
+
+    #[test]
+    fn chromium_is_tinted_from_the_active_background() {
+        let home = std::env::temp_dir().join(format!("anna-chromium-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        let mut s = state();
+        // No Chromium profile: nothing written.
+        write_chromium_policy(&s, &home).unwrap();
+        assert!(!home.join(".config/chromium").exists());
+
+        fs::create_dir_all(home.join(".config/chromium")).unwrap();
+        let read = || {
+            let text =
+                fs::read_to_string(home.join(".config/chromium/policies/managed/accent.json")).unwrap();
+            serde_json::from_str::<serde_json::Value>(&text).unwrap()["BrowserThemeColor"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        s.set_mode("dark").unwrap();
+        write_chromium_policy(&s, &home).unwrap();
+        assert_eq!(read(), s.active_palette()["base00"]);
+        s.set_mode("light").unwrap();
+        write_chromium_policy(&s, &home).unwrap();
+        assert_eq!(read(), s.active_palette()["base00"]);
+        let _ = fs::remove_dir_all(&home);
     }
 
     #[test]

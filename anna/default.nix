@@ -49,7 +49,9 @@ pkgs.rustPlatform.buildRustPackage {
   # Exclude the Cargo build dir so it doesn't bloat the store copy.
   src = lib.cleanSourceWith {
     src = ./.;
-    filter = path: _type: baseNameOf path != "target";
+    # metrics/ is the servers' side (node_exporter's textfile script): anna need
+    # not rebuild when it changes.
+    filter = path: _type: baseNameOf path != "target" && path != toString ./metrics;
   };
 
   cargoLock.lockFile = ./Cargo.lock;

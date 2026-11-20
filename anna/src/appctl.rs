@@ -19,6 +19,7 @@ pub fn reload_all(state: &AppState, opts: &AppCtlOptions) {
     // regenerated.
     reload_icons(state);
     reload_kde(state);
+    reload_color_scheme(state);
     // Alacritty: auto-reloads via `general.import` file watch.
     // Starship / fish: picks up on next prompt (STARSHIP_CONFIG env var).
     // GTK4 / Vesktop / Micro / Fastfetch: next launch.
@@ -39,10 +40,14 @@ fn reload_hyprland(_state: &AppState) {
 
 fn reload_kde(_state: &AppState) {
     // Broadcast KGlobalSettings signals so running Qt/KDE apps (Dolphin, Ark…)
-    // re-read kdeglobals without needing a restart.
+    // re-read kdeglobals without needing a restart (KGlobalSettings::ChangeType):
+    //   0 = PaletteChanged
     //   4 = IconChanged
-    //   7 = PaletteChanged
-    for int_val in ["4", "7"] {
+    // PaletteChanged also reaches xdg-desktop-portal-kde: its color-scheme is
+    // its own palette's, so it then tells every portal client (Chromium,
+    // Electron, GTK4) that dark or light changed, live. Without it they kept
+    // the mode the portal started with until the next login.
+    for int_val in ["0", "4"] {
         let _ = Command::new("dbus-send")
             .args([
                 "--session",
@@ -54,6 +59,21 @@ fn reload_kde(_state: &AppState) {
             ])
             .output();
     }
+}
+
+// ── GSettings color-scheme ────────────────────────────────────────────────
+
+fn reload_color_scheme(state: &AppState) {
+    // The GNOME key GTK apps and the gtk portal read; home-manager only seeds
+    // it (dconf.settings), the mode switch is anna's.
+    let scheme = if state.mode == "light" {
+        "'prefer-light'"
+    } else {
+        "'prefer-dark'"
+    };
+    let _ = Command::new("dconf")
+        .args(["write", "/org/gnome/desktop/interface/color-scheme", scheme])
+        .output();
 }
 
 // ── Icon theme ────────────────────────────────────────────────────────────

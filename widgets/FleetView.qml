@@ -7,7 +7,7 @@ import "../services"
 
 // La vue Système du panneau de droite : toute la flotte, une carte par
 // machine. Celle-ci d'abord (hwstats_watch, deux fois par seconde), puis
-// celles du tailnet (servers_watch : toutes par ssh, toutes les 3 s). Sur
+// celles du tailnet (servers_watch : node_exporter, sinon ssh, chaque seconde). Sur
 // chaque carte : le processeur, la mémoire et la carte graphique ; puis ses
 // disques physiques, un par un, remplis à l'accent ; puis ses services
 // d'IA (ComfyUI, Ollama), actifs ou non, et ce qu'ils font.
@@ -74,7 +74,7 @@ Flickable {
                     root.local = msg.local || null;
                     root.serversLoaded = true;
                     msg.servers.forEach(s => {
-                        if (s.ssh && !s.error)
+                        if (s.measured && !s.error)
                             root.remember(s.name, s.cpu_usage);
                     });
                 } catch (e) { /* ligne partielle */ }
@@ -556,7 +556,7 @@ Flickable {
                     error: modelData.error,
                     canWake: modelData.can_wake,
                     uptime: modelData.uptime_s,
-                    cpu: modelData.ssh && !modelData.error ? modelData.cpu_usage : -1,
+                    cpu: modelData.measured && !modelData.error ? modelData.cpu_usage : -1,
                     temp: modelData.temp,
                     ramUsed: modelData.ram_used,
                     ramTotal: modelData.ram_total,

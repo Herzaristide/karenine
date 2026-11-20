@@ -1066,9 +1066,10 @@ Item {
     // liste les systèmes de fichiers (sur btrfs, chaque sous-volume revient
     // avec la taille du volume entier), lsblk relie chacun à son disque :
     // chaque système de fichiers compte une fois, puis on additionne par
-    // disque. Sur un serveur, la même chose par ssh (des commandes simples :
-    // son shell peut être fish). Relu à l'affichage, au changement de
-    // machine et chaque minute.
+    // disque. Sur un serveur, ses disques viennent de son node_exporter, par
+    // anna (servers_watch : `drives`, un relevé puis on raccroche) : pas de
+    // ssh pour lire. Relu à l'affichage, au changement de machine et chaque
+    // minute.
     property var disks: []   // [{ label, used, size, path }], en Go
 
     // -l : sans les systèmes de fichiers réseau, dont nos montages sshfs (un
@@ -1076,6 +1077,10 @@ Item {
     readonly property string diskScript: "df -P -B1 -l; echo @@; lsblk -J -o NAME,PATH,TYPE,MODEL"
 
     function refreshDisks() {
+        if (root.machine) {
+            serverDisks.ask(root.machine.name, root.machine.mount);
+            return;
+        }
         // Un relevé en cours : celui-ci est refait juste après (sinon un
         // changement de machine pendant un relevé n'aurait plus de disques).
         if (diskProc.running) {
@@ -1083,11 +1088,66 @@ Item {
             return;
         }
         diskProc.again = false;
-        diskProc.mount = root.machine ? root.machine.mount : "";
-        diskProc.command = root.machine
-            ? ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", root.machine.host, root.diskScript]
-            : ["sh", "-c", root.diskScript];
+        diskProc.mount = "";
+        diskProc.command = ["sh", "-c", root.diskScript];
         diskProc.running = true;
+    }
+
+    // Les disques physiques d'un serveur, tels qu'anna les tient de son
+    // node_exporter : un par disque, avec ce que ses systèmes de fichiers
+    // occupent et leurs points de montage (le principal d'abord). Comme ici,
+    // sans ceux qui ne portent que /boot ou /efi.
+    function applyServerDisks(drives, mount) {
+        var gib = 1024 * 1024 * 1024;
+        var shown = m => m.indexOf("/boot") !== 0 && m.indexOf("/efi") !== 0 && m.indexOf("/nix/store") !== 0;
+        root.disks = drives.filter(d => d.fs_size > 0 && (d.mounts || []).some(shown))
+            .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+            .map(d => {
+                var main = d.mounts.find(shown);
+                // « Micron 3400 MTFDKBA1T0TFH » → « Micron 3400 ».
+                var model = (d.model || "").trim().split(/\s+/).slice(0, 2).join(" ");
+                return { label: model || d.name, used: Math.round(d.fs_used / gib),
+                         size: Math.round(d.fs_size / gib), path: mount + (main === "/" ? "" : main) };
+            });
+    }
+
+    // Un relevé d'anna pour le serveur montré : le premier message qui le
+    // contient suffit, puis on raccroche (anna n'interroge que celui-ci).
+    Socket {
+        id: serverDisks
+        property string name: ""
+        property string mount: ""
+        function ask(name, mount) {
+            serverDisks.name = name;
+            serverDisks.mount = mount;
+            serverDisks.connected = false;
+            serverDisks.connected = true;
+        }
+        path: Anna.socketPath
+        parser: SplitParser {
+            onRead: (line) => {
+                try {
+                    const s = (JSON.parse(line).servers || []).find(x => x.name === serverDisks.name);
+                    if (!s)
+                        return;
+                    serverDisks.connected = false;
+                    // La machine a changé entre-temps : son relevé suit.
+                    if (serverDisks.mount !== (root.machine ? root.machine.mount : ""))
+                        return;
+                    // node_exporter n'a pas répondu : on garde ce qu'on
+                    // montrait et on réessaie bientôt.
+                    if (!s.online || !s.measured || s.error) {
+                        diskRetry.restart();
+                        return;
+                    }
+                    root.applyServerDisks(s.drives || [], serverDisks.mount);
+                } catch (e) { /* ligne partielle */ }
+            }
+        }
+        onConnectedChanged: {
+            if (connected)
+                write(JSON.stringify({ cmd: "servers_watch", name: serverDisks.name }) + "\n");
+        }
     }
 
     function applyDisks(text, mount) {
@@ -1152,11 +1212,11 @@ Item {
         stdout: StdioCollector {
             id: diskOut
             onStreamFinished: {
-                // La machine a changé entre-temps : son relevé suit.
-                if (diskProc.mount !== (root.machine ? root.machine.mount : ""))
+                // Un serveur choisi entre-temps : ses disques viennent d'anna.
+                if (root.machine)
                     return;
-                // ssh a échoué (rien ne revient) : on garde ce qu'on montrait
-                // et on réessaie bientôt, plutôt que de vider la bande.
+                // Rien n'est revenu : on garde ce qu'on montrait et on
+                // réessaie bientôt, plutôt que de vider la bande.
                 if (diskOut.text.indexOf("@@") < 0) {
                     diskRetry.restart();
                     return;
@@ -1167,7 +1227,7 @@ Item {
         // Une fois le processus vraiment arrêté (dans `exited`, il compte
         // encore comme lancé et refreshDisks n'aurait rien fait).
         onRunningChanged: {
-            if (!running && (diskProc.again || diskProc.mount !== (root.machine ? root.machine.mount : "")))
+            if (!running && diskProc.again && !root.machine)
                 Qt.callLater(root.refreshDisks);
         }
     }
