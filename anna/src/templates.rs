@@ -119,6 +119,9 @@ fn build_substitutions(state: &AppState) -> HashMap<String, String> {
     // Misc tokens baked in by accent.nix
     subs.insert("@LOGO_PATH@".into(), state.logo_path.clone());
     subs.insert("@ICONS_THEME@".into(), state.icons_theme.clone());
+    // "dark" | "light": Zed fills keys a theme leaves out from its default
+    // theme of this appearance, so it must follow the active mode.
+    subs.insert("@MODE@".into(), state.mode.clone());
 
     // Palette base16 tokens — both `#rrggbb` and `r,g,b` RGB forms
     for (key, hex) in palette {
