@@ -3,147 +3,151 @@ import QtQuick
 import QtQuick.Layouts
 import "../services"
 
-// La vue Musique du panneau de droite : le lecteur en tête, puis un seul
-// outil à la fois — le métronome, l'accordeur, ou les prises. Un point à
-// l'accent marque l'outil qui tourne en fond (le métronome qui bat, un
-// enregistrement en cours).
+// La vue Musique du panneau de droite : tout à la fois, sans onglets.
 //
-//   ╭───────────────────────────╮
-//   │   le lecteur (MPRIS)       │
-//   ╰───────────────────────────╯
-//   ╭ Métronome• │ Accordeur │ Prises ╮
-//   │      l'outil choisi        │
-//   ╰───────────────────────────╯
-ColumnLayout {
+//   ╭ MÉTRONOME   (▶) ╮        ╭ ACCORDEUR  (🎤) ╮   un dans chaque
+//   │ (−)  120  (+)   │        │     A4  +3 ¢      │   coin, sur une
+//   │     ● ● ● ●     │        │ ┊····┃····┊       │   seule ligne
+//   │ ( 4/4 )( Tap )  │        │ 440,0 Hz   A4 440 │
+//   ╰─────────────────╯        ╰───────────────────╯
+//                    ╭──────╮
+//                    │  ◉   │      le lecteur, au centre ; son disque
+//                    ╰──────╯      prend la place qui reste, entre
+//                 Titre du morceau  96 et 220 px
+//                ━━━━━●──────────
+//                 ⟲  ⏮  ⏯  ⏭  ≡
+//
+//   ╭ ENREGISTRER ● ────────────────────────────────╮
+//   │ ▂▅▇█▇▅▃▂▁▂▃▆█▇▆|▅▃▂▁▁▂▄▆▇▆▄▃▂               │   la prise choisie,
+//   │ (●)(▶)                                  (🎤) │   les commandes, puis
+//   │ 16:59                                   2:13 │   les prises
+//   ╰──────────────────────────────────────────────╯
+//
+// Tout se règle sur la largeur du panneau (340 à 860 px) et sa hauteur :
+// rien ne dépasse. Sur un écran trop bas pour tout, la vue défile.
+Flickable {
     id: root
 
-    spacing: 18
+    contentWidth: width
+    contentHeight: column.height
+    clip: true
+    interactive: contentHeight > height
+    boundsBehavior: Flickable.StopAtBounds
 
-    // L'outil affiché : "metronome", "tuner" ou "takes".
-    property string tool: "metronome"
+    // La largeur des deux cartes du haut, au plus.
+    readonly property int cornerMax: 240
+    // La hauteur laissée aux prises, au moins.
+    readonly property int recordMin: 210
+    readonly property int pad: 12
 
-    MusicPlayerWidget {
-        Layout.fillWidth: true
-        Layout.preferredHeight: 210
-    }
+    ColumnLayout {
+        id: column
+        width: root.width
+        height: Math.max(root.height, implicitHeight)
+        spacing: 14
 
-    Rectangle {
-        Layout.fillWidth: true
-        Layout.fillHeight: true
-        radius: Theme.radius
-        color: Theme.bgElevated
+        // ── Le métronome et l'accordeur, un dans chaque coin ─────────
+        // Toujours sur une ligne ; au-delà de `cornerMax`, ils restent dans
+        // leurs coins et le milieu se libère.
+        RowLayout {
+            id: tools
+            Layout.fillWidth: true
+            // L'écart entre les deux cartes est le vide du milieu, pas
+            // l'espacement de la ligne : sinon il compte deux fois et la
+            // ligne déborde.
+            spacing: 0
 
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 6
-            spacing: 10
+            readonly property int gap: 12
+            readonly property real cardW: Math.min(root.cornerMax, (root.width - tools.gap) / 2)
+            readonly property real cardH: Math.max(metronome.implicitHeight, tuner.implicitHeight) + 2 * root.pad
 
-            // Le choix de l'outil.
-            Row {
-                id: toolRow
-                Layout.fillWidth: true
-                Layout.preferredHeight: 34
-                spacing: 2
-
-                Repeater {
-                    model: [
-                        { key: "metronome", label: I18n.tr("metronome.title"), live: Tempo.running },
-                        { key: "tuner", label: I18n.tr("tuner.title"), live: false },
-                        { key: "takes", label: I18n.tr("record.title"), live: Recorder.audioOn }
-                    ]
-
-                    Rectangle {
-                        id: toolTab
-                        required property var modelData
-                        readonly property bool active: root.tool === toolTab.modelData.key
-
-                        width: (toolRow.width - 4) / 3
-                        height: toolRow.height
-                        radius: Theme.radiusSmall
-                        color: toolTab.active ? Theme.bgDeep : toolMa.containsMouse ? Theme.hoverOverlay : "transparent"
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: toolTab.modelData.label
-                            font.family: "Inter"
-                            font.pixelSize: 12
-                            font.weight: toolTab.active ? Font.DemiBold : Font.Medium
-                            color: toolTab.active ? Theme.textPrimary : Theme.textSecondary
-                        }
-                        // Il tourne en fond.
-                        Rectangle {
-                            visible: toolTab.modelData.live
-                            anchors.right: parent.right
-                            anchors.rightMargin: 10
-                            anchors.top: parent.top
-                            anchors.topMargin: 8
-                            width: 6
-                            height: 6
-                            radius: 3
-                            color: Theme.accentColor
-                        }
-                        MouseArea {
-                            id: toolMa
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.tool = toolTab.modelData.key
-                        }
-                    }
+            Card {
+                Layout.preferredWidth: tools.cardW
+                Layout.preferredHeight: tools.cardH
+                Metronome {
+                    id: metronome
+                    anchors.fill: parent
+                    anchors.margins: root.pad
+                    active: true
                 }
             }
-
-            // L'outil : seul celui qu'on voit existe (le micro de l'accordeur
-            // ne s'ouvre que lui affiché).
-            Loader {
+            Item {
                 Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.margins: 8
-                sourceComponent: root.tool === "tuner" ? tunerTool
-                               : root.tool === "takes" ? takesTool : metronomeTool
+                Layout.minimumWidth: tools.gap
+            }
+            Card {
+                Layout.preferredWidth: tools.cardW
+                Layout.preferredHeight: tools.cardH
+                Tuner {
+                    id: tuner
+                    anchors.fill: parent
+                    anchors.margins: root.pad
+                    active: Tuning.on
+                }
+            }
+        }
+
+        // ── Le lecteur, au centre ────────────────────────────────────
+        MusicPlayerWidget {
+            id: player
+            Layout.fillWidth: true
+            Layout.preferredHeight: player.implicitHeight
+            Layout.topMargin: 4
+            Layout.bottomMargin: 4
+            maxDisc: Math.max(96, Math.min(220, root.height - tools.height - root.recordMin
+                                                - 2 * column.spacing - 8 - player.chromeHeight))
+        }
+
+        // ── Les prises ───────────────────────────────────────────────
+        Card {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.minimumHeight: root.recordMin
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: root.pad
+                spacing: 10
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    SectionTitle {
+                        text: I18n.tr("record.title")
+                    }
+                    // Un enregistrement en cours.
+                    Rectangle {
+                        visible: Recorder.audioOn
+                        implicitWidth: 7
+                        implicitHeight: 7
+                        radius: 3.5
+                        color: Theme.colorDanger
+                        SequentialAnimation on opacity {
+                            running: Recorder.audioOn
+                            loops: Animation.Infinite
+                            NumberAnimation { to: 0.3; duration: 700; easing.type: Easing.InOutSine }
+                            NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutSine }
+                        }
+                    }
+                    Item { Layout.fillWidth: true }
+                }
+                TakeView {
+                    recorder: recorder
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 56
+                }
+                AudioRecorder {
+                    id: recorder
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                }
             }
         }
     }
 
-    Component {
-        id: metronomeTool
-        Item {
-            Metronome {
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.top: parent.top
-                active: true
-                height: Math.min(parent.height, 200)
-            }
-        }
-    }
-
-    Component {
-        id: tunerTool
-        Item {
-            Tuner {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                height: 64
-                active: Tuning.on
-            }
-        }
-    }
-
-    Component {
-        id: takesTool
-        RowLayout {
-            spacing: 16
-            AudioRecorder {
-                id: recorder
-                Layout.preferredWidth: 150
-                Layout.fillHeight: true
-            }
-            TakeView {
-                recorder: recorder
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-            }
-        }
+    // Une carte : l'aplat surélevé, arrondi.
+    component Card: Rectangle {
+        radius: Theme.radius
+        color: Theme.bgElevated
     }
 }

@@ -35,6 +35,10 @@ PanelWindow { // qmllint disable uncreatable-type
     property bool focusRequested: false
 
     readonly property int barH: 48
+    // Le vide au-dessus des boutons (30 px, centrés dans la barre) : laissé
+    // hors de la zone réservée, pour que l'écart entre une fenêtre et les
+    // boutons soit le gaps_out d'Hyprland (18), comme entre deux fenêtres.
+    readonly property int padTop: (bar.barH - 30) / 2
     // La place au-dessus de la barre, pour ce qui en sort.
     readonly property int above: 560
     readonly property string uiFont: "Inter"
@@ -55,7 +59,7 @@ PanelWindow { // qmllint disable uncreatable-type
         right: true
         bottom: true
     }
-    exclusiveZone: bar.barH
+    exclusiveZone: bar.barH - bar.padTop
     implicitHeight: bar.barH + bar.above
     color: "transparent"
 

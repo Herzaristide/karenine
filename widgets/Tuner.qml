@@ -78,45 +78,60 @@ Item {
     // Re-map the currently held pitch when the reference changes.
     onRefFreqChanged: if (freq > 0) setFreq(freq)
 
-    // ── UI : allumer, la note, puis la jauge des cents ────────────────────
-    //   (♪)   A4    ┊ · · · · ┃ · · · · ┊
-    //        +3 ¢   440,0 Hz       A4 = 440
+    // ── UI : une petite carte, dans le coin haut droit du panneau Musique ──
+    //   ACCORDEUR      (🎤)
+    //       A4  +3 ¢
+    //   ┊ · · · ┃ · · · ┊
+    //   440,0 Hz    A4 = 440
     // Coupé (Tuning.on), le micro reste fermé et la jauge s'efface.
-    RowLayout {
-        anchors.fill: parent
-        spacing: 14
+    implicitHeight: column.implicitHeight
 
-        GlassButton {
-            Layout.alignment: Qt.AlignVCenter
-            implicitWidth: 32
-            implicitHeight: 32
-            accent: Tuning.on
-            icon: Qt.resolvedUrl("../assets/icons/music-note.svg")
-            onClicked: Tuning.setOn(!Tuning.on)
+    ColumnLayout {
+        id: column
+        anchors.fill: parent
+        spacing: 8
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 6
+
+            SectionTitle {
+                Layout.alignment: Qt.AlignVCenter
+                Layout.fillWidth: true
+                text: I18n.tr("tuner.title")
+            }
+            // Allumer, couper : le micro ne s'ouvre qu'allumé.
+            GlassButton {
+                implicitWidth: 26
+                implicitHeight: 26
+                accent: Tuning.on
+                icon: Qt.resolvedUrl("../assets/icons/mic.svg")
+                onClicked: Tuning.setOn(!Tuning.on)
+            }
         }
 
-        // La note, en grand, et son écart.
-        ColumnLayout {
+        // La note, en grand, et son écart à côté.
+        Row {
+            Layout.alignment: Qt.AlignHCenter
+            spacing: 6
             opacity: Tuning.on ? 1 : 0.35
             Behavior on opacity { NumberAnimation { duration: 180 } }
-            Layout.alignment: Qt.AlignVCenter
-            Layout.preferredWidth: 64
-            spacing: 0
 
             Text {
-                Layout.alignment: Qt.AlignHCenter
+                id: noteText
                 text: tuner.freq > 0 ? tuner.noteName + tuner.octave : "—"
                 font.family: "Inter"
-                font.pixelSize: 34
+                font.pixelSize: 24
                 font.weight: tuner.freq > 0 ? Font.DemiBold : Font.Light
                 color: tuner.freq <= 0 ? Theme.textDim : tuner.inTune ? Theme.colorSuccess : Theme.textPrimary
                 Behavior on color { ColorAnimation { duration: 160 } }
             }
             Text {
-                Layout.alignment: Qt.AlignHCenter
-                text: tuner.freq > 0 ? (tuner.cents > 0 ? "+" : "") + tuner.cents + " ¢" : " "
+                visible: tuner.freq > 0
+                anchors.baseline: noteText.baseline
+                text: (tuner.cents > 0 ? "+" : "") + tuner.cents + " ¢"
                 font.family: "Inter"
-                font.pixelSize: 11
+                font.pixelSize: 10
                 font.weight: Font.Medium
                 font.features: { "tnum": 1 }
                 color: tuner.inTune ? Theme.colorSuccess : Theme.textSecondary
@@ -126,24 +141,23 @@ Item {
         // La jauge des cents (±50), la zone juste teintée au milieu.
         Item {
             id: meter
+            Layout.fillWidth: true
+            Layout.preferredHeight: 20
             opacity: Tuning.on ? 1 : 0.5
             Behavior on opacity { NumberAnimation { duration: 180 } }
-            Layout.fillWidth: true
-            Layout.fillHeight: true
 
-            readonly property real mid: 22
+            readonly property real mid: height / 2
 
             Rectangle {
                 anchors.horizontalCenter: parent.horizontalCenter
                 y: meter.mid - height / 2
                 width: meter.width * 0.1
-                height: 22
-                radius: 7
+                height: 18
+                radius: 5
                 color: Qt.alpha(Theme.colorSuccess, tuner.inTune ? 0.24 : 0.09)
                 Behavior on color { ColorAnimation { duration: 160 } }
             }
             Rectangle {
-                id: track
                 y: meter.mid - height / 2
                 width: parent.width
                 height: 4
@@ -158,7 +172,7 @@ Item {
                     x: index / 10 * (meter.width - width)
                     y: meter.mid - height / 2
                     width: 2
-                    height: index === 5 ? 16 : 8
+                    height: index === 5 ? 12 : 6
                     radius: 1
                     color: Qt.alpha(Theme.textPrimary, index === 5 ? 0.4 : 0.16)
                 }
@@ -166,9 +180,9 @@ Item {
             // L'aiguille.
             Rectangle {
                 visible: tuner.freq > 0
-                width: 6
-                height: 24
-                radius: 3
+                width: 5
+                height: 20
+                radius: 2.5
                 y: meter.mid - height / 2
                 color: tuner.inTune ? Theme.colorSuccess : Theme.glow(0)
                 x: (meter.width - width) / 2
@@ -176,12 +190,18 @@ Item {
                 Behavior on x { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
                 Behavior on color { ColorAnimation { duration: 160 } }
             }
+        }
 
-            // Sous la jauge : la fréquence entendue, et la référence, qui se
-            // règle ici (− +, la molette, ou ↑ ↓ au clavier).
+        // La fréquence entendue, et la référence, qui se règle ici
+        // (− + au survol, la molette, ou ↑ ↓ au clavier ; un clic revient
+        // à 440).
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 4
+
             Text {
-                anchors.left: parent.left
-                y: meter.mid + 16
+                Layout.fillWidth: true
+                elide: Text.ElideRight
                 text: !Tuning.on ? I18n.tr("tuner.off")
                       : tuner.freq > 0 ? tuner.freq.toFixed(1) + " Hz" : I18n.tr("tuner.play")
                 font.family: "Inter"
@@ -191,10 +211,8 @@ Item {
             }
             Item {
                 id: refRow
-                anchors.right: parent.right
-                y: meter.mid + 12
-                width: refInner.width
-                height: refInner.height
+                implicitWidth: refInner.width
+                implicitHeight: refInner.height
 
                 readonly property bool hovered: refMa.containsMouse || minus.hot
                                                 || plus.hot || refRow.activeFocus
@@ -206,13 +224,13 @@ Item {
 
                 Row {
                     id: refInner
-                    spacing: 2
+                    spacing: 0
 
                     Nudge { id: minus; step: -1; text: "−"; shown: refRow.hovered }
                     Text {
-                        height: 18
+                        height: 16
                         verticalAlignment: Text.AlignVCenter
-                        text: "A4 = " + tuner.refFreq.toFixed(0) + " Hz"
+                        text: "A4 " + tuner.refFreq.toFixed(0)
                         font.family: "Inter"
                         font.pixelSize: 10
                         font.features: { "tnum": 1 }
@@ -221,7 +239,6 @@ Item {
                             id: refMa
                             anchors.fill: parent
                             hoverEnabled: true
-                            // Un clic revient au diapason standard.
                             cursorShape: Qt.PointingHandCursor
                             onClicked: Tuning.setRefFreq(440)
                             onWheel: (wheel) => Tuning.setRefFreq(Tuning.refFreq + (wheel.angleDelta.y > 0 ? 1 : -1))
@@ -239,8 +256,8 @@ Item {
         property int step
         property bool shown
         readonly property bool hot: nudgeMa.containsMouse
-        width: 14
-        height: 18
+        width: 12
+        height: 16
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
         font.family: "Inter"

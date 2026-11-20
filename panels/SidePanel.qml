@@ -26,6 +26,11 @@ PanelWindow { // qmllint disable uncreatable-type
     // Le même écart que celui des fenêtres au bord de l'écran (gaps_out
     // d'Hyprland) : le haut du panneau tombe sur le haut des fenêtres.
     readonly property int edge: 18
+    // Le retrait du contenu sur le bord gauche (la poignée qui élargit le
+    // panneau s'y tient) : laissé hors de la zone réservée, pour que l'écart
+    // entre une fenêtre et le panneau soit le gaps_out d'Hyprland (18),
+    // comme entre deux fenêtres.
+    readonly property int inset: 6
     readonly property string uiFont: "Inter"
 
     visible: Widgets.panelOpen
@@ -42,7 +47,7 @@ PanelWindow { // qmllint disable uncreatable-type
         bottom: true
     }
     implicitWidth: Math.max(panel.minW, Math.min(panel.maxW, Widgets.panelWidth))
-    exclusiveZone: panel.implicitWidth
+    exclusiveZone: panel.implicitWidth - panel.inset
     color: Theme.bgDeep
 
     readonly property var tabs: [
@@ -58,8 +63,11 @@ PanelWindow { // qmllint disable uncreatable-type
         anchors.fill: parent
         anchors.topMargin: panel.edge
         anchors.rightMargin: panel.edge
-        anchors.leftMargin: 6
-        anchors.bottomMargin: 10
+        anchors.leftMargin: panel.inset
+        // Le bas du contenu tombe sur le bas des fenêtres : le panneau
+        // s'arrête au bord de la zone réservée par la barre, les fenêtres
+        // gaps_out (18) au-dessus.
+        anchors.bottomMargin: panel.edge
 
         // ── Les onglets ──────────────────────────────────────────
         Rectangle {

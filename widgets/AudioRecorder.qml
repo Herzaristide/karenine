@@ -3,8 +3,8 @@ import QtQuick
 import QtQuick.Layouts
 import "../services"
 
-// S'enregistrer et se réécouter : la colonne de gauche du panneau Musique
-// (MusicPanel), et l'état que le lecteur du milieu (TakeView) affiche. anna
+// S'enregistrer et se réécouter : le bas de la carte « Enregistrer » de la
+// vue Musique (MusicView), et l'état que l'onde au-dessus (TakeView) affiche. anna
 // tient l'enregistrement (services/Recorder.qml, anna/src/recorder.rs) : il
 // continue quand l'onglet se ferme, et s'arrête d'ici, par son raccourci ou
 // par `anna record stop`. Deux sources : le micro seul, ou le micro avec ce

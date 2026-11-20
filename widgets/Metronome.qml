@@ -31,42 +31,61 @@ Item {
         }
     }
 
-    // ── UI : en colonne, à droite du panneau Musique ──────────────────────
-    //   ( − ) 120 ( + )
-    //         bpm
-    //      ● ● ● ●
-    //    (4/4) (Tap)
-    //   (  ▶ Lancer  )
-    implicitWidth: column.implicitWidth
+    // ── UI : une petite carte, dans le coin haut gauche du panneau Musique ─
+    //   MÉTRONOME     (▶)
+    //   (−)  120  (+)
+    //       ● ● ● ●          les temps : le premier en vert
+    //   ( 4/4 )( Tap )
+    implicitHeight: column.implicitHeight
 
     ColumnLayout {
         id: column
         anchors.fill: parent
         spacing: 8
 
-        // Le tempo : en grand, éditable, entre ses deux boutons.
         RowLayout {
-            Layout.alignment: Qt.AlignHCenter
-            spacing: 4
+            Layout.fillWidth: true
+            spacing: 6
+
+            SectionTitle {
+                Layout.alignment: Qt.AlignVCenter
+                Layout.fillWidth: true
+                text: I18n.tr("metronome.title")
+            }
+            // Lancer, arrêter.
+            GlassButton {
+                implicitWidth: 26
+                implicitHeight: 26
+                accent: Tempo.running
+                icon: Qt.resolvedUrl("../assets/icons/" + (Tempo.running ? "stop.svg" : "play.svg"))
+                onClicked: Tempo.running = !Tempo.running
+            }
+        }
+
+        // Le tempo, en grand, entre ses deux boutons ; les temps dessous.
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 0
 
             GlassButton {
-                implicitWidth: 28
-                implicitHeight: 28
-                fontSize: 15
+                implicitWidth: 24
+                implicitHeight: 24
+                fontSize: 14
                 text: "−"
                 onClicked: Tempo.bpm = Tempo.clampBpm(Tempo.bpm - 1)
             }
             ColumnLayout {
-                spacing: -4
+                Layout.fillWidth: true
+                spacing: 3
                 TextInput {
                     id: bpmInput
-                    Layout.preferredWidth: 76
+                    Layout.fillWidth: true
                     text: Tempo.bpm.toString()
                     font.family: "Inter"
-                    font.pixelSize: 34
+                    font.pixelSize: 24
                     font.weight: Font.DemiBold
                     font.features: { "tnum": 1 }
-                    color: Theme.textPrimary
+                    color: Tempo.running ? Theme.textPrimary : Theme.textSecondary
                     horizontalAlignment: TextInput.AlignHCenter
                     selectByMouse: true
                     validator: IntValidator { bottom: 20; top: 300 }
@@ -79,7 +98,7 @@ Item {
                         Tempo.bpm = Tempo.clampBpm(Tempo.bpm + d)
                         text = Tempo.bpm.toString()
                     }
-                    FocusRing { radius: 10; gap: 2 }
+                    FocusRing { radius: 8; gap: 2 }
                     onEditingFinished: {
                         var v = parseInt(text)
                         if (!isNaN(v)) Tempo.bpm = Tempo.clampBpm(v)
@@ -97,84 +116,58 @@ Item {
                         onWheel: (event) => bpmInput.nudge(event.angleDelta.y > 0 ? 1 : -1)
                     }
                 }
-                Text {
+                Row {
                     Layout.alignment: Qt.AlignHCenter
-                    text: "bpm"
-                    font.family: "Inter"
-                    font.pixelSize: 10
-                    color: Theme.textDim
+                    spacing: 5
+                    Repeater {
+                        model: Tempo.beatsPerBar
+                        Rectangle {
+                            id: beatDot
+                            required property int index
+                            width: 6
+                            height: 6
+                            radius: 3
+                            property bool isActive: Tempo.running && Tempo.beatIndex === index
+                            color: isActive
+                                   ? (index === 0 ? Theme.colorSuccess : Theme.glow(0))
+                                   : Qt.alpha(Theme.textPrimary, index === 0 ? 0.22 : 0.1)
+                            Behavior on color { ColorAnimation { duration: 80 } }
+                            SequentialAnimation on scale {
+                                running: beatDot.isActive
+                                NumberAnimation { to: 1.4; duration: 60; easing.type: Easing.OutCubic }
+                                NumberAnimation { to: 1.0;  duration: 220; easing.type: Easing.OutQuint }
+                            }
+                        }
+                    }
                 }
             }
             GlassButton {
-                implicitWidth: 28
-                implicitHeight: 28
-                fontSize: 15
+                implicitWidth: 24
+                implicitHeight: 24
+                fontSize: 14
                 text: "+"
                 onClicked: Tempo.bpm = Tempo.clampBpm(Tempo.bpm + 1)
             }
         }
 
-        // Les temps de la mesure : le premier en vert, les autres à l'accent.
-        Row {
-            Layout.alignment: Qt.AlignHCenter
-            Layout.topMargin: 2
-            spacing: 9
-            Repeater {
-                model: Tempo.beatsPerBar
-                Rectangle {
-                    id: beatDot
-                    required property int index
-                    width: 12
-                    height: 12
-                    radius: 6
-                    property bool isActive: Tempo.running && Tempo.beatIndex === index
-                    color: isActive
-                           ? (index === 0 ? Theme.colorSuccess : Theme.glow(0))
-                           : Qt.alpha(Theme.textPrimary, 0.1)
-                    border.width: 1
-                    border.color: Qt.alpha(Theme.textPrimary, index === 0 ? 0.22 : 0.08)
-                    Behavior on color { ColorAnimation { duration: 80 } }
-                    SequentialAnimation on scale {
-                        running: beatDot.isActive
-                        NumberAnimation { to: 1.25; duration: 60; easing.type: Easing.OutCubic }
-                        NumberAnimation { to: 1.0;  duration: 220; easing.type: Easing.OutQuint }
-                    }
-                }
-            }
-        }
-
-        // La mesure et le tap tempo.
+        // La mesure (2 → 3 → 4 → 5 → 6 → 2) et le tap tempo.
         RowLayout {
             Layout.fillWidth: true
             spacing: 6
-            // 2 → 3 → 4 → 5 → 6 → 2
             GlassButton {
                 Layout.fillWidth: true
-                implicitHeight: 26
+                implicitHeight: 24
                 fontSize: 11
                 text: Tempo.beatsPerBar + "/4"
                 onClicked: Tempo.setBeats(Tempo.beatsPerBar >= 6 ? 2 : Tempo.beatsPerBar + 1)
             }
             GlassButton {
                 Layout.fillWidth: true
-                implicitHeight: 26
+                implicitHeight: 24
                 fontSize: 11
                 text: I18n.tr("metronome.tapShort")
                 onClicked: metroPanel.tapTempo()
             }
-        }
-
-        Item { Layout.fillHeight: true }
-
-        // Lancer, arrêter.
-        GlassButton {
-            Layout.fillWidth: true
-            implicitHeight: 32
-            accent: Tempo.running
-            fontSize: 12
-            icon: Qt.resolvedUrl("../assets/icons/" + (Tempo.running ? "stop.svg" : "play.svg"))
-            text: Tempo.running ? I18n.tr("common.stop") : I18n.tr("metronome.start")
-            onClicked: Tempo.running = !Tempo.running
         }
     }
 }

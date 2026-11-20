@@ -7,6 +7,9 @@ import Quickshell.Io
 import Quickshell.Services.Mpris
 import "../services"
 
+// Le lecteur du panneau Musique (MPRIS) : le disque et son spectre en tête,
+// le morceau, sa progression et les commandes dessous. Tout tient dans la
+// largeur qu'on lui donne ; sa hauteur est la sienne (implicitHeight).
 Item {
     id: root
 
@@ -76,17 +79,6 @@ Item {
     }
 
 
-    // ── Track-change accent flash ──────────────────────────────────────
-    property string currentTrackId: hasPlayer
-        ? ((player.trackTitle || "") + "|" + (player.trackArtist || ""))
-        : ""
-    onCurrentTrackIdChanged: flashAnim.restart()
-
-    SequentialAnimation {
-        id: flashAnim
-        NumberAnimation { target: trackFlash; property: "opacity"; to: 0.25; duration: 100 }
-        NumberAnimation { target: trackFlash; property: "opacity"; to: 0.0; duration: 600; easing.type: Easing.OutCubic }
-    }
 
     // ── Lyrics ───────────────────────────────────────────────────────────
     property bool   showLyrics:    false
@@ -211,32 +203,45 @@ Item {
     }
 
 
-
-    Rectangle {
-        id: trackFlash
-        anchors.fill: parent
-        color: Theme.accentColor
-        opacity: 0.0
-    }
-
     // ══════════════════════════════════════════════════════════════════════
-    // MAIN CONTENT
+    // La mise en page : tout en colonne, bornée par la largeur du panneau.
+    //
+    //        ·  ·  ·  ·
+    //     ·   ╭──────╮   ·     le disque, le spectre en couronne ;
+    //    ·    │  ◉   │    ·    les paroles prennent sa place
+    //     ·   ╰──────╯   ·
+    //        ·  ·  ·  ·
+    //        Titre du morceau        (défile s'il est trop long)
+    //        Artiste · Album         (s'abrège)
+    //   ▁▃▅▂▁▁▃▇▅▂▁▂                 le chromagramme
+    //   ━━━━━━━●──────────────
+    //   1:12                3:40
+    //      ⟲   ⏮   ⏯   ⏭   ≡
+    //
+    // Le disque grandit avec la largeur jusqu'à `maxDisc`, que la vue règle
+    // pour laisser de la place aux outils dessous.
     // ══════════════════════════════════════════════════════════════════════
-    // ══ Stage — the disc with the spectrum ringed behind it. Anchored to the
-    // widget's own centre, not stacked in the column, so it stays put as the
-    // controls below it grow or shrink.
-    // Horizontal layout: the stage is a square on the left, the track,
-    // progress and transport fill the right.
+    property real maxDisc: 220
+    readonly property int gap: 14
+    // Ce que prend le lecteur hors du disque : la couronne, le morceau, les
+    // commandes. La vue en déduit `maxDisc`.
+    readonly property real chromeHeight: 2 * spectrumRing.reach + root.gap + below.implicitHeight
+
+    implicitHeight: stage.height + root.gap + below.implicitHeight
+
     Item {
         id: stage
+        anchors.top: parent.top
         anchors.left: parent.left
-        anchors.verticalCenter: parent.verticalCenter
-        width: height
-        height: parent.height
+        anchors.right: parent.right
+        height: stage.discSize + 2 * spectrumRing.reach
+        // Le disque qu'on glisse pour changer de morceau ne sort pas du
+        // panneau.
+        clip: true
 
-        // Disc diameter, leaving room for the ring to breathe around it.
+        // Le diamètre du disque : la largeur moins la couronne, borné.
         readonly property real discSize:
-            Math.max(80, Math.min(width, height) - 2 * spectrumRing.reach - 10)
+            Math.round(Math.max(96, Math.min(root.maxDisc, width - 2 * spectrumRing.reach - 8)))
 
         // ── Spectrum ring — behind the disc, bars radiating outward ──
         Item {
@@ -246,10 +251,11 @@ Item {
             height: width
 
             // Where a bar starts (just off the disc) and how far it grows.
-            readonly property real innerRadius: stage.discSize / 2 + 7
-            readonly property real reach: 26
+            readonly property real innerRadius: stage.discSize / 2 + 5
+            readonly property real reach: 22
 
-            opacity: root.isPlaying ? 1.0 : 0.35
+            // Les paroles prennent toute la scène : la couronne s'efface.
+            opacity: root.showLyrics ? 0 : root.isPlaying ? 1.0 : 0.35
             Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
 
             Repeater {
@@ -268,7 +274,8 @@ Item {
 
                     Rectangle {
                         width: 3
-                        height: 3 + barSlot.level * spectrumRing.reach
+                        // Au plus haut, elle s'arrête au bord de la scène.
+                        height: 3 + barSlot.level * (spectrumRing.reach - 9)
                         radius: width / 2
                         x: (parent.width - width) / 2
                         // Grows outward from the disc edge, along the radius.
@@ -277,9 +284,7 @@ Item {
                         opacity: root.isPlaying ? (0.45 + barSlot.level * 0.55) : 0.25
 
                         // One cava frame long (30 fps → 33 ms): the bar glides
-                        // between frames on a faster display. Opacity follows
-                        // the level directly — a second animation per bar per
-                        // frame cost more than it smoothed.
+                        // between frames on a faster display.
                         Behavior on height { NumberAnimation { duration: 33 } }
                     }
                 }
@@ -575,26 +580,24 @@ Item {
     }   // ══ end stage
 
     // ══════════════════════════════════════════════════════════════════════
-    // Right of the stage: track info at the top, transport at the bottom.
+    // Sous le disque : le morceau, où il en est, et de quoi le piloter.
     // ══════════════════════════════════════════════════════════════════════
     ColumnLayout {
-        anchors.left: stage.right
-        anchors.leftMargin: 18
+        id: below
+        anchors.top: stage.bottom
+        anchors.topMargin: root.gap
+        anchors.left: parent.left
         anchors.right: parent.right
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        anchors.topMargin: 8
-        anchors.bottomMargin: 4
-        spacing: 8
+        spacing: 10
 
-        // ── Title + Artist ───────────────────────────────────────────
+        // ── Titre, puis artiste · album ──────────────────────────────
         ColumnLayout {
             Layout.fillWidth: true
-            Layout.alignment: Qt.AlignHCenter
-            spacing: 4
+            spacing: 3
 
-            // Marquee title
+            // Le titre : centré, il défile s'il ne tient pas.
             Item {
+                id: titleBox
                 Layout.fillWidth: true
                 Layout.preferredHeight: titleText.implicitHeight
                 clip: true
@@ -604,75 +607,67 @@ Item {
                     text: root.hasPlayer && root.player.trackTitle ? root.player.trackTitle : I18n.tr("player.nothingPlaying")
                     font.family: "Inter"
                     font.pixelSize: 16
-                    font.weight: Font.Medium
+                    font.weight: Font.DemiBold
                     color: Theme.textPrimary
-                    elide: Text.ElideNone
                     wrapMode: Text.NoWrap
 
-                    property bool overflows: paintedWidth > parent.width
+                    readonly property real overflow: Math.max(0, implicitWidth - titleBox.width)
+                    readonly property bool overflows: overflow > 0
 
-                    x: overflows ? marqueeX : (parent.width - paintedWidth) / 2
+                    x: overflows ? marqueeX : (titleBox.width - implicitWidth) / 2
                     property real marqueeX: 0
+                    onOverflowsChanged: marqueeX = 0
 
                     SequentialAnimation on marqueeX {
                         running: titleText.overflows
                         loops: Animation.Infinite
-                        PauseAnimation { duration: 1500 }
+                        PauseAnimation { duration: 1800 }
                         NumberAnimation {
-                            from: 0
-                            to: -(titleText.paintedWidth - titleText.parent.width + 8)
-                            duration: Math.max(2000, titleText.paintedWidth * 18)
+                            to: -titleText.overflow
+                            duration: Math.max(1500, titleText.overflow * 28)
                             easing.type: Easing.InOutQuad
                         }
-                        PauseAnimation { duration: 1500 }
+                        PauseAnimation { duration: 1800 }
                         NumberAnimation {
-                            from: -(titleText.paintedWidth - titleText.parent.width + 8)
                             to: 0
-                            duration: Math.max(2000, titleText.paintedWidth * 18)
+                            duration: Math.max(1500, titleText.overflow * 28)
                             easing.type: Easing.InOutQuad
                         }
                     }
-
-                    Behavior on opacity { NumberAnimation { duration: 250 } }
                 }
             }
 
             Text {
                 Layout.fillWidth: true
                 horizontalAlignment: Text.AlignHCenter
-                text: root.hasPlayer && root.player.trackArtist ? root.player.trackArtist : (root.hasPlayer ? "—" : I18n.tr("player.noPlayer"))
+                elide: Text.ElideRight
+                maximumLineCount: 1
+                text: {
+                    if (!root.hasPlayer)
+                        return I18n.tr("player.noPlayer");
+                    var parts = [];
+                    if (root.player.trackArtist) parts.push(root.player.trackArtist);
+                    if (root.player.trackAlbum) parts.push(root.player.trackAlbum);
+                    return parts.length > 0 ? parts.join("  ·  ") : "—";
+                }
                 font.family: "Inter"
                 font.pixelSize: 12
                 color: Theme.textSecondary
-                elide: Text.ElideRight
-            }
-
-            Text {
-                Layout.fillWidth: true
-                horizontalAlignment: Text.AlignHCenter
-                text: root.hasPlayer && root.player.trackAlbum ? root.player.trackAlbum : ""
-                visible: text !== ""
-                font.family: "Inter"
-                font.pixelSize: 11
-                color: Theme.textDim
-                elide: Text.ElideRight
             }
         }
 
-        // Keeps the stage's airspace clear between the two blocks.
-        Item { Layout.fillHeight: true }
-
-        // ── Chromagram (12 pitch classes of currently playing audio) ──
+        // ── Chromagramme (les 12 notes de ce qui joue) ───────────────
         ChromaGraph {
             Layout.fillWidth: true
-            Layout.preferredHeight: 40
+            Layout.preferredHeight: 34
+            Layout.topMargin: 2
             active: root.isPlaying
         }
 
-        // ── Progress bar ─────────────────────────────────────────────
+        // ── La progression ───────────────────────────────────────────
         ColumnLayout {
             Layout.fillWidth: true
-            spacing: 4
+            spacing: 5
             opacity: root.hasPlayer ? 1.0 : 0.4
             Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
 
@@ -727,7 +722,7 @@ Item {
                     color: Theme.accentColor
                     border.width: 2
                     border.color: Theme.bgDeep
-                    x: parent.width * progressTrack.ratio - width / 2
+                    x: Math.max(0, Math.min(parent.width - width, parent.width * progressTrack.ratio - width / 2))
                     y: (parent.height - height) / 2
                     visible: seekArea.containsMouse || seekArea.pressed || progressTrack.activeFocus
                     Behavior on x { SmoothedAnimation { velocity: 200 } }
@@ -739,10 +734,9 @@ Item {
                     anchors.topMargin: -8
                     anchors.bottomMargin: -8
                     hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    enabled: root.hasPlayer && root.player && root.player.canSeek
+                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    enabled: progressTrack.seekable
                     onClicked: (mouse) => {
-                        if (!enabled) return;
                         var ratio = Math.max(0, Math.min(1, mouse.x / width));
                         root.player.position = ratio * root.player.length;
                     }
@@ -755,6 +749,7 @@ Item {
                     text: root.hasPlayer ? root.fmtTime(root.player.position) : "0:00"
                     font.family: "Inter"
                     font.pixelSize: 10
+                    font.features: { "tnum": 1 }
                     color: Theme.textDim
                 }
                 Item { Layout.fillWidth: true }
@@ -762,21 +757,21 @@ Item {
                     text: root.hasPlayer ? root.fmtTime(root.player.length) : "0:00"
                     font.family: "Inter"
                     font.pixelSize: 10
+                    font.features: { "tnum": 1 }
                     color: Theme.textDim
                 }
             }
         }
 
-        // ── Transport bar ────────────────────────────────────────────
-        // Full controls, rather than only what the disc's swipe gestures
-        // exposed: those stay, this makes them discoverable.
+        // ── Les commandes ────────────────────────────────────────────
+        // Le disque se glisse aussi (gauche : suivant, droite : précédent) ;
+        // ces boutons rendent la chose visible. L'écart suit la largeur.
         RowLayout {
             Layout.alignment: Qt.AlignHCenter
-            Layout.topMargin: 2
-            spacing: 14
+            spacing: Math.max(6, Math.min(18, (below.width - 170) / 4))
 
-            // Loop, mirroring the lyrics toggle at the far end. MPRIS carries
-            // the three states itself, so this only cycles the player's own.
+            // La boucle : MPRIS tient ses trois états, le bouton les fait
+            // tourner.
             TransportButton {
                 icon: root.loopState === MprisLoopState.Track
                       ? Qt.resolvedUrl("../assets/icons/loop-one.svg")
@@ -823,13 +818,15 @@ Item {
     // ── Lyrics overlay ───────────────────────────────────────────────────
     // Shows the active sentence centered, plus 1–2 sibling lines fading out
     // above and below. No scrolling — lines just rotate through this fixed
-    // 5-slot column as the position advances. It takes the disc's place on
-    // the stage and nothing else: title, progress and the ring stay put.
+    // 5-slot column as the position advances. It takes the stage (disc and
+    // ring) and nothing else: title and progress stay put. Each line keeps
+    // to two lines at most, and the stage clips: nothing spills below.
     Item {
         id: lyricsOverlay
         parent: stage
         anchors.fill: parent
         anchors.margins: 4
+        clip: true
         opacity: root.showLyrics ? 1 : 0
         visible: opacity > 0.001
         Behavior on opacity { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
@@ -872,7 +869,7 @@ Item {
         Column {
             anchors.centerIn: parent
             width: parent.width - 16
-            spacing: 8
+            spacing: 6
             visible: !root.lyricsLoading && root.isSynced && root.lyricLines.length > 0
 
             Repeater {
@@ -888,14 +885,15 @@ Item {
                     width: parent.width
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.WordWrap
-                    elide: Text.ElideNone
+                    maximumLineCount: isCurrent ? 2 : 1
+                    elide: Text.ElideRight
 
                     text: inRange
                           ? (root.lyricLines[targetIdx].text === ""
                              ? "·" : root.lyricLines[targetIdx].text)
                           : ""
                     font.family: "Inter"
-                    font.pixelSize: isCurrent ? 20 : 15
+                    font.pixelSize: isCurrent ? 17 : 13
                     font.weight: isCurrent ? Font.DemiBold : Font.Normal
                     color: isCurrent ? Theme.accentColor : Theme.textSecondary
                     opacity: !inRange ? 0
@@ -908,7 +906,6 @@ Item {
             }
         }
     }
-
     // ── Reusable transport button ────────────────────────────────────────
     component TransportButton: Item {
         id: btn

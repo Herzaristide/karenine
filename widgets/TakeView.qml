@@ -2,8 +2,8 @@ import QtQuick
 import QtQuick.Layouts
 import "../services"
 
-// Le lecteur, au milieu du panneau Musique : la forme d'onde de la prise
-// choisie dans la colonne de gauche (`recorder`, un AudioRecorder), et sous
+// L'onde, en haut de la carte « Enregistrer » : la forme d'onde de la prise
+// choisie dans la liste dessous (`recorder`, un AudioRecorder), et sous
 // elle, où en est la lecture et ce que dure la prise. Un clic ou un glisser
 // sur l'onde y va. Pendant l'enregistrement, l'onde passe au rouge et se
 // dessine en direct, avec le temps écoulé et la source.
@@ -13,7 +13,7 @@ import "../services"
 Item {
     id: view
 
-    // L'AudioRecorder de la colonne de gauche : la prise choisie, la lecture.
+    // L'AudioRecorder dessous : la prise choisie, la lecture.
     required property var recorder
     readonly property bool on: Recorder.audioOn
 

@@ -33,3 +33,4 @@ ClaudeView 1.0 ClaudeView.qml
 FleetView 1.0 FleetView.qml
 AgendaEditor 1.0 AgendaEditor.qml
 AssistantSettings 1.0 AssistantSettings.qml
+SectionTitle 1.0 SectionTitle.qml
