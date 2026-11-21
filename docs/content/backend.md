@@ -40,7 +40,7 @@ one line per message.
 | `paths.rs` | The filesystem locations shared by the daemon, the CLI and the helpers (socket, state, data), so they always agree. The QML side reads the socket path from `services/Anna.qml`. |
 | `state.rs`, `color.rs` | The theme state: accent, light/dark mode, base16 palettes (embedded fallbacks), hex/HSL math and derived variants. |
 | `templates.rs` | Renders the color templates: fragments under `~/.config/accent/fragments/`, imported by the declarative Nix configs; full files only where the app has no include (`kdeglobals`, Konsole's color scheme). |
-| `appctl.rs` | Live reload after a color change: `hyprctl reload`, KDE D-Bus signals; Alacritty/WezTerm watch their file; the others pick it up on next launch. A failing step never blocks the others. |
+| `appctl.rs` | Live reload after a color change: `hyprctl reload`, KDE D-Bus signals; Alacritty and kitty watch their file (kitty also gets `SIGUSR1`); the open foot windows get the colors as OSC sequences written to their ptys, read from the rendered `foot-colors.ini`; the others pick it up on next launch. A failing step never blocks the others. |
 | `msi.rs` | Mirrors the accent on the MSI keyboard (`$MSI_RGB_SET`), with a 200 ms debounce and a 2 s cooldown so bursts never wedge the controller; caches the last color for the boot and resume hooks. |
 | `hwstats.rs`, `servers.rs`, `phone.rs` | Hardware stats, tailnet servers, KDE Connect phones (table above). |
 | `audio.rs`, `tuner.rs`, `chroma.rs`, `metronome.rs` | Native audio (below). The voice reads the echo-cancelled mic through `pw-record` instead, which cpal cannot select. |

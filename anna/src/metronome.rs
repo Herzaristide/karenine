@@ -195,6 +195,7 @@ fn build_output_stream(
     let sample_format = config.sample_format();
     let stream_config: cpal::StreamConfig = config.into();
     let err_fn = |e| eprintln!("anna: metronome: output stream error: {e}");
+    let mut dither = Dither::new();
 
     let mut metro = Gen {
         accent: synth_click(sample_rate, 1760.0, 0.045, 0.001, 0.030, 0.708),
@@ -217,7 +218,7 @@ fn build_output_stream(
             &stream_config,
             move |data: &mut [f32], _: &_| {
                 for frame in data.chunks_mut(channels) {
-                    let s = metro.next_sample();
+                    let s = metro.next_sample() + dither.next();
                     for out in frame.iter_mut() {
                         *out = s;
                     }
@@ -230,7 +231,7 @@ fn build_output_stream(
             &stream_config,
             move |data: &mut [i16], _: &_| {
                 for frame in data.chunks_mut(channels) {
-                    let s = (metro.next_sample().clamp(-1.0, 1.0) * 32767.0) as i16;
+                    let s = ((metro.next_sample() + dither.next()).clamp(-1.0, 1.0) * 32767.0) as i16;
                     for out in frame.iter_mut() {
                         *out = s;
                     }
@@ -243,7 +244,7 @@ fn build_output_stream(
             &stream_config,
             move |data: &mut [u16], _: &_| {
                 for frame in data.chunks_mut(channels) {
-                    let v = ((metro.next_sample().clamp(-1.0, 1.0) * 0.5 + 0.5) * 65535.0) as u16;
+                    let v = (((metro.next_sample() + dither.next()).clamp(-1.0, 1.0) * 0.5 + 0.5) * 65535.0) as u16;
                     for out in frame.iter_mut() {
                         *out = v;
                     }
@@ -257,6 +258,30 @@ fn build_output_stream(
     .map_err(|e| format!("build_output_stream: {e}"))?;
 
     Ok(stream)
+}
+
+/// A noise floor far below hearing (~ -74 dBFS). Some laptop speaker amps
+/// (the Realtek ALC298 here) power down on digital silence and take longer to
+/// wake than a 35 ms click lasts: only the first beat was heard. Never sending
+/// pure zeros keeps the amp awake — what PipeWire's `dither.noise` does.
+struct Dither(u32);
+
+impl Dither {
+    const AMP: f32 = 2.0e-4;
+
+    fn new() -> Self {
+        Dither(0x9E37_79B9)
+    }
+
+    /// Next white-noise sample in [-AMP, AMP] (xorshift32, realtime-safe).
+    fn next(&mut self) -> f32 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.0 = x;
+        (x as f32 / u32::MAX as f32 * 2.0 - 1.0) * Self::AMP
+    }
 }
 
 /// Synthesize a click: a sine at `freq` over `dur_s` with linear attack/release
@@ -373,6 +398,14 @@ mod tests {
         }
         g.next_sample();
         assert_eq!(rx.try_iter().collect::<Vec<_>>(), vec![1, 2]);
+    }
+
+    #[test]
+    fn dither_is_never_silent_and_stays_inaudible() {
+        let mut d = Dither::new();
+        let v: Vec<f32> = (0..48_000).map(|_| d.next()).collect();
+        assert!(v.iter().all(|s| s.abs() <= Dither::AMP));
+        assert!(v.windows(2).filter(|w| w[0] == 0.0 && w[1] == 0.0).count() == 0);
     }
 
     #[test]

@@ -275,7 +275,11 @@ Item {
             out.push({ glyph: "../assets/icons/phone.svg", dim: !root.phone,
                        label: root.phone ? I18n.tr("explorer.sendTo", { name: root.phone.name })
                                          : I18n.tr("explorer.noPhone"),
-                       run: () => root.sendToPhone(files), leaves: false });
+                       // Le téléphone du menu, figé : runMenu() referme le menu
+                       // avant de lancer l'action, ce qui coupe phoneSock et
+                       // remet root.phone à null.
+                       run: ((phone) => () => root.sendToPhone(files, phone))(root.phone),
+                       leaves: false });
         return out;
     }
     // Un chemin de la cible est-il un dossier : la cible elle-même, sinon ce
@@ -966,11 +970,12 @@ Item {
         }
     }
 
-    function sendToPhone(paths) {
+    function sendToPhone(paths, target) {
         // Un envoi en cours : il finit d'abord.
         if (shareProc.running || shareProc.pending.length > 0)
             return;
-        if (!root.phone) {
+        var phone = target || root.phone;
+        if (!phone) {
             root.say(I18n.tr("explorer.noPhone"));
             return;
         }
@@ -979,12 +984,12 @@ Item {
             root.say(I18n.tr("explorer.onlyFiles"));
             return;
         }
-        shareProc.device = root.phone.id;
-        shareProc.name = root.phone.name;
+        shareProc.device = phone.id;
+        shareProc.name = phone.name;
         shareProc.pending = files;
         shareProc.sent = 0;
         shareProc.failure = "";
-        root.say(I18n.trn("explorer.sending", files.length, { name: root.phone.name }));
+        root.say(I18n.trn("explorer.sending", files.length, { name: phone.name }));
         shareProc.next();
     }
 

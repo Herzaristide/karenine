@@ -122,32 +122,40 @@ ShellRoot {
         }
     }
 
-    // La barre du bas, toujours là : les workspaces, le flocon et le champ
-    // qui parle au pilote, puis les groupes et leurs volets.
+    // La barre du bas et le panneau de droite, ensemble : Hyprland range les
+    // zones exclusives dans l'ordre de création des surfaces, et la barre ne
+    // garde toute la largeur que si elle est créée avant le panneau. Deux
+    // Variants séparés se reconstruisent dans un ordre quelconque quand
+    // l'écran change (débranché, rebranché, capot fermé) : le panneau
+    // ouvert pouvait passer devant et rétrécir la barre. Ici le panneau
+    // attend que la fenêtre de la barre soit là (barReady), et se recrée
+    // après elle si elle est recréée.
     Variants {
         model: root.primaryScreens
 
-        Bar {
-            id: bottomBar
+        Scope {
+            id: edges
             property var modelData
-            screen: modelData
 
-            Connections {
-                target: root
-                function onBarToggled() { bottomBar.toggle(); }
-                function onBarClosed() { bottomBar.dismiss(); }
+            // La barre du bas, toujours là : les workspaces, le flocon et le
+            // champ qui parle au pilote, puis les groupes et leurs volets.
+            Bar {
+                id: bottomBar
+                screen: edges.modelData
+
+                Connections {
+                    target: root
+                    function onBarToggled() { bottomBar.toggle(); }
+                    function onBarClosed() { bottomBar.dismiss(); }
+                }
             }
-        }
-    }
 
-    // Le panneau de droite, que le dernier bouton de la barre montre ou
-    // cache : la musique, les fichiers, la flotte, l'agenda, Claude.
-    Variants {
-        model: root.primaryScreens
-
-        SidePanel {
-            property var modelData
-            screen: modelData
+            // Le panneau de droite, que le dernier bouton de la barre montre
+            // ou cache : la musique, les fichiers, la flotte, l'agenda, Claude.
+            SidePanel {
+                screen: edges.modelData
+                barReady: bottomBar.backingWindowVisible
+            }
         }
     }
 

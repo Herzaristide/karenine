@@ -33,7 +33,11 @@ PanelWindow { // qmllint disable uncreatable-type
     readonly property int inset: 6
     readonly property string uiFont: "Inter"
 
-    visible: Widgets.panelOpen
+    // La fenêtre de la barre existe (shell.qml) : le panneau n'est créé
+    // qu'après elle, et se recrée après elle si elle est recréée.
+    property bool barReady: true
+
+    visible: Widgets.panelOpen && panel.barReady
     // Sur la couche Top, comme la barre : la barre, créée avant, garde
     // toute la largeur et le panneau se pose au-dessus d'elle. Les volets
     // de la barre, sur la couche Overlay, passent par-dessus.

@@ -19,8 +19,10 @@ pub fn render_all(state: &AppState) -> io::Result<()> {
     //   - konsole.colorscheme    : Konsole reads a full .colorscheme file by name
     //
     // Live-reload triggers for the listed apps are handled either via file
-    // watch (Alacritty, WezTerm) or D-Bus signals (KDE). Hyprland sources its
-    // fragment and is reloaded with `hyprctl reload` (see `appctl.rs`).
+    // watch (Alacritty, kitty) or D-Bus signals (KDE). Hyprland sources its
+    // fragment and is reloaded with `hyprctl reload`; kitty also gets SIGUSR1,
+    // and the open foot windows get the colours written to their ptys (see
+    // `appctl.rs`).
     // Konsole picks up the new colorscheme on the next opened tab.
     let fragments = state.accent_dir.join("fragments");
     let templates: &[(&str, PathBuf)] = &[
@@ -29,13 +31,22 @@ pub fn render_all(state: &AppState) -> io::Result<()> {
             fragments.join("alacritty-colors.toml"),
         ),
         (
+            "kitty-colors.conf.tmpl",
+            fragments.join("kitty-colors.conf"),
+        ),
+        // foot: read when a window opens; appctl.rs re-reads this rendered
+        // file to recolour the windows already open.
+        ("foot-colors.ini.tmpl", fragments.join("foot-colors.ini")),
+        (
             "hyprland-colors.lua.tmpl",
             fragments.join("hyprland-colors.lua"),
         ),
         ("gtk4-colors.css.tmpl", fragments.join("gtk4-colors.css")),
         // Vesktop/Vencord injects quickCss.css as an inline <style>; @import url("file://…")
         // is silently dropped in that context, so we write the full CSS directly to the
-        // settings file (same pattern as kdeglobals / konsole below).
+        // settings file (same pattern as kdeglobals / konsole below). Vencord
+        // fs.watch()es that file's inode and re-injects it live, so it must be
+        // rewritten in place (fs::write), never replaced by an atomic rename.
         (
             "vesktop-colors.css.tmpl",
             home.join(".config/vesktop/settings/quickCss.css"),
@@ -123,12 +134,16 @@ fn build_substitutions(state: &AppState) -> HashMap<String, String> {
     // theme of this appearance, so it must follow the active mode.
     subs.insert("@MODE@".into(), state.mode.clone());
 
-    // Palette base16 tokens — both `#rrggbb` and `r,g,b` RGB forms
+    // Palette base16 tokens — `#rrggbb`, bare `rrggbb` (foot) and `r,g,b`
     for (key, hex) in palette {
         // key is lowercase "base00" … "base0f"
         let upper = key.to_uppercase(); // BASE00 … BASE0F
 
         subs.insert(format!("@{upper}@"), hex.clone());
+        subs.insert(
+            format!("@{upper}_BARE@"),
+            hex.trim_start_matches('#').to_string(),
+        );
 
         if let Some(c) = crate::color::Color::from_hex(hex) {
             subs.insert(format!("@{upper}_RGB@"), c.to_rgb_str());
@@ -188,12 +203,12 @@ mod tests {
         s.set_accent("#5277c3").unwrap();
         let subs = build_substitutions(&s);
         let out = apply_substitutions(
-            "a=@ACCENT@ rgb=@ACCENT_RGB@ hex=@HEX@ bg=@BASE00@ bg_rgb=@BASE00_RGB@ keep=@define",
+            "a=@ACCENT@ rgb=@ACCENT_RGB@ hex=@HEX@ bg=@BASE00@ bg_rgb=@BASE00_RGB@ bg_bare=@BASE00_BARE@ keep=@define",
             &subs,
         );
         assert_eq!(
             out,
-            "a=#5277c3 rgb=82,119,195 hex=5277c3 bg=#1b1a18 bg_rgb=27,26,24 keep=@define"
+            "a=#5277c3 rgb=82,119,195 hex=5277c3 bg=#1b1a18 bg_rgb=27,26,24 bg_bare=1b1a18 keep=@define"
         );
     }
 
