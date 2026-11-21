@@ -1,5 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import QtQuick.Effects
+import QtQuick.Shapes
 import Qt.labs.folderlistmodel
 import Quickshell
 import Quickshell.Io
@@ -40,12 +42,23 @@ import "../services"
 // lettres d'un nom y saute. Le bouton « précédent » de la souris remonte
 // aussi. Le dossier est gardé d'un onglet à l'autre (Widgets.explorerPath).
 //
-// Au-dessus des favoris, la machine parcourue : celle-ci, ou un serveur du
-// tailnet (la liste d'anna), la même que dans l'onglet Système. Un serveur se monte
-// par sshfs et l'Explorer y montre ses dossiers comme les locaux ; ses
-// favoris sont ceux de son dossier personnel et sa config NixOS.
-// En bas, sur toute la largeur, les disques de la machine montrée et leur
-// remplissage.
+// Le clic droit sur un dossier ou un fichier (ou dans le vide) ouvre un
+// menu : l'ouvrir dessous, dans l'éditeur, le terminal ou le gestionnaire
+// de fichiers du système.
+//
+// Le mode split (« Ouvrir en dessous » du menu, ou un clic du milieu sur un
+// dossier)
+// ouvre un second dossier dessous (ExplorerPane), qui reste où il est
+// pendant qu'on navigue au-dessus. Glisser de l'un à l'autre, ou sur un
+// dossier, déplace (mv, sans écraser ce qui existe déjà) ; ce qui vient
+// d'une autre application est copié.
+//
+// En haut, sur toute la largeur, les disques de toutes les machines, en cases
+// remplies d'accent selon leur remplissage : celle-ci et les serveurs du
+// tailnet (relevés par anna). Un clic sur un disque choisit sa machine, la
+// même que dans l'onglet Système. Un serveur se monte par sshfs et
+// l'Explorer y montre ses dossiers comme les locaux. Les favoris restent
+// ceux de cette machine : un clic sur l'un d'eux y ramène.
 Item {
     id: root
 
@@ -88,12 +101,12 @@ Item {
     readonly property int sideW: root.compact ? 0 : root.placesW + 12
     readonly property int headerH: 34
     readonly property int footerH: 30
-    readonly property int switchH: 34
-    // La bande des disques, en bas sur toute la largeur (rien sans disque).
-    readonly property int diskH: 46
-    readonly property int diskSpace: root.disks.length === 0 ? 0
-                                   : root.compact ? root.disks.length * (root.diskH + 8) + 2
-                                   : root.diskH + 10
+    // Les disques, en haut sur toute la largeur, en une rangée : ils se
+    // partagent la place à parts égales, selon leur nombre.
+    readonly property int diskGap: 6
+    readonly property real diskW: root.disks.length === 0 ? 0
+        : (root.width - root.diskGap * (root.disks.length - 1)) / root.disks.length
+    readonly property int switchH: 46
 
     // Un chemin en URL « file:// », chaque segment encodé.
     function urlOf(p) {
@@ -151,6 +164,334 @@ Item {
         filterInput.text = "";
         grid.currentIndex = -1;
         grid.positionViewAtBeginning();
+    }
+
+    // ── Le split : un second dossier, dessous ────────────────────
+    // Ouvert sur un dossier (le menu du clic droit, ou le clic du milieu), il reste là pendant qu'on navigue au-dessus ; on
+    // glisse de l'un à l'autre pour déplacer (cf. ExplorerPane).
+    readonly property bool split: Widgets.explorerSplitPath !== ""
+    readonly property int splitGap: 8
+    // Relire les dossiers après un déplacement : sshfs ne prévient pas.
+    property int reloadTick: 0
+    function folderUrl(p) {
+        return root.urlOf(p) + (root.reloadTick % 2 === 1 && p !== "/" ? "/" : "");
+    }
+
+    function openSplit(p) {
+        Widgets.explorerSplitPath = p;
+    }
+    function closeSplit() {
+        var sp = Widgets.explorerSplitPath;
+        Widgets.explorerSplitPath = "";
+        // Un serveur que seul le dossier du bas tenait monté.
+        var m = root.mountOf(sp);
+        if (m !== "" && !(root.remote && root.machine.mount === m))
+            Quickshell.execDetached(["fusermount3", "-uz", m]);
+    }
+    // Le point de montage sshfs qui contient `p`, ou "".
+    function mountOf(p) {
+        var base = root.mountBase + "/";
+        if (p.indexOf(base) !== 0)
+            return "";
+        var rest = p.substring(base.length);
+        var slash = rest.indexOf("/");
+        return base + (slash < 0 ? rest : rest.substring(0, slash));
+    }
+
+    // ── Le menu du clic droit ────────────────────────────────────
+    // Sur un dossier ou un fichier (ou dans le vide : le dossier montré),
+    // dans l'un ou l'autre dossier : l'ouvrir dessous (un dossier, depuis
+    // celui du haut), dans l'éditeur, le terminal ou le gestionnaire de
+    // fichiers du système (cf. DefaultApps) ; un fichier, depuis son dossier
+    // pour ces deux derniers. Sur un serveur monté, le terminal est une
+    // session ssh et Zed s'y connecte lui-même (ssh://).
+    // { path, isDir, below (le dossier du bas), paths (ce que la sélection
+    // emporte), isVoid (le dossier montré, cliqué dans le vide) }
+    property var menuTarget: null
+    // « Supprimer » appuyé une fois : le second appui supprime.
+    property bool menuArmed: false
+    function showMenu(path, isDir, below, x, y, paths, isVoid) {
+        root.menuArmed = false;
+        root.menuTarget = { path: path, isDir: isDir, below: below,
+                            paths: paths && paths.length > 0 ? paths : [path], isVoid: isVoid === true };
+        contextMenu.x = Math.max(4, Math.min(x, root.width - contextMenu.width - 4));
+        // Sa hauteur à venir (le Repeater n'a pas encore suivi).
+        var h = root.menuActions.reduce((s, a) => s + (a.divider ? 10 : 31), 11)
+              + (root.menuInline.length > 0 ? 35 : 0);
+        contextMenu.y = Math.max(4, Math.min(y, root.height - h - 4));
+        contextMenu.forceActiveFocus();
+    }
+    readonly property var menuActions: {
+        var t = root.menuTarget;
+        if (!t)
+            return [];
+        var dir = t.isDir ? t.path : root.parentOf(t.path);
+        var out = [];
+        if (!t.isVoid)
+            out.push({ glyph: t.isDir ? "../assets/icons/folder.svg" : "../assets/icons/file.svg",
+                       label: I18n.tr("explorer.open"), run: () => root.openPath(t.path, t.isDir, t.below),
+                       leaves: !t.isDir });
+        if (!t.isVoid) {
+            if (t.paths.length === 1)
+                out.push({ glyph: "../assets/icons/pencil.svg", label: I18n.tr("explorer.rename"),
+                           run: () => root.startRename(t.path), leaves: false });
+            var hard = root.mountOf(t.path) !== "";
+            out.push({ glyph: "../assets/icons/trash.svg", danger: true, leaves: false,
+                       label: t.paths.length > 1 ? I18n.trn("explorer.deleteMany", t.paths.length) : I18n.tr("explorer.delete"),
+                       // Sur un serveur, pas de corbeille : c'est pour de bon.
+                       confirm: I18n.tr(hard ? "explorer.deleteForever" : "explorer.deleteConfirm"),
+                       run: () => root.removePaths(t.paths) });
+        }
+        return out;
+    }
+    // La rangée d'icônes en tête du menu : ouvrir dessous, l'éditeur, le
+    // terminal, le gestionnaire de fichiers et le téléphone, des glyphes (pas les logos des applications : l'éditeur
+    // ou le terminal du système peut changer, le geste reste le même), sans
+    // intitulé.
+    readonly property var menuInline: {
+        var t = root.menuTarget;
+        if (!t)
+            return [];
+        var dir = t.isDir ? t.path : root.parentOf(t.path);
+        var out = [];
+        if (t.isDir && !t.below)
+            out.push({ glyph: "../assets/icons/split.svg", label: I18n.tr("explorer.openBelow"),
+                       run: () => root.openSplit(t.path), leaves: false });
+        if (DefaultApps.editor && DefaultApps.editor.argv.length > 0)
+            out.push({ glyph: "../assets/icons/code.svg",
+                       label: I18n.tr("explorer.openIn", { app: DefaultApps.editor.name }),
+                       run: () => root.openInEditor(t.path), leaves: true });
+        if (DefaultApps.terminal && DefaultApps.terminal.argv.length > 0)
+            out.push({ glyph: "../assets/icons/terminal.svg", label: I18n.tr("explorer.openTerminal"),
+                       run: () => root.openTerminalAt(dir), leaves: true });
+        if (DefaultApps.explorer && DefaultApps.explorer.argv.length > 0)
+            out.push({ glyph: "../assets/icons/folder.svg",
+                       label: I18n.tr("explorer.openIn", { app: DefaultApps.explorer.name }),
+                       run: () => DefaultApps.openInExplorer(dir), leaves: true });
+        // Seulement des fichiers (KDE Connect n'envoie pas de dossier) ;
+        // estompé tant qu'aucun téléphone n'est à portée.
+        var files = t.isVoid ? [] : t.paths.filter(p => !root.isDirPath(p, t));
+        if (files.length > 0)
+            out.push({ glyph: "../assets/icons/phone.svg", dim: !root.phone,
+                       label: root.phone ? I18n.tr("explorer.sendTo", { name: root.phone.name })
+                                         : I18n.tr("explorer.noPhone"),
+                       run: () => root.sendToPhone(files), leaves: false });
+        return out;
+    }
+    // Un chemin de la cible est-il un dossier : la cible elle-même, sinon ce
+    // qu'en disent les deux listes.
+    function isDirPath(p, t) {
+        if (p === t.path)
+            return t.isDir;
+        var e = root.entries.find(x => x.path === p);
+        return e ? e.isDir : splitPane.isDir(p);
+    }
+
+    function runMenu(action) {
+        if (action.confirm && !root.menuArmed) {
+            root.menuArmed = true;
+            return;
+        }
+        root.menuTarget = null;
+        action.run();
+        if (action.leaves)
+            root.opened();
+    }
+
+    // Ouvrir : un dossier, on y entre (dans son dossier, haut ou bas) ; un
+    // fichier, dans son application par défaut.
+    function openPath(p, isDir, below) {
+        if (!isDir)
+            Quickshell.execDetached(["xdg-open", p]);
+        else if (below)
+            Widgets.explorerSplitPath = p;
+        else
+            root.go(p);
+    }
+
+    // ── Renommer, supprimer ──────────────────────────────────────
+    // Renommer : un champ à la place du menu, le nom sans son extension
+    // sélectionné ; Entrée renomme (sans écraser), Échap annule.
+    property string renaming: ""
+    function startRename(p) {
+        root.renaming = p;
+        var name = p.substring(p.lastIndexOf("/") + 1);
+        renameInput.text = name;
+        var dot = name.lastIndexOf(".");
+        renameInput.select(0, dot > 0 ? dot : name.length);
+        renameInput.forceActiveFocus();
+    }
+    function finishRename(accept) {
+        var p = root.renaming;
+        root.renaming = "";
+        var name = renameInput.text.trim();
+        if (!accept || name === "" || name === "." || name === ".." || name.indexOf("/") >= 0
+                || name === p.substring(p.lastIndexOf("/") + 1))
+            return;
+        root.fileOp(["sh", "-c", "[ -e \"$2\" ] || [ -L \"$2\" ] && echo exists || { mv -- \"$1\" \"$2\" && echo done || echo failed; }",
+                     "--", p, root.parentOf(p) + "/" + name], "rename");
+    }
+
+    // Supprimer : ici, dans la corbeille (la freedesktop, que les
+    // gestionnaires de fichiers savent vider ou restaurer) ; sur un serveur
+    // monté, définitivement (après une confirmation qui le dit).
+    readonly property string trashScript:
+        "T=\"$HOME/.local/share/Trash\"; mkdir -p \"$T/files\" \"$T/info\" || exit 1; " +
+        "now=$(date +%Y-%m-%dT%H:%M:%S); " +
+        "while [ $# -gt 1 ]; do p=\"$1\"; enc=\"$2\"; shift 2; " +
+        "  b=$(basename \"$p\"); n=\"$b\"; i=1; " +
+        "  while [ -e \"$T/files/$n\" ] || [ -e \"$T/info/$n.trashinfo\" ]; do i=$((i+1)); n=\"$b.$i\"; done; " +
+        "  printf '[Trash Info]\\nPath=%s\\nDeletionDate=%s\\n' \"$enc\" \"$now\" > \"$T/info/$n.trashinfo\" " +
+        "  && mv -- \"$p\" \"$T/files/$n\" && echo done || { rm -f \"$T/info/$n.trashinfo\"; echo failed; }; " +
+        "done"
+    function removePaths(paths) {
+        var local = paths.filter(p => root.mountOf(p) === "");
+        var remote = paths.filter(p => root.mountOf(p) !== "");
+        if (local.length > 0) {
+            var args = [];
+            local.forEach(p => args.push(p, p.split("/").map(encodeURIComponent).join("/")));
+            root.fileOp(["sh", "-c", root.trashScript, "--"].concat(args), "trash");
+        } else if (remote.length > 0) {
+            root.fileOp(["sh", "-c", "for p; do rm -rf -- \"$p\" && echo done || echo failed; done", "--"].concat(remote),
+                        "delete");
+        }
+    }
+
+    // Une opération sur des fichiers à la fois : ce qu'elle dit (done,
+    // exists, failed par élément), puis les deux dossiers relus.
+    function fileOp(command, kind) {
+        if (fileOpProc.running) {
+            root.say(I18n.tr("explorer.busy"));
+            return;
+        }
+        fileOpProc.kind = kind;
+        fileOpProc.command = command;
+        fileOpProc.running = true;
+    }
+    Process {
+        id: fileOpProc
+        property string kind: ""
+        stdout: StdioCollector { id: fileOpOut }
+        stderr: StdioCollector { id: fileOpErr }
+        onExited: {
+            var lines = fileOpOut.text.trim().split("\n");
+            var count = w => lines.filter(l => l === w).length;
+            var done = count("done"), exists = count("exists"), failed = count("failed");
+            var k = fileOpProc.kind;
+            var says = [];
+            if (k === "rename") {
+                if (exists > 0)
+                    says.push(I18n.tr("explorer.nameTaken"));
+            } else if (done > 0) {
+                says.push(I18n.trn(k === "trash" ? "explorer.trashed" : "explorer.deleted", done));
+            }
+            if (failed > 0 || (done + exists === 0 && fileOpErr.text.trim() !== ""))
+                says.push(fileOpErr.text.trim().split("\n").pop() || I18n.tr("common.failedSentence"));
+            if (says.length > 0)
+                root.say(says.join("  ·  "));
+            root.clearSelection();
+            splitPane.selection = {};
+            root.reloadTick++;
+        }
+    }
+
+    // Le serveur d'un point de montage sshfs : son hôte ssh.
+    function hostOfMount(m) {
+        var name = m.substring(root.mountBase.length + 1);
+        if (root.remote && root.machine.mount === m)
+            return root.machine.host;
+        var d = root.disks.find(x => x.machine === name);
+        return d ? d.host : name;
+    }
+    function openInEditor(p) {
+        var m = root.mountOf(p);
+        var bin = DefaultApps.editor.bin;
+        bin = bin.substring(bin.lastIndexOf("/") + 1);
+        if (m !== "" && (bin === "zed" || bin === "zeditor"))
+            Quickshell.execDetached(DefaultApps.editor.argv.concat(
+                ["ssh://" + root.hostOfMount(m) + (p.substring(m.length) || "/")]));
+        else
+            DefaultApps.openInEditor(p);
+    }
+    function openTerminalAt(dir) {
+        var m = root.mountOf(dir);
+        if (m !== "")
+            DefaultApps.runInTerminal("", ["ssh", "-t", root.hostOfMount(m),
+                "cd " + root.shellQuote(dir.substring(m.length) || "/") + " && exec \"$SHELL\" -l"]);
+        else
+            DefaultApps.openInTerminal(dir);
+    }
+
+    // Un dépôt d'ici (l'un des deux dossiers) : la barre reste ouverte,
+    // contrairement à un dépôt dans une autre application.
+    property bool internalDrop: false
+    function dragFinished(dropAction) {
+        if (root.internalDrop) {
+            root.internalDrop = false;
+            root.clearSelection();
+            return;
+        }
+        if (dropAction !== Qt.IgnoreAction) {
+            root.clearSelection();
+            root.opened();
+        }
+    }
+
+    // Déposé sur `dest` : déplacé s'il vient d'ici, copié s'il vient d'une
+    // autre application (on ne lui retire pas ses fichiers).
+    function dropInto(drop, dest) {
+        var paths = (drop.urls || []).map(u => root.pathOf(u)).filter(p => p.charAt(0) === "/");
+        var inside = drop.source !== null && drop.source !== undefined;
+        drop.accept(Qt.CopyAction);
+        if (inside)
+            root.internalDrop = true;
+        root.transfer(paths, dest, !inside);
+    }
+
+    // mv (ou cp -a) un à un, sans jamais écraser : ce qui existe déjà à
+    // destination reste où il est, et on le dit.
+    readonly property string transferScript:
+        "op=\"$1\"; dest=\"$2\"; shift 2; " +
+        "for p; do t=\"$dest/$(basename \"$p\")\"; " +
+        "  if [ -e \"$t\" ] || [ -L \"$t\" ]; then echo exists; continue; fi; " +
+        "  if [ \"$op\" = copy ]; then cp -a -- \"$p\" \"$dest/\"; else mv -- \"$p\" \"$dest/\"; fi " +
+        "  && echo done || echo failed; " +
+        "done"
+    function transfer(paths, dest, copy) {
+        // Ni sur place, ni un dossier dans lui-même.
+        var list = paths.filter(p => p !== dest && root.parentOf(p) !== dest && dest.indexOf(p + "/") !== 0);
+        if (list.length === 0)
+            return;
+        if (transferProc.running) {
+            root.say(I18n.tr("explorer.busy"));
+            return;
+        }
+        transferProc.copy = copy;
+        transferProc.command = ["sh", "-c", root.transferScript, "--", copy ? "copy" : "move", dest].concat(list);
+        transferProc.running = true;
+        root.notice = I18n.trn(copy ? "explorer.copying" : "explorer.moving", list.length);
+        noticeTimer.stop();
+    }
+    Process {
+        id: transferProc
+        property bool copy: false
+        stdout: StdioCollector { id: transferOut }
+        stderr: StdioCollector { id: transferErr }
+        onExited: {
+            var lines = transferOut.text.trim().split("\n");
+            var count = w => lines.filter(l => l === w).length;
+            var done = count("done"), exists = count("exists"), failed = count("failed");
+            var says = [];
+            if (done > 0)
+                says.push(I18n.trn(transferProc.copy ? "explorer.copied" : "explorer.moved", done));
+            if (exists > 0)
+                says.push(I18n.trn("explorer.exists", exists));
+            if (failed > 0)
+                says.push(transferErr.text.trim().split("\n").pop() || I18n.trn("explorer.failed", failed));
+            root.say(says.join("  ·  "));
+            root.clearSelection();
+            root.reloadTick++;
+        }
     }
 
     // ── L'historique ─────────────────────────────────────────────
@@ -583,11 +924,12 @@ Item {
     }
 
     // ── L'envoi au téléphone ─────────────────────────────────────
-    // Les fichiers sélectionnés partent vers le téléphone appairé avec KDE
+    // Les fichiers du menu (le clic droit, la sélection s'il y est) partent
+    // vers le téléphone appairé avec KDE
     // Connect (anna phone share, un à la fois), comme un dépôt sur la carte
     // de l'onglet Téléphone. Les dossiers restent : KDE Connect n'envoie que
     // des fichiers. Le téléphone n'est suivi (phone_watch) que tant qu'il y a
-    // une sélection à lui envoyer : le premier appairé et à portée.
+    // une sélection ou un menu ouvert : le premier appairé et à portée.
     property var phone: null
     // Le retour du dernier envoi, dans la pastille du bas, effacé seul.
     property string notice: ""
@@ -595,7 +937,7 @@ Item {
     Socket {
         id: phoneSock
         path: Anna.socketPath
-        connected: root.visible && root.selectedCount > 0
+        connected: root.visible && (root.selectedCount > 0 || root.menuTarget !== null)
         parser: SplitParser {
             onRead: (line) => {
                 try {
@@ -619,7 +961,7 @@ Item {
         }
     }
 
-    function sendToPhone() {
+    function sendToPhone(paths) {
         // Un envoi en cours : il finit d'abord.
         if (shareProc.running || shareProc.pending.length > 0)
             return;
@@ -627,11 +969,7 @@ Item {
             root.say(I18n.tr("explorer.noPhone"));
             return;
         }
-        var files = [];
-        root.entries.forEach(e => {
-            if (root.isSelected(e.path) && !e.isDir)
-                files.push(e.path);
-        });
+        var files = paths;
         if (files.length === 0) {
             root.say(I18n.tr("explorer.onlyFiles"));
             return;
@@ -798,16 +1136,15 @@ Item {
     }
 
     // ── Les favoris ──────────────────────────────────────────────
-    // Le dossier personnel, les dossiers XDG de la machine montrée (ceux de
+    // Toujours ceux de cette machine, même sur un serveur (on n'y va que par
+    // ses disques) : le dossier personnel, les dossiers XDG (ceux de
     // ~/.config/user-dirs.dirs, cf. xdg-user-dirs), puis la configuration
-    // NixOS. Le dossier personnel ne s'allume que chez lui (`exact`) : il
-    // engloberait les autres favoris.
-    // Sur un serveur, sa configuration NixOS s'il en a une. Pas de favori
-    // pour la racine : il engloberait tout le reste, donc resterait allumé ;
-    // le disque « / » de la bande du bas, le chemin et ↑ y mènent.
-    readonly property var extraPlaces: !root.remote
-        ? [{ label: "nixos", icon: "../assets/nixos.svg", path: "/etc/nixos" }]
-        : (root.machine.nixos ? [{ label: "nixos", icon: "../assets/nixos.svg", path: root.rootDir + "/etc/nixos" }] : [])
+    // NixOS. Depuis un serveur, un favori ramène ici (openPlace) ; il ne
+    // s'allume qu'ici. Le dossier personnel ne s'allume que chez lui
+    // (`exact`) : il engloberait les autres favoris. Pas de favori pour la
+    // racine : il engloberait tout le reste ; les disques, le chemin et ↑ y
+    // mènent.
+    readonly property var extraPlaces: [{ label: "nixos", icon: "../assets/nixos.svg", path: "/etc/nixos" }]
 
     // Les dossiers XDG, dans l'ordre des favoris : leur clé dans
     // user-dirs.dirs, les icônes du thème, le glyphe à défaut, et le nom
@@ -839,7 +1176,7 @@ Item {
 
     FileView {
         id: userDirs
-        path: root.home + "/.config/user-dirs.dirs"
+        path: root.localHome + "/.config/user-dirs.dirs"
         printErrors: false
         watchChanges: true
         onFileChanged: reload()
@@ -849,17 +1186,12 @@ Item {
             root.rebuildPlaces();
         }
     }
-    // Une autre machine : son fichier à elle (le dossier personnel change).
-    onHomeChanged: {
-        root.xdgDirs = null;
-        root.rebuildPlaces();
-    }
 
     // Des lignes XDG_DOCUMENTS_DIR="$HOME/Documents" ; un dossier réglé sur
     // le dossier personnel lui-même est désactivé.
     function parseUserDirs(text) {
         var dirs = {};
-        var homeVirt = root.remote ? root.machine.home : root.localHome;
+        var homeVirt = root.localHome;
         text.split("\n").forEach(line => {
             var m = line.match(/^\s*XDG_([A-Z]+)_DIR\s*=\s*"(.*)"\s*$/);
             if (!m)
@@ -867,7 +1199,7 @@ Item {
             var v = m[2].replace(/^\$HOME/, homeVirt).replace(/\/+$/, "");
             if (v === "" || v === homeVirt || v.charAt(0) !== "/")
                 return;
-            dirs[m[1]] = root.remote ? root.rootDir + v : v;
+            dirs[m[1]] = v;
         });
         root.xdgDirs = dirs;
         root.rebuildPlaces();
@@ -881,7 +1213,7 @@ Item {
             present[homeDirs.get(i, "filePath")] = true;
 
         var out = [{ label: I18n.tr("explorer.home"), icon: root.themed(["user-home", "folder-home", "folder"], "folder"),
-                     glyph: root.glyph("home"), path: root.home, exact: true }];
+                     glyph: root.glyph("home"), path: root.localHome, exact: true }];
         var byPath = {};
         root.xdgKinds.forEach(kind => {
             var p = "";
@@ -889,12 +1221,12 @@ Item {
                 p = root.xdgDirs[kind.key] || "";
                 // Sous le dossier personnel, il doit exister ; ailleurs, on
                 // lui fait confiance.
-                if (p !== "" && root.parentOf(p) === root.home && !present[p])
+                if (p !== "" && root.parentOf(p) === root.localHome && !present[p])
                     p = "";
             } else {
                 for (var k = 0; k < kind.names.length && p === ""; k++)
-                    if (present[root.home + "/" + kind.names[k]])
-                        p = root.home + "/" + kind.names[k];
+                    if (present[root.localHome + "/" + kind.names[k]])
+                        p = root.localHome + "/" + kind.names[k];
             }
             // Deux sortes sur un même dossier (Images et Vidéos) : un favori.
             if (p === "" || byPath[p])
@@ -910,7 +1242,7 @@ Item {
             Object.keys(root.xdgDirs).sort().forEach(key => {
                 var p = root.xdgDirs[key];
                 if (knownKeys.indexOf(key) >= 0 || byPath[p]
-                        || (root.parentOf(p) === root.home && !present[p]))
+                        || (root.parentOf(p) === root.localHome && !present[p]))
                     return;
                 var kind = { key: key, icons: [], glyph: "folder" };
                 byPath[p] = kind;
@@ -935,7 +1267,7 @@ Item {
 
     FolderListModel {
         id: homeDirs
-        folder: root.urlOf(root.home)
+        folder: root.urlOf(root.localHome)
         showFiles: false
         showHidden: false
         showDotAndDotDot: false
@@ -950,8 +1282,8 @@ Item {
     // d'anna). Un serveur se monte en entier
     // (sshfs, `host:/`) sous $XDG_RUNTIME_DIR/karenine-sshfs/<nom>, et y reste
     // tant qu'on ne passe pas à une autre machine : revenir sur l'onglet ne
-    // coûte pas une nouvelle connexion. La liste des machines est celle du
-    // sélecteur (MachinePicker).
+    // coûte pas une nouvelle connexion. On la choisit par un de ses disques
+    // (openDisk), ou dans l'onglet Système (MachinePicker).
     // Le serveur en cours de montage (son nom), ou "".
     property string connecting: ""
     property string error: ""
@@ -967,7 +1299,9 @@ Item {
     }
 
     function unmount(m) {
-        if (m)
+        // Le dossier du bas y est encore : il reste monté (closeSplit le
+        // démontera).
+        if (m && root.mountOf(Widgets.explorerSplitPath) !== m.mount)
             Quickshell.execDetached(["fusermount3", "-uz", m.mount]);
     }
 
@@ -1033,6 +1367,7 @@ Item {
             root.connecting = "";
             var lines = mountOut.text.trim().split("\n");
             if (code !== 0 || lines[0].length === 0) {
+                root.pendingDisk = null;
                 // Le choix revient à la machine encore montrée, pour tous les
                 // onglets : le sélecteur ne dit pas une machine qu'on ne voit pas.
                 Widgets.machine = root.remote ? { name: root.machine.name, host: root.machine.host } : null;
@@ -1049,6 +1384,12 @@ Item {
                 home: lines[0], nixos: lines.indexOf("nixos") > 0
             };
             Widgets.explorerPath = mountProc.mount + lines[0];
+            // Choisie par un de ses disques : on y va plutôt qu'au dossier
+            // personnel.
+            var want = root.pendingDisk;
+            root.pendingDisk = null;
+            if (want && want.machine === srv.name)
+                Widgets.explorerPath = mountProc.mount + (want.main === "/" ? "" : want.main);
             // Une autre machine choisie pendant le montage.
             root.follow();
         }
@@ -1061,183 +1402,145 @@ Item {
     }
 
     // ── Les disques ──────────────────────────────────────────────
-    // Sous les favoris, les disques physiques de la machine montrée, avec
-    // leur remplissage ; un clic va à leur point de montage principal. df
-    // liste les systèmes de fichiers (sur btrfs, chaque sous-volume revient
-    // avec la taille du volume entier), lsblk relie chacun à son disque :
-    // chaque système de fichiers compte une fois, puis on additionne par
-    // disque. Sur un serveur, ses disques viennent de son node_exporter, par
-    // anna (servers_watch : `drives`, un relevé puis on raccroche) : pas de
-    // ssh pour lire. Relu à l'affichage, au changement de machine et chaque
+    // Les disques physiques de toutes les machines : celle-ci et chaque
+    // serveur en ligne, tels qu'anna les relève (servers_watch sans nom :
+    // lsblk ici, node_exporter sur les serveurs ; un relevé, puis on
+    // raccroche). Un par disque, avec ce que ses systèmes de fichiers
+    // occupent et son point de montage principal, sans ceux qui ne portent
+    // que /boot, /efi ou le store. Un clic choisit sa machine (la montant au
+    // besoin) et va à ce point de montage. Relu à l'affichage et chaque
     // minute.
-    property var disks: []   // [{ label, used, size, path }], en Go
+    // [{ machine ("" ici), host, hostLabel, name, label, used, size (octets), main }]
+    property var disks: []
+    // Le disque cliqué d'un serveur en cours de montage : on y va une fois monté.
+    property var pendingDisk: null
 
-    // -l : sans les systèmes de fichiers réseau, dont nos montages sshfs (un
-    // serveur qui ne répond plus figerait df).
-    readonly property string diskScript: "df -P -B1 -l; echo @@; lsblk -J -o NAME,PATH,TYPE,MODEL"
-
-    function refreshDisks() {
-        if (root.machine) {
-            serverDisks.ask(root.machine.name, root.machine.mount);
-            return;
-        }
-        // Un relevé en cours : celui-ci est refait juste après (sinon un
-        // changement de machine pendant un relevé n'aurait plus de disques).
-        if (diskProc.running) {
-            diskProc.again = true;
-            return;
-        }
-        diskProc.again = false;
-        diskProc.mount = "";
-        diskProc.command = ["sh", "-c", root.diskScript];
-        diskProc.running = true;
-    }
-
-    // Les disques physiques d'un serveur, tels qu'anna les tient de son
-    // node_exporter : un par disque, avec ce que ses systèmes de fichiers
-    // occupent et leurs points de montage (le principal d'abord). Comme ici,
-    // sans ceux qui ne portent que /boot ou /efi.
-    function applyServerDisks(drives, mount) {
-        var gib = 1024 * 1024 * 1024;
+    function drivesOf(drives, machine, host, hostLabel) {
         var shown = m => m.indexOf("/boot") !== 0 && m.indexOf("/efi") !== 0 && m.indexOf("/nix/store") !== 0;
-        root.disks = drives.filter(d => d.fs_size > 0 && (d.mounts || []).some(shown))
-            .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
-            .map(d => {
-                var main = d.mounts.find(shown);
+        var list = (drives || []).filter(d => d.fs_size > 0 && (d.mounts || []).some(shown))
+            .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+        return list.map(d => ({
+                machine: machine, host: host, hostLabel: hostLabel, name: d.name,
                 // « Micron 3400 MTFDKBA1T0TFH » → « Micron 3400 ».
-                var model = (d.model || "").trim().split(/\s+/).slice(0, 2).join(" ");
-                return { label: model || d.name, used: Math.round(d.fs_used / gib),
-                         size: Math.round(d.fs_size / gib), path: mount + (main === "/" ? "" : main) };
-            });
+                label: (d.model || "").trim().split(/\s+/).slice(0, 2).join(" ") || d.name,
+                used: d.fs_used, size: d.fs_size, main: d.mounts.find(shown)
+            }));
     }
 
-    // Un relevé d'anna pour le serveur montré : le premier message qui le
-    // contient suffit, puis on raccroche (anna n'interroge que celui-ci).
-    Socket {
-        id: serverDisks
-        property string name: ""
-        property string mount: ""
-        function ask(name, mount) {
-            serverDisks.name = name;
-            serverDisks.mount = mount;
-            serverDisks.connected = false;
-            serverDisks.connected = true;
+    // Celle-ci d'abord, puis les serveurs. Un relevé raté (node_exporter
+    // muet) garde ce qu'on montrait de la machine ; hors ligne, elle n'en a plus.
+    function applyDisks(msg) {
+        var keep = m => root.disks.filter(d => d.machine === m);
+        var local = msg.local || {};
+        var out = (local.drives || []).length > 0
+            ? root.drivesOf(local.drives, "", "", local.hostname || I18n.tr("machine.thisComputer"))
+            : keep("");
+        (msg.servers || []).forEach(s => {
+            if (!s.host || !s.online)
+                return;
+            out = out.concat(s.measured && !s.error ? root.drivesOf(s.drives, s.name, s.host, s.name)
+                                                    : keep(s.name));
+        });
+        root.disks = out;
+    }
+
+    // Son point de montage, vu d'ici : "" pour un serveur qui n'est pas monté.
+    // « 300 / 954 Go » : l'occupé dans l'unité du total, entier (une
+    // décimale sous 10).
+    function diskUsage(used, size) {
+        var units = ["unit.bytes", "unit.kb", "unit.mb", "unit.gb", "unit.tb"];
+        var i = 0, div = 1;
+        while (size / div >= 1024 && i < units.length - 1) {
+            div *= 1024;
+            i++;
         }
+        var fmt = v => i === 0 ? String(Math.round(v)) : v.toLocaleString(I18n.locale, "f", size / div < 10 ? 1 : 0);
+        return fmt(used / div) + " / " + I18n.tr(units[i], { n: fmt(size / div) });
+    }
+
+    function escapeHtml(s) {
+        return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function diskPath(d) {
+        if (d.machine === "")
+            return d.main;
+        if (!root.remote || root.machine.name !== d.machine)
+            return "";
+        return root.machine.mount + (d.main === "/" ? "" : d.main);
+    }
+
+    // Le disque où l'on est : sur la machine montrée, le point de montage le
+    // plus long qui contient le dossier.
+    readonly property int currentDisk: {
+        var best = -1, len = -1;
+        var here = root.machine ? root.machine.name : "";
+        for (var i = 0; i < root.disks.length; i++) {
+            var d = root.disks[i];
+            var p = root.diskPath(d);
+            if (d.machine !== here || p === "")
+                continue;
+            var prefix = p.charAt(p.length - 1) === "/" ? p : p + "/";
+            if ((root.path === p || root.path.indexOf(prefix) === 0) && p.length > len) {
+                best = i;
+                len = p.length;
+            }
+        }
+        return best;
+    }
+
+    // Un favori : toujours de cette machine ; depuis un serveur, on revient
+    // ici (cf. follow), puis on y va.
+    function openPlace(p) {
+        root.pendingDisk = null;
+        if (Widgets.machine)
+            Widgets.machine = null;
+        root.go(p);
+    }
+
+    function openDisk(d) {
+        if (d.machine === "") {
+            root.pendingDisk = null;
+            // Revenir ici (cf. follow) remet le dossier au personnel : on
+            // part du disque ensuite.
+            if (Widgets.machine)
+                Widgets.machine = null;
+            root.go(d.main);
+        } else if (root.remote && root.machine.name === d.machine) {
+            root.pendingDisk = null;
+            root.go(root.diskPath(d));
+        } else {
+            root.pendingDisk = { machine: d.machine, main: d.main };
+            Widgets.machine = { name: d.machine, host: d.host };
+        }
+    }
+
+    Socket {
+        id: diskSock
         path: Anna.socketPath
         parser: SplitParser {
             onRead: (line) => {
                 try {
-                    const s = (JSON.parse(line).servers || []).find(x => x.name === serverDisks.name);
-                    if (!s)
+                    const msg = JSON.parse(line);
+                    if (!msg.servers)
                         return;
-                    serverDisks.connected = false;
-                    // La machine a changé entre-temps : son relevé suit.
-                    if (serverDisks.mount !== (root.machine ? root.machine.mount : ""))
-                        return;
-                    // node_exporter n'a pas répondu : on garde ce qu'on
-                    // montrait et on réessaie bientôt.
-                    if (!s.online || !s.measured || s.error) {
-                        diskRetry.restart();
-                        return;
-                    }
-                    root.applyServerDisks(s.drives || [], serverDisks.mount);
+                    diskSock.connected = false;
+                    root.applyDisks(msg);
                 } catch (e) { /* ligne partielle */ }
             }
         }
         onConnectedChanged: {
             if (connected)
-                write(JSON.stringify({ cmd: "servers_watch", name: serverDisks.name }) + "\n");
+                write(JSON.stringify({ cmd: "servers_watch" }) + "\n");
         }
     }
-
-    function applyDisks(text, mount) {
-        var parts = text.split("@@");
-        // lsblk : chemin de chaque source (partition, volume chiffré) → son disque.
-        var devices = {};
-        try {
-            (JSON.parse(parts[1] || "{}").blockdevices || []).forEach(d => {
-                if (d.type !== "disk" || d.name.indexOf("zram") === 0)
-                    return;
-                // « Micron_3400_MTFDKBA1T0TFH » → « Micron 3400 ».
-                var info = { disk: d.name, model: (d.model || "").trim().replace(/_/g, " ")
-                                                     .split(/\s+/).slice(0, 2).join(" ") };
-                var walk = n => { devices[n.path] = info; (n.children || []).forEach(walk); };
-                walk(d);
-            });
-        } catch (e) { /* lsblk absent : les sources seules */ }
-
-        // df : un système de fichiers par source, au point de montage le plus
-        // court ; seulement les vrais périphériques, sans /boot.
-        var bySource = {};
-        parts[0].split("\n").slice(1).forEach(line => {
-            var f = line.trim().split(/\s+/);
-            if (f.length < 6 || f[0].indexOf("/dev/") !== 0 || f[0].indexOf("/dev/loop") === 0)
-                return;
-            var mnt = f.slice(5).join(" ");
-            if (mnt.indexOf("/boot") === 0 || mnt.indexOf("/efi") === 0 || mnt.indexOf("/nix/store") === 0)
-                return;
-            var prev = bySource[f[0]];
-            if (!prev || mnt.length < prev.mount.length)
-                bySource[f[0]] = { size: Number(f[1]), used: Number(f[2]), mount: mnt };
-        });
-
-        var byDisk = {};
-        Object.keys(bySource).forEach(src => {
-            var fs = bySource[src];
-            var dev = devices[src];
-            var key = dev ? dev.disk : src;
-            var g = byDisk[key] || (byDisk[key] = {
-                label: dev && dev.model ? dev.model : key.replace(/^\/dev\//, ""),
-                used: 0, size: 0, mount: fs.mount
-            });
-            g.used += fs.used;
-            g.size += fs.size;
-            if (fs.mount.length < g.mount.length)
-                g.mount = fs.mount;
-        });
-        var gib = 1024 * 1024 * 1024;
-        root.disks = Object.keys(byDisk).sort().map(k => {
-            var g = byDisk[k];
-            return { label: g.label, used: Math.round(g.used / gib), size: Math.round(g.size / gib),
-                     path: mount + (g.mount === "/" && mount !== "" ? "" : g.mount) };
-        });
+    function refreshDisks() {
+        diskSock.connected = false;
+        diskSock.connected = true;
     }
-
-    Process {
-        id: diskProc
-        // Le point de montage du serveur relevé ("" ici), pour ses chemins.
-        property string mount: ""
-        // Redemandé pendant qu'il tournait.
-        property bool again: false
-        stdout: StdioCollector {
-            id: diskOut
-            onStreamFinished: {
-                // Un serveur choisi entre-temps : ses disques viennent d'anna.
-                if (root.machine)
-                    return;
-                // Rien n'est revenu : on garde ce qu'on montrait et on
-                // réessaie bientôt, plutôt que de vider la bande.
-                if (diskOut.text.indexOf("@@") < 0) {
-                    diskRetry.restart();
-                    return;
-                }
-                root.applyDisks(diskOut.text, diskProc.mount);
-            }
-        }
-        // Une fois le processus vraiment arrêté (dans `exited`, il compte
-        // encore comme lancé et refreshDisks n'aurait rien fait).
-        onRunningChanged: {
-            if (!running && diskProc.again && !root.machine)
-                Qt.callLater(root.refreshDisks);
-        }
-    }
+    // Chaque minute ; toutes les 5 s tant qu'anna n'a rien donné.
     Timer {
-        id: diskRetry
-        interval: 5000
-        onTriggered: if (root.visible) root.refreshDisks()
-    }
-    Timer {
-        interval: 60000
+        interval: root.disks.length === 0 ? 5000 : 60000
         running: root.visible
         repeat: true
         triggeredOnStart: true
@@ -1246,8 +1549,6 @@ Item {
     onMachineChanged: {
         root.backStack = [];
         root.forwardStack = [];
-        root.disks = [];
-        root.refreshDisks();
     }
 
     // Le chemin, en segments cliquables : « ~ » pour le dossier personnel,
@@ -1274,7 +1575,7 @@ Item {
 
     FolderListModel {
         id: folder
-        folder: root.urlOf(root.path)
+        folder: root.folderUrl(root.path)
         showDirsFirst: true
         showDotAndDotDot: false
         showHidden: root.showHidden
@@ -1329,11 +1630,215 @@ Item {
         event.accepted = true;
     }
 
-    // ── La machine, au-dessus des favoris ────────────────────────
-    MachinePicker {
-        width: root.compact ? root.width : root.placesW
+    // ── Les disques de toutes les machines, en haut ──────────────
+    // Une case par disque, à parts égales sur toute la largeur, remplie d'un liquide à l'accent autant qu'il est
+    // plein ; sa machine et son nom en haut, l'occupé sur le total en bas (le pourcentage au
+    // survol). Un clic va à sa racine. Celui où l'on est est cerclé d'accent. Un clic y va, sur sa
+    // machine.
+    //   ┌────────┐ ┌────────┐ ┌────────┐
+    //   │  zola  │ │  gary  │ │  gary  │
+    //   │▓▓▓▓▓▓▓▓│ │        │ │▓▓▓▓▓▓▓▓│
+    //   └────────┘ └────────┘ └────────┘
+    Row {
+        id: diskBar
+        width: root.width
         height: root.switchH
-        busy: root.connecting
+        spacing: root.diskGap
+
+        Repeater {
+            model: root.disks
+
+            Rectangle {
+                id: disk
+                required property var modelData
+                required property int index
+                readonly property real pct: disk.modelData.size > 0
+                                            ? Math.min(1, disk.modelData.used / disk.modelData.size) : 0
+                readonly property bool here: root.currentDisk === disk.index
+                // Sa machine est en train d'être montée.
+                readonly property bool joining: root.connecting !== "" && root.connecting === disk.modelData.machine
+
+                width: root.diskW
+                height: root.switchH
+                radius: Theme.radiusSmall
+                color: Qt.alpha(Theme.textPrimary, diskMa.containsMouse || disk.activeFocus ? 0.09 : 0.05)
+                border.width: disk.here ? 1.5 : 1
+                border.color: disk.here ? Theme.accentColor : Theme.dividerColor
+                Behavior on color { ColorAnimation { duration: 140 } }
+
+                Accessible.role: Accessible.Button
+                Accessible.name: disk.modelData.hostLabel + " · " + disk.modelData.label + " · "
+                                 + root.humanSize(disk.modelData.used) + " / " + root.humanSize(disk.modelData.size)
+
+                // Au clavier aussi : Tab, puis Entrée ou Espace.
+                activeFocusOnTab: true
+                Keys.onPressed: (event) => {
+                    if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                        root.openDisk(disk.modelData);
+                        event.accepted = true;
+                    }
+                }
+
+                // Le liquide : deux vagues à la surface, qui roulent en sens
+                // contraires, la plus claire derrière ; le niveau monte avec
+                // un rebond (un ressort), la houle se creuse au survol.
+                // Peint opaque dans une couche, puis découpé aux coins du
+                // carré et rendu translucide d'un coup (sans recouvrement
+                // plus foncé entre la vague et le corps).
+                Item {
+                    id: liquid
+                    anchors.fill: parent
+                    visible: false
+                    layer.enabled: true
+
+                    property real level: disk.pct
+                    Behavior on level { SpringAnimation { spring: 2.2; damping: 0.16; epsilon: 0.002 } }
+                    // La surface, depuis le haut.
+                    readonly property real surface: liquid.height * (1 - liquid.level)
+                    property real amp: diskMa.containsMouse ? 5.5 : 3.5
+                    Behavior on amp { NumberAnimation { duration: 600; easing.type: Easing.OutCubic } }
+                    readonly property real period: 60
+                    readonly property bool wet: liquid.level > 0.004
+
+                    LiquidWave {
+                        tone: Qt.lighter(Theme.accentColor, 1.35)
+                        duration: 3400
+                        reversed: true
+                        a: liquid.amp
+                        p: liquid.period
+                        y: liquid.surface - liquid.amp - 1
+                        width: liquid.width + liquid.period
+                        visible: liquid.wet
+                        running: root.visible
+                    }
+                    Rectangle {
+                        visible: liquid.wet
+                        y: liquid.surface + liquid.amp
+                        width: liquid.width
+                        height: Math.max(0, liquid.height - liquid.surface - liquid.amp)
+                        color: Theme.accentColor
+                    }
+                    LiquidWave {
+                        tone: Theme.accentColor
+                        duration: 2200
+                        a: liquid.amp
+                        p: liquid.period
+                        y: liquid.surface - liquid.amp
+                        width: liquid.width + liquid.period
+                        visible: liquid.wet
+                        running: root.visible
+                    }
+                }
+                Rectangle {
+                    id: diskShape
+                    anchors.fill: parent
+                    radius: disk.radius
+                    visible: false
+                    layer.enabled: true
+                }
+                MultiEffect {
+                    anchors.fill: parent
+                    source: liquid
+                    maskEnabled: true
+                    maskSource: diskShape
+                    maskThresholdMin: 0.5
+                    maskSpreadAtMin: 1.0
+                    opacity: disk.here ? 0.7 : 0.5
+                    Behavior on opacity { NumberAnimation { duration: 200 } }
+                }
+
+                Text {
+                    anchors.top: parent.top
+                    anchors.topMargin: 5
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: parent.width - 8
+                    horizontalAlignment: Text.AlignHCenter
+                    // Sa machine en gras, puis le disque : « gary · Micron 3400 ».
+                    textFormat: Text.StyledText
+                    text: "<b>" + root.escapeHtml(disk.modelData.hostLabel) + "</b> · "
+                          + root.escapeHtml(disk.modelData.label)
+                    elide: Text.ElideRight
+                    font.family: "Inter"
+                    font.pixelSize: 10
+                    font.weight: Font.Medium
+                    color: Theme.textPrimary
+                }
+                Text {
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 5
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: parent.width - 4
+                    horizontalAlignment: Text.AlignHCenter
+                    text: diskMa.containsMouse ? I18n.tr("common.percent", { n: Math.round(disk.pct * 100) })
+                                               : root.diskUsage(disk.modelData.used, disk.modelData.size)
+                    elide: Text.ElideRight
+                    font.family: "Inter"
+                    font.pixelSize: 9
+                    font.features: { "tnum": 1 }
+                    color: Theme.textPrimary
+                    opacity: 0.8
+                }
+
+                // Le montage de sa machine : le carré respire.
+                SequentialAnimation on opacity {
+                    running: disk.joining
+                    loops: Animation.Infinite
+                    onStopped: disk.opacity = 1
+                    NumberAnimation { to: 0.45; duration: 500; easing.type: Easing.InOutSine }
+                    NumberAnimation { to: 1; duration: 500; easing.type: Easing.InOutSine }
+                }
+
+                MouseArea {
+                    id: diskMa
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.openDisk(disk.modelData)
+                }
+
+                FocusRing { radius: disk.radius + gap }
+            }
+        }
+    }
+
+    // Une vague de liquide (les disques) : sur la largeur du carré et une
+    // période `p` de plus, d'amplitude `a`, qui glisse d'une période en
+    // boucle : la reprise ne se voit pas. Pleine sous la crête.
+    component LiquidWave: Shape {
+        id: wave
+        property color tone
+        property real a: 1.5
+        property real p: 40
+        property int duration: 2400
+        property bool reversed: false
+        property bool running: true
+        height: wave.a * 2 + 2
+        preferredRendererType: Shape.CurveRenderer
+        NumberAnimation on x {
+            from: wave.reversed ? -wave.p : 0
+            to: wave.reversed ? 0 : -wave.p
+            duration: wave.duration
+            loops: Animation.Infinite
+            running: wave.running && wave.visible
+        }
+        ShapePath {
+            fillColor: wave.tone
+            strokeWidth: -1
+            PathSvg {
+                path: {
+                    var a = wave.a, h = wave.p / 2;
+                    // Avant la mise en page, la largeur (donc la période)
+                    // est nulle : la boucle ne finirait pas.
+                    if (!(h >= 1) || !(wave.width > 0))
+                        return "";
+                    var d = "M 0 " + a + " Q " + (h / 2) + " " + (-a) + " " + h + " " + a;
+                    for (var x = 2 * h; x <= wave.width + h; x += h)
+                        d += " T " + x + " " + a;
+                    return d + " L " + (wave.width + h) + " " + wave.height
+                         + " L 0 " + wave.height + " Z";
+                }
+            }
+        }
     }
 
     // Une icône du thème, en couleurs ; un glyphe de assets/icons, teint.
@@ -1373,7 +1878,10 @@ Item {
     readonly property int placesMin: 6
     readonly property int placesMax: 12
     readonly property int shownPlaces: Math.max(root.placesMin, Math.min(root.placesMax, root.places.length))
-    implicitHeight: root.switchH + 8 + root.shownPlaces * (root.placeH + 1) - 1 + 12 + root.diskSpace
+    implicitHeight: root.switchH + 8 + root.shownPlaces * (root.placeH + 1) - 1 + 12
+                    + (root.split ? root.splitH + root.splitGap : 0)
+    // Le dossier du bas : la moitié de la place, que l'onglet gagne en hauteur.
+    readonly property int splitH: 240
 
     Binding {
         target: Widgets
@@ -1386,7 +1894,7 @@ Item {
         id: placesCard
         y: root.compact ? header.y + root.headerH + 8 : root.switchH + 8
         width: root.compact ? root.width : root.placesW
-        height: root.compact ? 30 : parent.height - y - root.diskSpace
+        height: root.compact ? 30 : parent.height - y
         radius: Theme.radius
         color: root.compact ? "transparent" : Qt.alpha(Theme.textPrimary, 0.05)
 
@@ -1404,9 +1912,9 @@ Item {
                 id: placeRow
                 required property var modelData
                 // Allumé dans le favori comme dans ses sous-dossiers.
-                readonly property bool here: root.path === placeRow.modelData.path
+                readonly property bool here: !root.remote && root.path === placeRow.modelData.path
                                              || (!placeRow.modelData.exact
-                                                 && root.path.indexOf(placeRow.modelData.path + "/") === 0)
+                                                 && !root.remote && root.path.indexOf(placeRow.modelData.path + "/") === 0)
                 // Étroit, des boutons-icônes, sans nom : le favori où l'on
                 // est s'allume.
                 readonly property bool labelled: !root.compact
@@ -1463,120 +1971,8 @@ Item {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: root.go(placeRow.modelData.path)
+                    onClicked: root.openPlace(placeRow.modelData.path)
                 }
-            }
-        }
-    }
-
-    // ── Les disques, en bas ──────────────────────────────────────
-    // Une pastille par disque, sur toute la largeur du widget : son nom, ce
-    // qu'il contient, son remplissage. Un clic va à son point de montage.
-    //   ( Micron 3400      255 / 953 Go · 27 %  )  ( WD 2TB   …           )
-    //   ( ▬▬▬▬───────────────────────────────── )  ( ▬▬▬▬▬▬▬▬──────────── )
-    Flow {
-        id: diskBar
-        visible: root.disks.length > 0
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        height: root.compact ? root.disks.length * (root.diskH + 8) - 8 : root.diskH
-        spacing: 8
-
-        Repeater {
-            model: root.disks
-
-            Rectangle {
-                id: disk
-                required property var modelData
-                required property int index
-                readonly property real pct: disk.modelData.size > 0 ? disk.modelData.used / disk.modelData.size : 0
-                readonly property bool here: root.path === disk.modelData.path
-
-                width: root.compact ? diskBar.width
-                                    : (diskBar.width - diskBar.spacing * (root.disks.length - 1)) / root.disks.length
-                height: root.diskH
-                radius: Theme.radiusSmall
-                color: disk.here ? Theme.selectedFill
-                                 : Qt.alpha(Theme.textPrimary, diskMa.containsMouse || disk.activeFocus ? 0.09 : 0.05)
-                border.width: 1
-                border.color: disk.here ? "transparent" : Theme.dividerColor
-                Behavior on color { ColorAnimation { duration: 140 } }
-
-                // Au clavier aussi : Tab, puis Entrée ou Espace.
-                activeFocusOnTab: true
-                Keys.onPressed: (event) => {
-                    if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                        root.go(disk.modelData.path);
-                        event.accepted = true;
-                    }
-                }
-
-                // Celle du thème, comme les dossiers des lieux.
-                FileIcon {
-                    id: diskIcon
-                    anchors.left: parent.left
-                    anchors.leftMargin: 12
-                    anchors.verticalCenter: parent.verticalCenter
-                    iconSize: 22
-                    source: root.themed(["drive-harddisk"], "disk")
-                }
-
-                Column {
-                    anchors.left: diskIcon.right
-                    anchors.leftMargin: 10
-                    anchors.right: parent.right
-                    anchors.rightMargin: 12
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 6
-
-                    Item {
-                        width: parent.width
-                        height: diskLabel.implicitHeight
-                        Text {
-                            id: diskLabel
-                            width: parent.width - diskSize.implicitWidth - 6
-                            text: disk.modelData.label
-                            elide: Text.ElideRight
-                            font.family: "Inter"
-                            font.pixelSize: 12
-                            font.weight: disk.here ? Font.DemiBold : Font.Medium
-                            color: Theme.textPrimary
-                        }
-                        Text {
-                            id: diskSize
-                            anchors.right: parent.right
-                            anchors.baseline: diskLabel.baseline
-                            text: disk.modelData.used + " / " + I18n.tr("unit.gb", { n: disk.modelData.size }) + "  ·  " + I18n.tr("common.percent", { n: Math.round(disk.pct * 100) })
-                            font.family: "Inter"
-                            font.pixelSize: 10
-                            font.features: { "tnum": 1 }
-                            color: Theme.textDim
-                        }
-                    }
-                    Rectangle {
-                        width: parent.width
-                        height: 5
-                        radius: 2.5
-                        color: Qt.alpha(Theme.textPrimary, 0.1)
-                        Rectangle {
-                            width: parent.width * disk.pct
-                            height: parent.height
-                            radius: parent.radius
-                            color: Theme.diskSeriesColors[disk.index % Theme.diskSeriesColors.length]
-                        }
-                    }
-                }
-
-                MouseArea {
-                    id: diskMa
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.go(disk.modelData.path)
-                }
-
-                FocusRing { radius: disk.radius + gap }
             }
         }
     }
@@ -1589,7 +1985,7 @@ Item {
     Item {
         id: header
         x: root.sideW
-        y: root.compact ? root.switchH + 8 : 0
+        y: root.switchH + 8
         width: root.width - x
         height: root.headerH
 
@@ -1953,11 +2349,30 @@ Item {
     Rectangle {
         id: content
         x: root.sideW
-        y: root.compact ? placesCard.y + placesCard.height + 8 : root.headerH + 8
+        y: root.compact ? placesCard.y + placesCard.height + 8 : header.y + root.headerH + 8
         width: root.width - x
-        height: root.height - y - root.diskSpace - root.footerH - 2
+        height: root.height - y - root.footerH - 2 - (root.split ? root.splitH + root.splitGap : 0)
         radius: Theme.radius
         color: Qt.alpha(Theme.textPrimary, 0.03)
+
+        // Déposé dans le vide (pas sur un dossier) : dans le dossier montré.
+        DropArea {
+            id: contentDrop
+            anchors.fill: parent
+            keys: ["text/uri-list"]
+            onEntered: (drag) => drag.accept(Qt.CopyAction)
+            onDropped: (drop) => root.dropInto(drop, root.path)
+        }
+        Rectangle {
+            anchors.fill: parent
+            radius: parent.radius
+            color: "transparent"
+            border.width: 1.5
+            border.color: Theme.accentColor
+            // Pas quand ce qu'on glisse en vient déjà.
+            visible: contentDrop.containsDrag && !(DragState.active && root.parentOf(DragState.path) === root.path)
+            z: 3
+        }
         border.width: 1
         border.color: Theme.dividerColor
 
@@ -2059,12 +2474,20 @@ Item {
             activeFocusOnTab: true
             onActiveFocusChanged: if (activeFocus && currentIndex < 0 && count > 0) currentIndex = 0
 
-            // Un clic dans le vide, sous les tuiles, vide la sélection.
+            // Un clic dans le vide, sous les tuiles, vide la sélection ; le
+            // droit, le menu du dossier montré.
             MouseArea {
+                id: voidMa
                 z: -1
                 width: grid.width
                 height: Math.max(grid.contentHeight, grid.height)
-                onClicked: {
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                onClicked: (mouse) => {
+                    if (mouse.button === Qt.RightButton) {
+                        var at = voidMa.mapToItem(root, mouse.x, mouse.y);
+                        root.showMenu(root.path, true, false, at.x, at.y, [], true);
+                        return;
+                    }
                     root.clearSelection();
                     grid.forceActiveFocus();
                 }
@@ -2177,7 +2600,8 @@ Item {
                     anchors.fill: parent
                     anchors.margins: root.listView ? 1 : 3
                     radius: Theme.radiusSmall
-                    color: tile.selected ? Qt.alpha(Theme.accentColor, 0.2)
+                    color: tileDrop.containsDrag ? Qt.alpha(Theme.accentColor, 0.3)
+                         : tile.selected ? Qt.alpha(Theme.accentColor, 0.2)
                          : tileMa.containsMouse ? Qt.alpha(Theme.textPrimary, 0.06) : "transparent"
                     border.width: tile.current && grid.activeFocus ? 1 : 0
                     border.color: Qt.alpha(Theme.accentColor, 0.7)
@@ -2289,6 +2713,21 @@ Item {
                     }
                 }
 
+                // Un dossier reçoit ce qu'on y dépose (pas lui-même).
+                DropArea {
+                    id: tileDrop
+                    anchors.fill: parent
+                    enabled: tile.fileIsDir
+                    keys: ["text/uri-list"]
+                    onEntered: (drag) => {
+                        if (DragState.path === tile.filePath)
+                            drag.accepted = false;
+                        else
+                            drag.accept(Qt.CopyAction);
+                    }
+                    onDropped: (drop) => root.dropInto(drop, tile.filePath)
+                }
+
                 // Le porteur du glisser vers les autres applications. La tuile ne
                 // bouge pas : ce proxy invisible est la cible du drag, et son
                 // passage en Drag.active démarre le glisser système (le montage
@@ -2316,10 +2755,7 @@ Item {
                         DragState.end();
                         dragProxy.x = 0;
                         dragProxy.y = 0;
-                        if (dropAction !== Qt.IgnoreAction) {
-                            root.clearSelection();
-                            root.opened();
-                        }
+                        root.dragFinished(dropAction);
                     }
                 }
 
@@ -2332,6 +2768,7 @@ Item {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
+                    acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
                     drag.target: dragProxy
                     drag.threshold: 10
 
@@ -2351,6 +2788,17 @@ Item {
                     }
                     // N'est pas émis après un glissé.
                     onClicked: (mouse) => {
+                        if (mouse.button === Qt.RightButton) {
+                            var at = tileMa.mapToItem(root, mouse.x, mouse.y);
+                            root.showMenu(tile.filePath, tile.fileIsDir, false, at.x, at.y, root.dragPaths(tile.filePath), false);
+                            return;
+                        }
+                        // Clic du milieu sur un dossier : il s'ouvre dessous.
+                        if (mouse.button === Qt.MiddleButton) {
+                            if (tile.fileIsDir)
+                                root.openSplit(tile.filePath);
+                            return;
+                        }
                         grid.forceActiveFocus();
                         grid.currentIndex = tile.index;
                         if (mouse.modifiers & Qt.ShiftModifier)
@@ -2360,7 +2808,9 @@ Item {
                         else
                             root.selectOnly(tile.index);
                     }
-                    onDoubleClicked: {
+                    onDoubleClicked: (mouse) => {
+                        if (mouse.button !== Qt.LeftButton)
+                            return;
                         root.clearSelection();
                         root.activate(tile.index);
                     }
@@ -2369,13 +2819,28 @@ Item {
         }
     }
 
+    // ── Le dossier du bas (le split) ─────────────────────────────
+    ExplorerPane {
+        id: splitPane
+        visible: root.split
+        explorer: root
+        path: Widgets.explorerSplitPath
+        reloadTick: root.reloadTick
+        x: content.x
+        y: content.y + content.height + root.splitGap
+        width: content.width
+        height: root.split ? root.splitH : 0
+        onNavigate: (p) => Widgets.explorerSplitPath = p
+        onCloseRequested: root.closeSplit()
+    }
+
     // ── Le pied : où l'on en est, et l'affichage ─────────────────
-    //   24 éléments                                  (◉) (▦) (▭) (>_)
-    //   3 sélectionnés · 4,2 Mo  ×  (▯)
+    //   24 éléments                                              (◉) (▦)
+    //   3 sélectionnés · 4,2 Mo  ×
     Item {
         id: footer
         x: root.sideW
-        y: content.y + content.height + 2
+        y: (root.split ? splitPane.y + splitPane.height : content.y + content.height) + 2
         width: root.width - x
         height: root.footerH
 
@@ -2423,16 +2888,6 @@ Item {
                     onClicked: root.clearSelection()
                 }
             }
-            // La sélection vers le téléphone (KDE Connect) ; estompé tant
-            // qu'aucun n'est à portée.
-            GlassButton {
-                anchors.verticalCenter: parent.verticalCenter
-                visible: root.selectedCount > 0
-                implicitHeight: 24
-                icon: "../assets/icons/phone.svg"
-                opacity: root.phone ? 1 : 0.4
-                onClicked: root.sendToPhone()
-            }
         }
 
         Row {
@@ -2453,27 +2908,6 @@ Item {
                 implicitHeight: 24
                 icon: Widgets.explorerListView ? "../assets/icons/view-grid.svg" : "../assets/icons/view-list.svg"
                 onClicked: Widgets.explorerListView = !Widgets.explorerListView
-            }
-            GlassButton {
-                implicitHeight: 24
-                icon: "../assets/icons/folder.svg"
-                onClicked: {
-                    DefaultApps.openInExplorer(root.path);
-                    root.opened();
-                }
-            }
-            GlassButton {
-                implicitHeight: 24
-                icon: "../assets/icons/terminal.svg"
-                onClicked: {
-                    // À distance : une session ssh, dans le même dossier.
-                    if (root.remote)
-                        DefaultApps.runInTerminal("", ["ssh", "-t", root.machine.host,
-                            "cd " + root.shellQuote(root.remotePath(root.path)) + " && exec \"$SHELL\" -l"]);
-                    else
-                        DefaultApps.openInTerminal(root.path);
-                    root.opened();
-                }
             }
         }
     }
@@ -2626,6 +3060,188 @@ Item {
             enabled: root.error !== ""
             cursorShape: Qt.PointingHandCursor
             onClicked: root.error = ""
+        }
+    }
+
+    // ── Le menu du clic droit (cf. showMenu) ─────────────────────
+    //   ╭──────────────────────────╮
+    //   │ (▤) (</>) (>_) (▭) (▯)   │
+    //   │ ▤ Ouvrir                 │
+    //   │ ✎ Renommer               │
+    //   │ 🗑 Supprimer              │
+    //   ╰──────────────────────────╯
+    // Un clic ailleurs, ou Échap, le referme.
+    MouseArea {
+        anchors.fill: parent
+        z: 19
+        visible: root.menuTarget !== null
+        acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+        onPressed: root.menuTarget = null
+    }
+    Rectangle {
+        id: contextMenu
+        z: 20
+        visible: root.menuTarget !== null
+        width: 220
+        height: menuColumn.implicitHeight + 12
+        radius: Theme.radius
+        color: Theme.bgElevated
+        border.width: 1
+        border.color: Theme.dividerColor
+        Keys.onEscapePressed: root.menuTarget = null
+
+        Column {
+            id: menuColumn
+            anchors.fill: parent
+            anchors.margins: 6
+            spacing: 1
+
+            // ── La rangée d'icônes ──
+            Item {
+                visible: root.menuInline.length > 0
+                width: menuColumn.width
+                height: 34
+
+                Row {
+                    id: inlineRow
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    spacing: 4
+
+                    Repeater {
+                        model: root.menuInline
+
+                        Rectangle {
+                            id: inlineBtn
+                            required property var modelData
+                            width: 34
+                            height: 32
+                            radius: Theme.radiusSmall
+                            color: Qt.alpha(Theme.textPrimary, inlineMa.containsMouse ? 0.1 : 0.04)
+                            opacity: inlineBtn.modelData.dim ? 0.45 : 1
+                            Behavior on color { ColorAnimation { duration: 120 } }
+
+                            NixIcon {
+                                anchors.centerIn: parent
+                                iconSize: 17
+                                source: inlineBtn.modelData.glyph
+                                color: inlineMa.containsMouse ? Theme.accentColor : Theme.textPrimary
+                            }
+                            Accessible.role: Accessible.Button
+                            Accessible.name: inlineBtn.modelData.label
+                            MouseArea {
+                                id: inlineMa
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.runMenu(inlineBtn.modelData)
+                            }
+                        }
+                    }
+                }
+            }
+            Repeater {
+                model: root.menuActions
+
+                Rectangle {
+                    id: menuItem
+                    required property var modelData
+                    readonly property bool divider: menuItem.modelData.divider === true
+                    readonly property bool danger: menuItem.modelData.danger === true
+                    // Supprimer, appuyé une fois : il demande confirmation.
+                    readonly property bool armed: menuItem.danger && root.menuArmed
+                    width: menuColumn.width
+                    height: menuItem.divider ? 9 : 30
+                    radius: Theme.radiusSmall
+                    color: menuItem.divider ? "transparent"
+                         : menuItem.armed ? Qt.alpha(Theme.colorDanger, 0.18)
+                         : Qt.alpha(menuItem.danger ? Theme.colorDanger : Theme.textPrimary,
+                                    menuItemMa.containsMouse ? 0.1 : 0)
+                    Behavior on color { ColorAnimation { duration: 120 } }
+
+                    Rectangle {
+                        visible: menuItem.divider
+                        anchors.verticalCenter: parent.verticalCenter
+                        x: 6
+                        width: parent.width - 12
+                        height: 1
+                        color: Theme.dividerColor
+                    }
+                    FileIcon {
+                        id: menuIcon
+                        visible: !menuItem.divider
+                        anchors.left: parent.left
+                        anchors.leftMargin: 9
+                        anchors.verticalCenter: parent.verticalCenter
+                        iconSize: 16
+                        tint: menuItem.danger ? Theme.colorDanger : Theme.accentColor
+                        source: menuItem.divider ? "" : menuItem.modelData.glyph
+                    }
+                    Text {
+                        visible: !menuItem.divider
+                        anchors.left: menuIcon.right
+                        anchors.leftMargin: 10
+                        anchors.right: parent.right
+                        anchors.rightMargin: 10
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: menuItem.armed ? menuItem.modelData.confirm : (menuItem.modelData.label || "")
+                        elide: Text.ElideRight
+                        font.family: "Inter"
+                        font.pixelSize: 12
+                        font.weight: menuItem.armed ? Font.DemiBold : Font.Medium
+                        color: menuItem.danger ? Theme.colorDanger : Theme.textPrimary
+                    }
+                    MouseArea {
+                        id: menuItemMa
+                        anchors.fill: parent
+                        enabled: !menuItem.divider
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.runMenu(menuItem.modelData)
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Le nouveau nom (cf. startRename) ─────────────────────────
+    // À la place du menu ; un clic ailleurs annule.
+    MouseArea {
+        anchors.fill: parent
+        z: 19
+        visible: root.renaming !== ""
+        acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+        onPressed: root.finishRename(false)
+    }
+    Rectangle {
+        id: renameBox
+        z: 20
+        visible: root.renaming !== ""
+        x: Math.min(contextMenu.x, root.width - width - 4)
+        y: contextMenu.y
+        width: 260
+        height: 40
+        radius: Theme.radius
+        color: Theme.bgElevated
+        border.width: 1
+        border.color: Qt.alpha(Theme.accentColor, 0.6)
+
+        TextInput {
+            id: renameInput
+            anchors.fill: parent
+            anchors.leftMargin: 12
+            anchors.rightMargin: 12
+            verticalAlignment: TextInput.AlignVCenter
+            clip: true
+            selectByMouse: true
+            font.family: "Inter"
+            font.pixelSize: 12
+            color: Theme.textPrimary
+            selectionColor: Qt.alpha(Theme.accentColor, 0.45)
+            selectedTextColor: Theme.textPrimary
+            Keys.onReturnPressed: root.finishRename(true)
+            Keys.onEnterPressed: root.finishRename(true)
+            Keys.onEscapePressed: root.finishRename(false)
         }
     }
 }

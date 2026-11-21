@@ -36,6 +36,8 @@ Item {
     //   (−)  120  (+)
     //       ● ● ● ●          les temps : le premier en vert
     //   ( 4/4 )( Tap )
+    // Toute la hauteur de la carte : le titre en haut, la mesure et le tap
+    // en bas, le tempo au milieu de ce qui reste.
     implicitHeight: column.implicitHeight
 
     ColumnLayout {
@@ -61,6 +63,8 @@ Item {
                 onClicked: Tempo.running = !Tempo.running
             }
         }
+
+        Item { Layout.fillHeight: true }
 
         // Le tempo, en grand, entre ses deux boutons ; les temps dessous.
         RowLayout {
@@ -149,6 +153,8 @@ Item {
                 onClicked: Tempo.bpm = Tempo.clampBpm(Tempo.bpm + 1)
             }
         }
+
+        Item { Layout.fillHeight: true }
 
         // La mesure (2 → 3 → 4 → 5 → 6 → 2) et le tap tempo.
         RowLayout {

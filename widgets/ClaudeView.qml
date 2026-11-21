@@ -348,7 +348,6 @@ Flickable {
                     cursorShape: Qt.PointingHandCursor
                     onClicked: {
                         ClaudeSessions.resume(recentRow.modelData);
-                        Widgets.panelOpen = false;
                     }
                 }
             }

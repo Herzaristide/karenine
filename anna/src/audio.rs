@@ -7,7 +7,8 @@
 //! system's audio server (PipeWire) multiplexes capture clients, exactly like
 //! the several concurrent `parec` processes the old shell backends used.
 //! The voice assistant instead reads the echo-cancelled mic through
-//! `pw-record` (`start_voice_capture`): cpal cannot pick a PipeWire node.
+//! `pw-record` (`start_voice_capture`): cpal cannot pick a PipeWire node; the
+//! chromagram, what the speakers play (`start_output_capture`), the same way.
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::io::Read;
@@ -111,18 +112,31 @@ pub fn start_voice_capture() -> Result<(Capture, Receiver<Vec<f32>>), String> {
     })
 }
 
+/// What the computer plays — the monitor of the default output, following it
+/// when it changes (headphones, HDMI…) — for the chromagram: it must hear the
+/// video or the song, not the violin played over it. At `rate`; falls back to
+/// the default mic when PipeWire cannot give it.
+pub fn start_output_capture(rate: u32) -> Result<(Capture, Receiver<Vec<f32>>), String> {
+    start_pw_record(&["-P", "{ stream.capture.sink = true }"], rate, "sortie").or_else(|e| {
+        eprintln!("anna: audio: {e}, micro par défaut");
+        start_capture()
+    })
+}
+
 /// Mono `f32` samples from a PipeWire node, read from a `pw-record` child.
 fn start_node_capture(node: &str, rate: u32) -> Result<(Capture, Receiver<Vec<f32>>), String> {
+    start_pw_record(&["--target", node], rate, node)
+}
+
+/// Mono `f32` samples from a `pw-record` child; `target` says what it links to.
+fn start_pw_record(
+    target: &[&str],
+    rate: u32,
+    label: &str,
+) -> Result<(Capture, Receiver<Vec<f32>>), String> {
     let mut child = Command::new("pw-record")
-        .args([
-            "--raw",
-            "--target",
-            node,
-            "--format",
-            "f32",
-            "--channels",
-            "1",
-        ])
+        .args(["--raw", "--format", "f32", "--channels", "1"])
+        .args(target)
         .args(["--rate", &rate.to_string(), "-"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -159,7 +173,7 @@ fn start_node_capture(node: &str, rate: u32) -> Result<(Capture, Receiver<Vec<f3
     // `capture` kills the child and joins the thread).
     match ready_rx.recv_timeout(std::time::Duration::from_secs(2)) {
         Ok(()) => Ok((capture, sample_rx)),
-        Err(_) => Err(format!("pw-record --target {node} : aucun son")),
+        Err(_) => Err(format!("pw-record ({label}) : aucun son")),
     }
 }
 

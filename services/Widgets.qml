@@ -37,6 +37,8 @@ Singleton {
     // Le dossier ouvert dans l'explorateur, gardé d'un onglet à l'autre ;
     // vide : le dossier personnel.
     property string explorerPath: ""
+    // Le second dossier, sous le premier (le mode split) ; vide : fermé.
+    property string explorerSplitPath: ""
     // L'Explorer en liste (nom, taille, date) plutôt qu'en tuiles.
     property bool explorerListView: false
     // La machine choisie, la même pour tous les onglets qui en montrent une

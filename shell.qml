@@ -135,4 +135,9 @@ ShellRoot {
     PolkitPrompt {
         screen: Display.primary
     }
+
+    // Les autres demandes, relayées par anna : ssh, git, sudo… (Prompts).
+    PromptHost {
+        screen: Display.primary
+    }
 }

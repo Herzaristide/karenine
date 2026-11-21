@@ -3,7 +3,7 @@ import QtQuick.Layouts
 import "../services"
 
 // L'onde, en haut de la carte « Enregistrer » : la forme d'onde de la prise
-// choisie dans la liste dessous (`recorder`, un AudioRecorder), et sous
+// choisie dans la liste à côté (`recorder`, un AudioRecorder), et sous
 // elle, où en est la lecture et ce que dure la prise. Un clic ou un glisser
 // sur l'onde y va. Pendant l'enregistrement, l'onde passe au rouge et se
 // dessine en direct, avec le temps écoulé et la source.

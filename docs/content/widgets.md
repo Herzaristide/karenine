@@ -25,7 +25,7 @@ QML component.
 | `MusicPlayerWidget.qml` | Music player. |
 | `Tuner.qml` | Tuner — see [Music tools](#audio-tools). |
 | `Metronome.qml` | Metronome — see [Music tools](#audio-tools). |
-| `ChromaGraph.qml` | Chromagram — see [Music tools](#audio-tools). |
+| `Harmony.qml` | What plays, as harmony: chord, key on the circle of fifths — see [Music tools](#audio-tools). |
 | `MiniGraph.qml` | Small reusable graph. |
 | `Settings.qml` | Settings, in columns: devices; screen, voice (the wake word “Karénine”, through `Pilot.voiceWakeToggle()` — anna remembers it — and the **voice language**), **interface language**; appearance; palette (the Settings tab of `WidgetHub`). The two languages are separate settings: see [Languages](#languages). |
 | `DeviceSettings.qml` | First column of the settings: sound output and input, webcam (PipeWire nodes, `wpctl set-default`); brightness is in the levels bar (`LevelsIsland`), Bluetooth in the top bar (`TopIsland`). |
@@ -87,7 +87,7 @@ it.
 ## Relations
 
 - Shown by the [panels](#panels), selected through the [shell's IPC](#shell).
-- The music widgets (`Tuner`, `Metronome`, `ChromaGraph`) rely on
+- The music widgets (`Tuner`, `Metronome`, `Harmony`) rely on
   [backend services](#backend) — grouped in [Music tools](#audio-tools).
 - Their colors come from the [theme](#theme), their text from the
   [dictionaries](#languages).

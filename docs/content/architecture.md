@@ -2,7 +2,7 @@
 title: Architecture & conventions
 group: General
 summary: Repository layout and QML import rules (qmldir, relative paths, Qt.resolvedUrl).
-links: [shell, panels, widgets, search, lock-greeter, ai, backend, theme, languages]
+links: [prompts, shell, panels, widgets, search, lock-greeter, ai, backend, theme, languages]
 ---
 
 # Architecture & conventions
@@ -21,11 +21,11 @@ services/            Cross-cutting singletons and search sources
   NoteSource, WebSource
 panels/              Top-level chrome (Wayland windows)
   ConversationBar, WidgetHub, TopIsland, LevelsIsland, TabletBar, FloatingWidgets, WidgetCard,
-  PolkitPrompt
+  PolkitPrompt, PromptHost, PromptCard, PromptButton
 widgets/             Panel contents
   FileExplorer, HardwareStats, MachinePicker, PhoneWidget, NotificationCenter,
   NotificationCard, NotesWidget, MusicPlayerWidget, Metronome, Tuner, AudioRecorder,
-  ChromaGraph, MiniGraph, GestureControls, Settings, DeviceSettings,
+  Harmony, MiniGraph, GestureControls, Settings, DeviceSettings,
   WifiSettings, BluetoothMenu, GlassButton, FocusRing, NixIcon
 auth/                The card shared by the lock and login screens
 lock/                Lock screen surfaces (music, stats)
@@ -63,6 +63,7 @@ the [Search](#search) page):
 | `DefaultApps.qml` | The editor, file manager and terminal used to open a file, resolved from the system's settings (`xdg-mime`, `$TERMINAL`…), never hard-coded. |
 | `Tuning.qml` | The tuner's reference A, persisted in `tuner.json`. |
 | `Recorder.qml` | The microphone and screen recordings, as anna runs them (`record_watch`): what the Music tab and the top bar show and send. |
+| `Prompts.qml` | The requests anna relays to the user (ssh, git and sudo askpass…): `prompt_watch`, answered with `prompt_reply`; shown by `panels/PromptHost.qml` (see [Prompts](#prompts)). |
 | `DragState.qml` | A drag in progress (from the explorer): it necessarily takes the cursor out of the conversation bar, which would close it and destroy the source tile mid-gesture — this flag holds the closing back while dragging. |
 
 ## QML conventions

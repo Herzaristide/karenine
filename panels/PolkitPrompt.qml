@@ -92,193 +92,93 @@ PanelWindow { // qmllint disable uncreatable-type
         }
     }
 
-    Rectangle {
+    PromptCard {
         id: card
         anchors.centerIn: parent
-        width: 420
-        implicitHeight: col.implicitHeight + 40
-        radius: Theme.radius
-        color: Theme.bgDeep
-        border.width: 1
-        border.color: prompt.failed ? Theme.colorDanger : Theme.dividerColor
+        shown: prompt.active
+        failed: prompt.failed
+        title: I18n.tr("polkit.title")
+        // Ce que l'application demande, dans ses mots.
+        text: prompt.flow ? prompt.flow.message : ""
+        detail: prompt.flow ? prompt.flow.actionId : ""
+        // Le retour de polkit (« Mot de passe incorrect »…).
+        message: prompt.flow ? prompt.flow.supplementaryMessage : ""
+        messageIsError: prompt.flow !== null && prompt.flow.supplementaryIsError
+        onCancelled: prompt.cancel()
 
-        opacity: prompt.active ? 1 : 0
-        scale: prompt.active ? 1 : 0.96
-        Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
-        Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+        Rectangle {
+            Layout.fillWidth: true
+            implicitHeight: 42
+            radius: 8
+            color: Theme.bgInput
+            border.width: 2
+            border.color: prompt.failed ? Theme.colorDanger
+                        : field.activeFocus ? Theme.accentColor : Theme.dividerColor
+            Behavior on border.color { ColorAnimation { duration: 150 } }
 
-        // Les clics sur la carte ne vont pas au voile.
-        MouseArea { anchors.fill: parent }
+            transform: Translate { id: shakeX }
+            SequentialAnimation {
+                id: shake
+                loops: 2
+                NumberAnimation { target: shakeX; property: "x"; to: 8; duration: 45 }
+                NumberAnimation { target: shakeX; property: "x"; to: -8; duration: 45 }
+                NumberAnimation { target: shakeX; property: "x"; to: 0; duration: 45 }
+            }
 
-        Keys.onEscapePressed: prompt.cancel()
-
-        ColumnLayout {
-            id: col
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.margins: 20
-            spacing: 10
-
-            Text {
-                text: I18n.tr("polkit.title")
-                font.family: "Inter"
-                font.pixelSize: 15
-                font.weight: Font.DemiBold
+            TextInput {
+                id: field
+                anchors.fill: parent
+                anchors.leftMargin: 14
+                anchors.rightMargin: 14
+                verticalAlignment: TextInput.AlignVCenter
+                // polkit dit si la réponse peut s'afficher (rarement).
+                echoMode: prompt.flow && prompt.flow.responseVisible ? TextInput.Normal : TextInput.Password
+                passwordCharacter: "•"
+                enabled: prompt.flow !== null && prompt.flow.isResponseRequired
                 color: Theme.textPrimary
-            }
-
-            // Ce que l'application demande, dans ses mots.
-            Text {
-                Layout.fillWidth: true
-                text: prompt.flow ? prompt.flow.message : ""
-                font.family: "Inter"
-                font.pixelSize: 12
-                color: Theme.textSecondary
-                wrapMode: Text.Wrap
-            }
-
-            Text {
-                Layout.fillWidth: true
-                visible: text !== ""
-                text: prompt.flow ? prompt.flow.actionId : ""
+                selectionColor: Theme.accentColor
+                selectedTextColor: Theme.selectedTextColor
                 font.family: "JetBrains Mono"
-                font.pixelSize: 10
-                color: Theme.textDim
-                elide: Text.ElideMiddle
-            }
+                font.pixelSize: 14
+                onAccepted: prompt.submit()
+                Keys.onEscapePressed: prompt.cancel()
 
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.topMargin: 4
-                implicitHeight: 42
-                radius: 8
-                color: Theme.bgInput
-                border.width: 2
-                border.color: prompt.failed ? Theme.colorDanger
-                            : field.activeFocus ? Theme.accentColor : Theme.dividerColor
-                Behavior on border.color { ColorAnimation { duration: 150 } }
-
-                transform: Translate { id: shakeX }
-                SequentialAnimation {
-                    id: shake
-                    loops: 2
-                    NumberAnimation { target: shakeX; property: "x"; to: 8; duration: 45 }
-                    NumberAnimation { target: shakeX; property: "x"; to: -8; duration: 45 }
-                    NumberAnimation { target: shakeX; property: "x"; to: 0; duration: 45 }
-                }
-
-                TextInput {
-                    id: field
-                    anchors.fill: parent
-                    anchors.leftMargin: 14
-                    anchors.rightMargin: 14
-                    verticalAlignment: TextInput.AlignVCenter
-                    // polkit dit si la réponse peut s'afficher (rarement).
-                    echoMode: prompt.flow && prompt.flow.responseVisible ? TextInput.Normal : TextInput.Password
-                    passwordCharacter: "•"
-                    enabled: prompt.flow !== null && prompt.flow.isResponseRequired
-                    color: Theme.textPrimary
-                    selectionColor: Theme.accentColor
-                    selectedTextColor: Theme.selectedTextColor
-                    font.family: "JetBrains Mono"
-                    font.pixelSize: 14
-                    onAccepted: prompt.submit()
-                    Keys.onEscapePressed: prompt.cancel()
-
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        visible: field.text === ""
-                        // L'invite de PAM (« Password: »), sinon la nôtre.
-                        text: {
-                            var p = prompt.flow ? prompt.flow.inputPrompt.trim().replace(/:$/, "") : "";
-                            return p === "" || p === "Password" ? I18n.tr("auth.password") : p + "…";
-                        }
-                        color: Theme.placeholderColor
-                        font: field.font
-                    }
-                }
-
-                // polkit vérifie.
                 Text {
-                    anchors.right: parent.right
-                    anchors.rightMargin: 14
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: prompt.flow !== null && !prompt.flow.isResponseRequired
-                    text: "…"
-                    color: Theme.accentColor
-                    font.family: "JetBrains Mono"
-                    font.pixelSize: 14
+                    visible: field.text === ""
+                    // L'invite de PAM (« Password: »), sinon la nôtre.
+                    text: {
+                        var p = prompt.flow ? prompt.flow.inputPrompt.trim().replace(/:$/, "") : "";
+                        return p === "" || p === "Password" ? I18n.tr("auth.password") : p + "…";
+                    }
+                    color: Theme.placeholderColor
+                    font: field.font
                 }
             }
 
-            // Le retour de polkit (« Mot de passe incorrect »…).
+            // polkit vérifie.
             Text {
-                Layout.fillWidth: true
-                visible: text !== ""
-                text: prompt.flow ? prompt.flow.supplementaryMessage : ""
-                color: prompt.flow && prompt.flow.supplementaryIsError ? Theme.colorDanger : Theme.textDim
-                font.family: "Inter"
-                font.pixelSize: 11
-                wrapMode: Text.Wrap
-            }
-
-            RowLayout {
-                Layout.alignment: Qt.AlignRight
-                Layout.topMargin: 4
-                spacing: 8
-
-                Button {
-                    label: I18n.tr("common.cancel")
-                    onClicked: prompt.cancel()
-                }
-                Button {
-                    label: I18n.tr("permission.allow")
-                    primary: true
-                    onClicked: prompt.submit()
-                }
-            }
-        }
-    }
-
-    component Button: Rectangle {
-        id: btn
-        property string label
-        property bool primary: false
-        readonly property bool hovered: btnMa.containsMouse || btn.activeFocus
-        signal clicked()
-
-        implicitWidth: btnText.implicitWidth + 28
-        implicitHeight: 32
-        radius: Theme.radiusSmall
-        color: btn.primary ? Theme.accentColor : (btn.hovered ? Theme.hoverOverlay : "transparent")
-        border.width: btn.primary ? 0 : 1
-        border.color: Theme.dividerColor
-        opacity: btnMa.pressed ? 0.8 : 1
-
-        activeFocusOnTab: true
-        Keys.onPressed: (event) => {
-            if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                btn.clicked();
-                event.accepted = true;
+                anchors.right: parent.right
+                anchors.rightMargin: 14
+                anchors.verticalCenter: parent.verticalCenter
+                visible: prompt.flow !== null && !prompt.flow.isResponseRequired
+                text: "…"
+                color: Theme.accentColor
+                font.family: "JetBrains Mono"
+                font.pixelSize: 14
             }
         }
 
-        Text {
-            id: btnText
-            anchors.centerIn: parent
-            text: btn.label
-            font.family: "Inter"
-            font.pixelSize: 12
-            font.weight: Font.Medium
-            color: btn.primary ? Theme.bgDeep : Theme.textPrimary
-        }
-        MouseArea {
-            id: btnMa
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: btn.clicked()
-        }
+        buttons: [
+            PromptButton {
+                label: I18n.tr("common.cancel")
+                onClicked: prompt.cancel()
+            },
+            PromptButton {
+                label: I18n.tr("permission.allow")
+                primary: true
+                onClicked: prompt.submit()
+            }
+        ]
     }
 }

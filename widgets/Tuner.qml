@@ -84,6 +84,8 @@ Item {
     //   ┊ · · · ┃ · · · ┊
     //   440,0 Hz    A4 = 440
     // Coupé (Tuning.on), le micro reste fermé et la jauge s'efface.
+    // Toute la hauteur de la carte : le titre en haut, la fréquence et la
+    // référence en bas, la note et la jauge au milieu de ce qui reste.
     implicitHeight: column.implicitHeight
 
     ColumnLayout {
@@ -109,6 +111,8 @@ Item {
                 onClicked: Tuning.setOn(!Tuning.on)
             }
         }
+
+        Item { Layout.fillHeight: true }
 
         // La note, en grand, et son écart à côté.
         Row {
@@ -191,6 +195,8 @@ Item {
                 Behavior on color { ColorAnimation { duration: 160 } }
             }
         }
+
+        Item { Layout.fillHeight: true }
 
         // La fréquence entendue, et la référence, qui se règle ici
         // (− + au survol, la molette, ou ↑ ↓ au clavier ; un clic revient

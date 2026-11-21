@@ -4,7 +4,8 @@ import Quickshell
 import Quickshell.Io
 import "../services"
 
-// Le choix de la machine, partagé par l'Explorer et l'onglet Système :
+// Le choix de la machine, dans l'onglet Système (l'Explorer la choisit par
+// ses disques) :
 // celle-ci, ou un serveur du tailnet qu'on atteint par ssh (la liste
 // d'anna, `anna servers list`). Une pastille au nom de la machine
 // montrée ; un clic déroule la liste des autres, un clic ailleurs la

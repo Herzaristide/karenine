@@ -10,21 +10,25 @@ import "../services"
 //   │     ● ● ● ●     │        │ ┊····┃····┊       │   seule ligne
 //   │ ( 4/4 )( Tap )  │        │ 440,0 Hz   A4 440 │
 //   ╰─────────────────╯        ╰───────────────────╯
-//                    ╭──────╮
-//                    │  ◉   │      le lecteur, au centre ; son disque
-//                    ╰──────╯      prend la place qui reste, entre
-//                 Titre du morceau  96 et 220 px
-//                ━━━━━●──────────
-//                 ⟲  ⏮  ⏯  ⏭  ≡
 //
-//   ╭ ENREGISTRER ● ────────────────────────────────╮
-//   │ ▂▅▇█▇▅▃▂▁▂▃▆█▇▆|▅▃▂▁▁▂▄▆▇▆▄▃▂               │   la prise choisie,
-//   │ (●)(▶)                                  (🎤) │   les commandes, puis
-//   │ 16:59                                   2:13 │   les prises
-//   ╰──────────────────────────────────────────────╯
+//     (◉) Titre du morceau            • la = 432 Hz     le lecteur, à même
+//         Artiste · Album                               le fond : le petit
+//     Am                              ╭─ F C G ─╮       disque et le morceau,
+//     A · C · E                      Bb   C     D       l'harmonie de ce qui
+//     (Dm)(G7)(C)                     ╰ C# F# B ╯       joue, la progression
+//     ━━━━━━━●────────────────────────────────          et les commandes ;
+//             ⟲    ⏮    ⏯    ⏭    ≡                     centré dans le reste
 //
-// Tout se règle sur la largeur du panneau (340 à 860 px) et sa hauteur :
-// rien ne dépasse. Sur un écran trop bas pour tout, la vue défile.
+//   ╭ ENREGISTRER ● ─────────────────── (●)(▶)(🎤) ╮
+//   │ ▂▅▇█▇▅▃▂▁▂▃▆█▇▆|▅▃▂    16:59           2:13 │   les commandes à
+//   │ 0:42          2:13      16:40           1:05 │   droite du titre, la
+//   │                         hier 21:12      3:20 │   prise choisie à
+//   ╰──────────────────────────────────────────────╯   gauche, les prises
+//                                                       à droite
+//
+// Les cartes du haut et celle du bas ont la même hauteur (`edgeH`) ; le
+// lecteur prend ce qui reste, et grandit avec. Tout se règle sur la largeur
+// du panneau (340 à 860 px) et sa hauteur : rien ne dépasse. Sur un écran trop bas pour tout, la vue défile.
 Flickable {
     id: root
 
@@ -36,9 +40,14 @@ Flickable {
 
     // La largeur des deux cartes du haut, au plus.
     readonly property int cornerMax: 240
-    // La hauteur laissée aux prises, au moins.
-    readonly property int recordMin: 210
+    // La hauteur des prises, au moins (le titre, l'onde et les commandes ;
+    // les prises, à côté, défilent).
+    readonly property int recordMin: 150
     readonly property int pad: 12
+    // Les cartes du haut et celle du bas ont la même hauteur : celle qu'il
+    // faut à la plus haute. Le lecteur, entre les deux, prend le reste.
+    readonly property real edgeH: Math.max(Math.max(metronome.implicitHeight, tuner.implicitHeight) + 2 * root.pad,
+                                           root.recordMin)
 
     ColumnLayout {
         id: column
@@ -59,11 +68,11 @@ Flickable {
 
             readonly property int gap: 12
             readonly property real cardW: Math.min(root.cornerMax, (root.width - tools.gap) / 2)
-            readonly property real cardH: Math.max(metronome.implicitHeight, tuner.implicitHeight) + 2 * root.pad
 
             Card {
                 Layout.preferredWidth: tools.cardW
-                Layout.preferredHeight: tools.cardH
+                Layout.preferredHeight: root.edgeH
+                // Toute la hauteur commune.
                 Metronome {
                     id: metronome
                     anchors.fill: parent
@@ -77,7 +86,7 @@ Flickable {
             }
             Card {
                 Layout.preferredWidth: tools.cardW
-                Layout.preferredHeight: tools.cardH
+                Layout.preferredHeight: root.edgeH
                 Tuner {
                     id: tuner
                     anchors.fill: parent
@@ -87,27 +96,37 @@ Flickable {
             }
         }
 
-        // ── Le lecteur, au centre ────────────────────────────────────
-        MusicPlayerWidget {
-            id: player
+        // ── Le lecteur, et l'harmonie de ce qui joue ─────────────────
+        // Pas de carte : à même le fond, aligné sur le contenu des cartes,
+        // centré dans la hauteur qui reste. Plus il y en a, plus la roue
+        // et le disque grandissent.
+        Item {
+            id: middle
             Layout.fillWidth: true
-            Layout.preferredHeight: player.implicitHeight
-            Layout.topMargin: 4
-            Layout.bottomMargin: 4
-            maxDisc: Math.max(96, Math.min(220, root.height - tools.height - root.recordMin
-                                                - 2 * column.spacing - 8 - player.chromeHeight))
+            Layout.fillHeight: true
+            Layout.minimumHeight: player.baseHeight
+
+            MusicPlayerWidget {
+                id: player
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: root.pad
+                anchors.rightMargin: root.pad
+                height: implicitHeight
+                grow: Math.max(0, Math.min(64, middle.height - player.baseHeight - 2 * root.pad))
+            }
         }
 
         // ── Les prises ───────────────────────────────────────────────
         Card {
             Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.minimumHeight: root.recordMin
+            Layout.preferredHeight: root.edgeH
 
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: root.pad
-                spacing: 10
+                spacing: 8
 
                 RowLayout {
                     Layout.fillWidth: true
@@ -130,16 +149,30 @@ Flickable {
                         }
                     }
                     Item { Layout.fillWidth: true }
+                    // Enregistrer, jouer, la source : à droite du titre,
+                    // comme le métronome et l'accordeur.
+                    AudioRecorder {
+                        id: recorder
+                        takesHost: takes
+                    }
                 }
-                TakeView {
-                    recorder: recorder
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 56
-                }
-                AudioRecorder {
-                    id: recorder
+                // L'onde à gauche, les prises à droite.
+                RowLayout {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    spacing: 14
+
+                    TakeView {
+                        recorder: recorder
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                    }
+
+                    Item {
+                        id: takes
+                        Layout.fillHeight: true
+                        Layout.preferredWidth: Math.max(140, Math.min(260, parent.width * 0.42))
+                    }
                 }
             }
         }

@@ -2,3 +2,7 @@ PolkitPrompt 1.0 PolkitPrompt.qml
 Bar 1.0 Bar.qml
 Surface 1.0 Surface.qml
 SidePanel 1.0 SidePanel.qml
+PromptHost 1.0 PromptHost.qml
+PromptCard 1.0 PromptCard.qml
+PromptButton 1.0 PromptButton.qml
+ChoiceTiles 1.0 ChoiceTiles.qml

@@ -220,6 +220,26 @@ pub enum Command {
     VoiceTranscribe {
         path: String,
     },
+    // ── prompts (prompts.rs) ──────────────────────────────────────────────
+    /// Show a prompt in the shell and wait for its answer (sent by `anna
+    /// askpass`…): `{"ok":true,"action":"…","values":{…}}`, or
+    /// `{"ok":false,"error":"no_shell"|"timeout"|"gone"}`. Closing the
+    /// connection withdraws it.
+    PromptOpen {
+        prompt: crate::prompts::Spec,
+    },
+    /// Keep connection open; daemon pushes `{"prompts":[View…]}`, the
+    /// pending prompts oldest first, on every change.
+    PromptWatch,
+    /// The shell's answer to prompt `id`: `action` is a button's id or
+    /// "cancel". `{"ok":true}`, or `{"ok":false}` if it no longer waits.
+    PromptReply {
+        id: String,
+        action: String,
+        #[serde(default)]
+        values: HashMap<String, String>,
+    },
+
     /// Sent by `anna mcp`: run one desk tool for the pilot.
     /// `{"ok":bool,"text":"…"}`.
     Desk {

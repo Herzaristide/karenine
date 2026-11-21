@@ -4,7 +4,7 @@ Tuner 1.0 Tuner.qml
 AudioRecorder 1.0 AudioRecorder.qml
 TakeView 1.0 TakeView.qml
 MusicPlayerWidget 1.0 MusicPlayerWidget.qml
-ChromaGraph 1.0 ChromaGraph.qml
+Harmony 1.0 Harmony.qml
 MiniGraph 1.0 MiniGraph.qml
 Settings 1.0 Settings.qml
 NixIcon 1.0 NixIcon.qml
@@ -13,6 +13,7 @@ DeviceSettings 1.0 DeviceSettings.qml
 FocusRing 1.0 FocusRing.qml
 PhoneWidget 1.0 PhoneWidget.qml
 FileExplorer 1.0 FileExplorer.qml
+ExplorerPane 1.0 ExplorerPane.qml
 MachinePicker 1.0 MachinePicker.qml
 NotificationCard 1.0 NotificationCard.qml
 NotificationCenter 1.0 NotificationCenter.qml

@@ -15,9 +15,11 @@ wifi          regular  wifi-high
 wifi-off      regular  wifi-slash
 calendar      regular  calendar-blank
 brightness    regular  sun
+code          regular  code
 copy          regular  copy
 eye           regular  eye
 folder        regular  folder
+split         regular  rows
 lock          regular  lock
 logout        regular  sign-out
 mic           regular  microphone

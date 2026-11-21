@@ -3,18 +3,20 @@ import QtQuick
 import QtQuick.Layouts
 import "../services"
 
-// S'enregistrer et se réécouter : le bas de la carte « Enregistrer » de la
-// vue Musique (MusicView), et l'état que l'onde au-dessus (TakeView) affiche. anna
+// S'enregistrer et se réécouter : les commandes et la liste des prises de la
+// carte « Enregistrer » de la vue Musique (MusicView), et l'état que l'onde
+// (TakeView) affiche. Le service Recorder
 // tient l'enregistrement (services/Recorder.qml, anna/src/recorder.rs) : il
 // continue quand l'onglet se ferme, et s'arrête d'ici, par son raccourci ou
 // par `anna record stop`. Deux sources : le micro seul, ou le micro avec ce
 // que joue l'ordinateur (jouer par-dessus un morceau). Chaque prise va dans
 // le dossier Musique, en FLAC ; les huit dernières se rejouent ici.
 //
-//   (●)(▶)(🎤)          enregistrer, jouer, la source
-//   16:59        2:13   les prises, la plus récente en haut ;
-//   16:40        1:05   un clic choisit celle que le lecteur montre
-//   hier 21:12   3:20
+//   ENREGISTRER                  (●)(▶)(🎤)    les commandes, à droite du
+//   ▂▅▇█▇▅▃▂▁▂▃▆█▇▆|▅▃▂   16:59        2:13   titre ; l'onde (TakeView) à
+//   0:42          2:13     16:40        1:05   gauche ; les prises à droite,
+//                          hier 21:12   3:20   dans `takesHost` : un clic
+//                                               choisit celle de l'onde
 //
 // À l'arrêt d'un enregistrement, la nouvelle prise arrive en tête, choisie,
 // prête à être écoutée. anna joue les prises (Recorder.play) ; une pause
@@ -23,7 +25,12 @@ import "../services"
 Item {
     id: recPanel
 
-    implicitWidth: 150
+    implicitWidth: actions.implicitWidth
+    implicitHeight: actions.implicitHeight
+
+    // Où va la liste des prises : la vue la place à droite de la carte, à
+    // côté de l'onde et des commandes.
+    property Item takesHost: null
 
     readonly property bool on: Recorder.audioOn
     // La source du prochain enregistrement : "mic" ou "mix".
@@ -143,122 +150,116 @@ Item {
         return m[3] + "/" + m[2] + " " + hm;
     }
 
-    ColumnLayout {
+    // ── Enregistrer, jouer, la source ──
+    RowLayout {
+        id: actions
         anchors.fill: parent
-        spacing: 8
+        spacing: 6
 
-        // ── Enregistrer, jouer, la source ──
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 6
-
-            // Enregistrer, arrêter : le voyant bat pendant l'enregistrement.
-            GlassButton {
-                id: recBtn
-                implicitWidth: 32
-                implicitHeight: 32
-                danger: true
-                enabled: Recorder.available
-                icon: Qt.resolvedUrl("../assets/icons/" + (recPanel.on ? "stop.svg" : "record.svg"))
-                onClicked: recPanel.on ? Recorder.stop("audio") : Recorder.toggleAudio(recPanel.mode)
-                SequentialAnimation on opacity {
-                    running: recPanel.on
-                    loops: Animation.Infinite
-                    onStopped: recBtn.opacity = 1
-                    NumberAnimation { to: 0.55; duration: 700; easing.type: Easing.InOutSine }
-                    NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutSine }
-                }
+        // Enregistrer, arrêter : le voyant bat pendant l'enregistrement.
+        GlassButton {
+            id: recBtn
+            implicitWidth: 26
+            implicitHeight: 26
+            danger: true
+            enabled: Recorder.available
+            icon: Qt.resolvedUrl("../assets/icons/" + (recPanel.on ? "stop.svg" : "record.svg"))
+            onClicked: recPanel.on ? Recorder.stop("audio") : Recorder.toggleAudio(recPanel.mode)
+            SequentialAnimation on opacity {
+                running: recPanel.on
+                loops: Animation.Infinite
+                onStopped: recBtn.opacity = 1
+                NumberAnimation { to: 0.55; duration: 700; easing.type: Easing.InOutSine }
+                NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutSine }
             }
-            GlassButton {
-                implicitWidth: 32
-                implicitHeight: 32
-                enabled: !recPanel.on && recPanel.take !== null && Recorder.available
-                opacity: enabled ? 1 : 0.45
-                accent: recPanel.playing
-                icon: Qt.resolvedUrl("../assets/icons/" + (recPanel.playing ? "pause.svg" : "play.svg"))
-                onClicked: recPanel.toggle()
+        }
+        GlassButton {
+            implicitWidth: 26
+            implicitHeight: 26
+            enabled: !recPanel.on && recPanel.take !== null && Recorder.available
+            opacity: enabled ? 1 : 0.45
+            accent: recPanel.playing
+            icon: Qt.resolvedUrl("../assets/icons/" + (recPanel.playing ? "pause.svg" : "play.svg"))
+            onClicked: recPanel.toggle()
+        }
+
+        // La source : le micro seul, ou avec l'ordinateur (teintée).
+        GlassButton {
+            implicitWidth: 26
+            implicitHeight: 26
+            enabled: !recPanel.on
+            accent: (recPanel.on && Recorder.audio ? Recorder.audio.mode : recPanel.mode) === "mix"
+            icon: Qt.resolvedUrl("../assets/icons/" + (accent ? "computer.svg" : "mic.svg"))
+            onClicked: recPanel.mode = recPanel.mode === "mix" ? "mic" : "mix"
+        }
+    }
+
+    // ── Les prises, dans `takesHost` ──
+    ListView {
+        id: takeList
+        parent: recPanel.takesHost
+        anchors.fill: parent
+        spacing: 2
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        enabled: !recPanel.on
+        opacity: recPanel.on ? 0.45 : 1
+        Behavior on opacity { NumberAnimation { duration: 180 } }
+        model: Recorder.takes
+
+        delegate: Rectangle {
+            id: row
+            required property var modelData
+            readonly property bool current: row.modelData.path === recPanel.selected
+
+            width: takeList.width
+            height: 26
+            radius: Theme.radiusSmall
+            color: row.current ? Qt.alpha(Theme.accentColor, rowMa.containsMouse ? 0.26 : 0.18)
+                               : rowMa.containsMouse ? Qt.alpha(Theme.textPrimary, 0.06) : "transparent"
+            Behavior on color { ColorAnimation { duration: 160; easing.type: Easing.OutCubic } }
+
+            Text {
+                anchors.left: parent.left
+                anchors.leftMargin: 10
+                anchors.verticalCenter: parent.verticalCenter
+                text: recPanel.when(row.modelData.at)
+                font.family: "Inter"
+                font.pixelSize: 11
+                font.weight: row.current ? Font.DemiBold : Font.Medium
+                font.features: { "tnum": 1 }
+                color: row.current ? Theme.textPrimary : Theme.textSecondary
             }
-
-            Item { Layout.fillWidth: true }
-
-            // La source : le micro seul, ou avec l'ordinateur (teintée).
-            GlassButton {
-                implicitWidth: 32
-                implicitHeight: 32
-                enabled: !recPanel.on
-                accent: (recPanel.on && Recorder.audio ? Recorder.audio.mode : recPanel.mode) === "mix"
-                icon: Qt.resolvedUrl("../assets/icons/" + (accent ? "computer.svg" : "mic.svg"))
-                onClicked: recPanel.mode = recPanel.mode === "mix" ? "mic" : "mix"
+            Text {
+                anchors.right: parent.right
+                anchors.rightMargin: 10
+                anchors.verticalCenter: parent.verticalCenter
+                text: Recorder.clock(row.modelData.duration)
+                font.family: "Inter"
+                font.pixelSize: 11
+                font.features: { "tnum": 1 }
+                color: row.current ? Theme.textPrimary : Theme.textDim
+            }
+            MouseArea {
+                id: rowMa
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: recPanel.selected = row.modelData.path
             }
         }
 
-        // ── Les prises ──
-        ListView {
-            id: takeList
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            spacing: 2
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
-            enabled: !recPanel.on
-            opacity: recPanel.on ? 0.45 : 1
-            Behavior on opacity { NumberAnimation { duration: 180 } }
-            model: Recorder.takes
-
-            delegate: Rectangle {
-                id: row
-                required property var modelData
-                readonly property bool current: row.modelData.path === recPanel.selected
-
-                width: takeList.width
-                height: 26
-                radius: Theme.radiusSmall
-                color: row.current ? Qt.alpha(Theme.accentColor, rowMa.containsMouse ? 0.26 : 0.18)
-                                   : rowMa.containsMouse ? Qt.alpha(Theme.textPrimary, 0.06) : "transparent"
-                Behavior on color { ColorAnimation { duration: 160; easing.type: Easing.OutCubic } }
-
-                Text {
-                    anchors.left: parent.left
-                    anchors.leftMargin: 10
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: recPanel.when(row.modelData.at)
-                    font.family: "Inter"
-                    font.pixelSize: 11
-                    font.weight: row.current ? Font.DemiBold : Font.Medium
-                    font.features: { "tnum": 1 }
-                    color: row.current ? Theme.textPrimary : Theme.textSecondary
-                }
-                Text {
-                    anchors.right: parent.right
-                    anchors.rightMargin: 10
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: Recorder.clock(row.modelData.duration)
-                    font.family: "Inter"
-                    font.pixelSize: 11
-                    font.features: { "tnum": 1 }
-                    color: row.current ? Theme.textPrimary : Theme.textDim
-                }
-                MouseArea {
-                    id: rowMa
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: recPanel.selected = row.modelData.path
-                }
-            }
-
-            // Aucune prise encore.
-            Text {
-                visible: Recorder.takes.length === 0
-                width: takeList.width
-                topPadding: 4
-                leftPadding: 4
-                text: I18n.tr("record.empty")
-                wrapMode: Text.WordWrap
-                font.family: "Inter"
-                font.pixelSize: 11
-                color: Theme.textDim
-            }
+        // Aucune prise encore.
+        Text {
+            visible: Recorder.takes.length === 0
+            width: takeList.width
+            topPadding: 4
+            leftPadding: 4
+            text: I18n.tr("record.empty")
+            wrapMode: Text.WordWrap
+            font.family: "Inter"
+            font.pixelSize: 11
+            color: Theme.textDim
         }
     }
 }

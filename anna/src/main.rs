@@ -25,6 +25,9 @@
 //!   anna pilot|voice …   client: the pilot, speaking to it, its answers aloud
 //!   anna record audio [mic|mix] | screen [area|screen] | stop [kind] | watch
 //!                        client: start/stop a recording (recorder.rs)
+//!   anna askpass <question>
+//!                        the askpass of ssh, git and sudo (askpass.rs)
+//!   anna share-picker    what to share of the screen, for xdph (sharepick.rs)
 //!   anna say <text> [file.wav]
 //!                        speak a text with the chosen voice, no daemon
 //!   anna notes …         the « Notes » tab, on its files (notes.rs)
@@ -45,8 +48,10 @@
 //!   - pilot    : the desk pilot and its voice (pilot_*/voice_*)
 //!   - record   : microphone and screen recordings (record_toggle/stop/get/watch)
 //!     and the sound takes (record_peaks/play/pause)
+//!   - prompts  : the requests made of the user (prompt_open/watch/reply)
 
 mod appctl;
+mod askpass;
 mod audio;
 mod chroma;
 mod claude;
@@ -62,9 +67,11 @@ mod msi;
 mod notes;
 mod paths;
 mod phone;
+mod prompts;
 mod protocol;
 mod recorder;
 mod servers;
+mod sharepick;
 mod state;
 mod templates;
 mod tuner;
@@ -105,6 +112,14 @@ async fn main() {
             loop {
                 tokio::time::sleep(Duration::from_secs(3600)).await;
             }
+        }
+        // The askpass of ssh, git and sudo, answered in the shell.
+        Some("askpass") => {
+            askpass::run(&args);
+        }
+        // What to share of the screen, for xdg-desktop-portal-hyprland.
+        Some("share-picker") => {
+            sharepick::run(&args);
         }
         // Run by a Claude Code hook: what it saw, to the daemon (claude/sessions.rs).
         Some("claude-event") => {
@@ -157,7 +172,7 @@ async fn main() {
         Some(other) => {
             eprintln!("anna: unknown command '{other}'");
             eprintln!(
-                "Usage: anna [daemon|init|set|mode|palette-color|reset|get|watch|gesture|record|mcp|notes|google|agenda|tasks|msi-rgb-watch]"
+                "Usage: anna [daemon|init|set|mode|palette-color|reset|get|watch|gesture|record|askpass|share-picker|mcp|notes|google|agenda|tasks|msi-rgb-watch]"
             );
             std::process::exit(2);
         }
@@ -221,6 +236,8 @@ async fn run_daemon(args: &[String]) {
     let voice = claude::voice::Voice::new(Arc::clone(&pilot));
     // Recording the microphone and the screen (recorder.rs).
     let recorder = recorder::Recorder::new();
+    // The requests made of the user, shown by the shell (prompts.rs).
+    let prompts = prompts::Prompts::new();
 
     // Every screenshot also lands in the « Notes » tab.
     tokio::spawn(notes::watch_screenshots());
@@ -236,6 +253,7 @@ async fn run_daemon(args: &[String]) {
         pilot,
         voice,
         recorder,
+        prompts,
         opts,
     });
 
@@ -266,6 +284,7 @@ struct Ctx {
     pilot: Arc<claude::pilot::Pilot>,
     voice: Arc<claude::voice::Voice>,
     recorder: Arc<recorder::Recorder>,
+    prompts: Arc<prompts::Prompts>,
     opts: AppCtlOptions,
 }
 
@@ -530,11 +549,14 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
 
         // ── audio services ───────────────────────────────────────────────
         Command::TunerWatch => {
-            stream_audio_service(&mut writer, tuner::run).await;
+            stream_audio_service(&mut writer, audio::start_capture(), tuner::run).await;
         }
 
         Command::ChromaWatch => {
-            stream_audio_service(&mut writer, chroma::run).await;
+            // What the computer plays, not the mic: the violin over it would
+            // count as much as the video it follows.
+            let capture = audio::start_output_capture(chroma::RATE);
+            stream_audio_service(&mut writer, capture, chroma::run).await;
         }
 
         Command::Metronome => {
@@ -749,6 +771,37 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             write_result(&mut writer, ctx.pilot.configure(config, key).await).await;
         }
 
+        // ── prompts ──────────────────────────────────────────────────────
+        Command::PromptOpen { prompt } => {
+            // The requester closing its end (ssh killing its askpass once
+            // the key was touched) withdraws the prompt.
+            let gone = async { while let Ok(Some(_)) = lines.next_line().await {} };
+            let reply = tokio::select! {
+                r = ctx.prompts.ask(prompt) => match r {
+                    Ok(a) => serde_json::json!({ "ok": true, "action": a.action, "values": a.values }),
+                    Err(e) => serde_json::json!({ "ok": false, "error": e.code() }),
+                },
+                _ = gone => return,
+            };
+            let _ = write_line(&mut writer, &reply.to_string()).await;
+        }
+
+        Command::PromptWatch => {
+            let mut rx = ctx.prompts.subscribe();
+            loop {
+                let views = rx.borrow_and_update().clone();
+                let json = serde_json::json!({ "prompts": views }).to_string();
+                if write_line(&mut writer, &json).await.is_err() || rx.changed().await.is_err() {
+                    break;
+                }
+            }
+        }
+
+        Command::PromptReply { id, action, values } => {
+            let ok = ctx.prompts.reply(&id, prompts::Answer { action, values });
+            let _ = write_line(&mut writer, &serde_json::json!({ "ok": ok }).to_string()).await;
+        }
+
         // The screen goes back as an image, beside the text (claude/mcp.rs).
         Command::Desk { tool, args } if tool == "voir_ecran" => {
             let target = args
@@ -834,13 +887,16 @@ async fn write_result(writer: &mut tokio::net::unix::OwnedWriteHalf, result: Res
 /// dedicated blocking thread (cpal streams and blocking recvs don't belong on
 /// the async runtime), and forward each JSON line it produces to the socket.
 /// Dropping the capture when the socket closes stops the mic stream.
-async fn stream_audio_service<F>(writer: &mut tokio::net::unix::OwnedWriteHalf, dsp: F)
-where
+async fn stream_audio_service<F>(
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    capture: Result<(audio::Capture, std::sync::mpsc::Receiver<Vec<f32>>), String>,
+    dsp: F,
+) where
     F: FnOnce(u32, std::sync::mpsc::Receiver<Vec<f32>>, tokio::sync::mpsc::Sender<String>)
         + Send
         + 'static,
 {
-    let (capture, audio_rx) = match audio::start_capture() {
+    let (capture, audio_rx) = match capture {
         Ok(c) => c,
         Err(e) => {
             let _ = write_response(writer, &Response::err(format!("audio: {e}"))).await;
@@ -858,7 +914,7 @@ where
             break; // socket closed
         }
     }
-    // `capture` drops here → mic stream stops.
+    // `capture` drops here → the capture stops.
 }
 
 /// Long-lived metronome session: build the output stream, then service control

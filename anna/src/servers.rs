@@ -264,7 +264,7 @@ fn parse_ssh_config(text: &str) -> Vec<(String, String)> {
 /// This machine's disks, AI services and what they do (`sample_local`).
 /// Plain commands only; each may be missing, its section then stays empty.
 const EXTRA: &str = "echo @@; \
-lsblk -b -P -o NAME,PKNAME,TYPE,SIZE,FSSIZE,FSUSED,MODEL,ROTA,TRAN,MOUNTPOINT 2>/dev/null; echo @@; \
+lsblk -b -P -o NAME,PKNAME,TYPE,SIZE,FSSIZE,FSUSED,MODEL,ROTA,TRAN,MOUNTPOINTS 2>/dev/null; echo @@; \
 systemctl show -p Id,LoadState,ActiveState comfyui.service ollama.service 2>/dev/null; echo @@; \
 curl -s -m 1 http://127.0.0.1:8188/queue 2>/dev/null; echo; echo @@; \
 curl -s -m 1 http://127.0.0.1:11434/api/ps 2>/dev/null; echo";
@@ -609,9 +609,12 @@ fn parse_lsblk(text: &str) -> Vec<Drive> {
         if let Some(d) = drives.iter_mut().find(|d| d.name == root) {
             d.fs_size += fs_size;
             d.fs_used += num(n, "FSUSED");
-            let mount = get(n, "MOUNTPOINT");
-            if !mount.is_empty() && mount != "[SWAP]" && !d.mounts.contains(&mount) {
-                d.mounts.push(mount);
+            // Every mount of it, `\x0a`-separated: with the impermanence binds
+            // of /home, MOUNTPOINT alone would name one of those, not `/`.
+            for mount in get(n, "MOUNTPOINTS").split("\\x0a") {
+                if !mount.is_empty() && mount != "[SWAP]" && !d.mounts.iter().any(|m| m == mount) {
+                    d.mounts.push(mount.to_string());
+                }
             }
         }
     }
@@ -687,13 +690,13 @@ mod fleet_tests {
 
     #[test]
     fn filesystems_count_on_the_disk_under_luks_and_lvm() {
-        let text = r#"NAME="zram0" PKNAME="" TYPE="disk" SIZE="8225554432" FSSIZE="" FSUSED="" MODEL="" ROTA="0" TRAN="" MOUNTPOINT="[SWAP]"
-NAME="nvme0n1" PKNAME="" TYPE="disk" SIZE="1024209543168" FSSIZE="" FSUSED="" MODEL="Micron_3400_MTFDKBA1T0TFH" ROTA="0" TRAN="nvme" MOUNTPOINT=""
-NAME="nvme0n1p1" PKNAME="nvme0n1" TYPE="part" SIZE="1073741824" FSSIZE="1000" FSUSED="200" MODEL="" ROTA="0" TRAN="nvme" MOUNTPOINT="/boot"
-NAME="nvme0n1p2" PKNAME="nvme0n1" TYPE="part" SIZE="1023134400512" FSSIZE="" FSUSED="" MODEL="" ROTA="0" TRAN="nvme" MOUNTPOINT=""
-NAME="crypt" PKNAME="nvme0n1p2" TYPE="crypt" SIZE="1023134400512" FSSIZE="9000" FSUSED="3000" MODEL="" ROTA="0" TRAN="" MOUNTPOINT="/"
-NAME="sda" PKNAME="" TYPE="disk" SIZE="4000000000000" FSSIZE="" FSUSED="" MODEL="WDC WD40EFRX" ROTA="1" TRAN="sata" MOUNTPOINT=""
-NAME="sda1" PKNAME="sda" TYPE="part" SIZE="4000000000000" FSSIZE="4000" FSUSED="3100" MODEL="" ROTA="1" TRAN="sata" MOUNTPOINT="/data""#;
+        let text = r#"NAME="zram0" PKNAME="" TYPE="disk" SIZE="8225554432" FSSIZE="" FSUSED="" MODEL="" ROTA="0" TRAN="" MOUNTPOINTS="[SWAP]"
+NAME="nvme0n1" PKNAME="" TYPE="disk" SIZE="1024209543168" FSSIZE="" FSUSED="" MODEL="Micron_3400_MTFDKBA1T0TFH" ROTA="0" TRAN="nvme" MOUNTPOINTS=""
+NAME="nvme0n1p1" PKNAME="nvme0n1" TYPE="part" SIZE="1073741824" FSSIZE="1000" FSUSED="200" MODEL="" ROTA="0" TRAN="nvme" MOUNTPOINTS="/boot"
+NAME="nvme0n1p2" PKNAME="nvme0n1" TYPE="part" SIZE="1023134400512" FSSIZE="" FSUSED="" MODEL="" ROTA="0" TRAN="nvme" MOUNTPOINTS=""
+NAME="crypt" PKNAME="nvme0n1p2" TYPE="crypt" SIZE="1023134400512" FSSIZE="9000" FSUSED="3000" MODEL="" ROTA="0" TRAN="" MOUNTPOINTS="/home/aristide/tune\x0a/nix\x0a/"
+NAME="sda" PKNAME="" TYPE="disk" SIZE="4000000000000" FSSIZE="" FSUSED="" MODEL="WDC WD40EFRX" ROTA="1" TRAN="sata" MOUNTPOINTS=""
+NAME="sda1" PKNAME="sda" TYPE="part" SIZE="4000000000000" FSSIZE="4000" FSUSED="3100" MODEL="" ROTA="1" TRAN="sata" MOUNTPOINTS="/data""#;
         let d = parse_lsblk(text);
         assert_eq!(d.len(), 2, "zram is no disk");
         assert_eq!(d[0].model, "Micron 3400 MTFDKBA1T0TFH");
@@ -701,7 +704,10 @@ NAME="sda1" PKNAME="sda" TYPE="part" SIZE="4000000000000" FSSIZE="4000" FSUSED="
             (d[0].kind.as_str(), d[0].fs_size, d[0].fs_used),
             ("NVMe", 10000, 3200)
         );
-        assert_eq!(d[0].mounts, vec!["/".to_string(), "/boot".to_string()]);
+        assert_eq!(
+            d[0].mounts,
+            ["/", "/nix", "/boot", "/home/aristide/tune"].map(String::from)
+        );
         assert_eq!((d[1].kind.as_str(), d[1].fs_used), ("HDD", 3100));
         assert_eq!(d[1].mounts, vec!["/data".to_string()]);
     }

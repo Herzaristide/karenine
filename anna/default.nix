@@ -149,6 +149,13 @@ pkgs.rustPlatform.buildRustPackage {
           ]
         )
       }
+
+    # The askpass of ssh, git and sudo (src/askpass.rs): SSH_ASKPASS and its
+    # kin take a program, not a command line.
+    makeWrapper "$out/bin/anna" "$out/bin/anna-askpass" --add-flags askpass
+    # What to share of the screen (src/sharepick.rs), for xdph's
+    # screencopy:custom_picker_binary.
+    makeWrapper "$out/bin/anna" "$out/bin/anna-share-picker" --add-flags share-picker
   '';
 
   passthru = { inherit wakeWords parakeet; };

@@ -22,7 +22,7 @@ one line per message.
 | servers | `servers_watch` / `servers_list` / `servers_power` | The other devices of the Tailscale network (`tailscale status --json`, re-read at every sample), and the ssh stats of the online Linux ones (with `name`, of that one only: the shell asks only for the server it shows); reached by their `~/.ssh/config` alias if there is one (same name or same address), otherwise by their MagicDNS name. The others (phone…): state, OS, address, last seen. `servers_power` (`anna servers on\|off\|reboot <name>`): shuts down or reboots over ssh (`sudo -n`, otherwise polkit), powers on with Wake-on-LAN using the MAC and broadcast recorded while online (`~/.local/state/anna/servers-wake.json`) — only on the same local network. CLI `anna servers`. |
 | phone | `phone_watch` / `phone_action` | Phones paired with KDE Connect, through `kdeconnectd`'s D-Bus API (`busctl --json=short`, re-read every 2 s): battery, mobile network; actions: ring, ping, files (sftp), send the clipboard or a file, accept or decline a pairing. Its notifications do not go through anna: `kdeconnectd` sends them to the shell's notification server. `phone_screen` picks how to reach the screen (adb: a device already seen, USB first, otherwise `adb connect` on its Tailscale address, port 5555) and returns the `scrcpy` command, which the shell runs. `kdeconnectd`, `adb` and `scrcpy` come from the NixOS configuration. CLI `anna phone`. |
 | tuner | `tuner_watch` | Pitch detection — `{"pitch":<hz>}` per frame. |
-| chroma | `chroma_watch` | 12-class chromagram — `{"chroma":[…],"top":[…]}`. |
+| chroma | `chroma_watch` | What the output plays: chromagram, chord, key, tuning — `{"chroma","top","chord","key","tuning"}`. |
 | metronome | `metronome` | Sample-accurate click session, `{"beat":<n>}`. BPM bounded to 20–300, beats per bar to 1–16. |
 | record | `record_toggle` / `record_stop` / `record_get` / `record_watch` | Recordings, see [Music tools](#audio-tools). anna runs `ffmpeg` (the microphone, alone or mixed with the computer's sound, FLAC in `$XDG_MUSIC_DIR`) or `gpu-screen-recorder` (a `slurp` region or the focused monitor, with the computer's sound, MP4 in `$XDG_VIDEOS_DIR`), keeps them and stops them with SIGINT, so a recording outlives the bar and the shell's reloads. A notification gives the file. CLI `anna record audio [mic\|mix]`, `anna record screen [area\|screen]` (each starts, or stops the one running), `anna record stop`. `gpu-screen-recorder` comes from the NixOS configuration (`programs.gpu-screen-recorder`). |
 | gestures | `gesture_get` / `gesture_set` / `gesture_toggle` / `gesture_watch` / `gesture_cameras` / `gesture_set_camera` | Webcam control (pointer, window grabbing, workspace switching). **Off by default**. |
@@ -75,6 +75,6 @@ server (PipeWire) multiplexes clients, as the old concurrent `parec` did.
   the matching microphone capture only runs in `anna` while the socket is
   open (the widget connects/disconnects with its visibility).
 - On the QML side, we use the `Socket` type of `Quickshell.Io` (see
-  `widgets/HardwareStats.qml`, `widgets/Tuner.qml`, `widgets/ChromaGraph.qml`,
+  `widgets/HardwareStats.qml`, `widgets/Tuner.qml`, `widgets/Harmony.qml`,
   `widgets/Metronome.qml`).
 - The audio tools are detailed in [Music tools](#audio-tools).
