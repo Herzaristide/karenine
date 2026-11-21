@@ -19,6 +19,10 @@ import "../services"
 // du haut, ou d'ici vers celui du haut) y est déplacé ; sur une ligne de
 // dossier, dans ce dossier. L'Explorer (`explorer`) fait le déplacement et
 // tient le chemin (`path`, Widgets.explorerSplitPath).
+//
+// Par défaut en arborescence (Widgets.explorerSplitTree) : un clic sur un
+// dossier le déplie sur place, comme dans la barre latérale d'un IDE ; le
+// bouton de l'en-tête repasse en liste, où le double clic entre dedans.
 Rectangle {
     id: pane
 
@@ -62,7 +66,111 @@ Rectangle {
         return p;
     }
 
-    onPathChanged: pane.selection = {}
+    readonly property bool tree: Widgets.explorerSplitTree
+    readonly property int treeIndent: 14
+
+    onPathChanged: {
+        pane.selection = {};
+        pane.pruneExpanded(pane.path);
+    }
+    onTreeChanged: Qt.callLater(pane.rebuild)
+
+    // ── Les entrées : le dossier, et en arborescence ce qui est déplié ──
+    property var entries: []
+    property var expanded: ({})
+    property var treeModels: ({})
+    ListModel { id: expandedModel }
+
+    function readEntries(m, depth) {
+        var out = [];
+        for (var i = 0; i < m.count; i++) {
+            var path = String(m.get(i, "filePath"));
+            var isDir = m.get(i, "fileIsDir") === true;
+            var open = pane.tree && isDir && pane.expanded[path] === true;
+            out.push({
+                name: String(m.get(i, "fileName")),
+                path: path,
+                isDir: isDir,
+                suffix: m.get(i, "fileSuffix"),
+                size: m.get(i, "fileSize"),
+                depth: depth,
+                expanded: open
+            });
+            if (open) {
+                var sub = pane.treeModels[path];
+                if (sub && sub.status === FolderListModel.Ready)
+                    out = out.concat(pane.readEntries(sub, depth + 1));
+            }
+        }
+        return out;
+    }
+    function rebuild() {
+        var y = list.contentY;
+        pane.entries = pane.readEntries(model, 0);
+        list.contentY = Math.min(y, Math.max(0, list.contentHeight - list.height));
+    }
+
+    function setExpanded(p, open) {
+        if ((pane.expanded[p] === true) === open)
+            return;
+        var e = Object.assign({}, pane.expanded);
+        if (open) {
+            e[p] = true;
+            expandedModel.append({ path: p });
+        } else {
+            for (var i = expandedModel.count - 1; i >= 0; i--) {
+                var q = expandedModel.get(i).path;
+                if (q === p || q.indexOf(p + "/") === 0) {
+                    delete e[q];
+                    expandedModel.remove(i);
+                }
+            }
+        }
+        pane.expanded = e;
+        Qt.callLater(pane.rebuild);
+    }
+    function toggleExpanded(p) {
+        pane.setExpanded(p, pane.expanded[p] !== true);
+    }
+    function pruneExpanded(p) {
+        var e = {};
+        for (var i = expandedModel.count - 1; i >= 0; i--) {
+            var q = expandedModel.get(i).path;
+            if (q.indexOf(p + "/") === 0)
+                e[q] = true;
+            else
+                expandedModel.remove(i);
+        }
+        pane.expanded = e;
+    }
+
+    Instantiator {
+        model: expandedModel
+        delegate: FolderListModel {
+            id: sub
+            required property string path
+            folder: pane.explorer.urlOf(sub.path) + (pane.reloadTick % 2 === 1 ? "/" : "")
+            showDirsFirst: true
+            showDotAndDotDot: false
+            showHidden: pane.explorer.showHidden
+            sortField: FolderListModel.Name
+            sortCaseSensitive: false
+            onCountChanged: Qt.callLater(pane.rebuild)
+            onStatusChanged: Qt.callLater(pane.rebuild)
+        }
+        onObjectAdded: (index, object) => {
+            var m = Object.assign({}, pane.treeModels);
+            m[object.path] = object;
+            pane.treeModels = m;
+        }
+        onObjectRemoved: (index, object) => {
+            var m = Object.assign({}, pane.treeModels);
+            if (m[object.path] === object)
+                delete m[object.path];
+            pane.treeModels = m;
+            Qt.callLater(pane.rebuild);
+        }
+    }
 
     function go(p) {
         pane.selection = {};
@@ -81,8 +189,8 @@ Rectangle {
         pane.selection = s;
     }
     function isDir(p) {
-        var i = model.indexOf(pane.explorer.urlOf(p));
-        return i >= 0 && model.get(i, "fileIsDir") === true;
+        var e = pane.entries.find(x => x.path === p);
+        return e ? e.isDir : false;
     }
     function carried(p) {
         return pane.selection[p] ? pane.selectedPaths : [p];
@@ -97,6 +205,13 @@ Rectangle {
         showHidden: pane.explorer.showHidden
         sortField: FolderListModel.Name
         sortCaseSensitive: false
+        onCountChanged: Qt.callLater(pane.rebuild)
+        onStatusChanged: Qt.callLater(pane.rebuild)
+    }
+    Connections {
+        target: model
+        function onDataChanged() { Qt.callLater(pane.rebuild); }
+        function onModelReset() { Qt.callLater(pane.rebuild); }
     }
 
     // ── L'en-tête ────────────────────────────────────────────────
@@ -132,7 +247,7 @@ Rectangle {
         }
         Text {
             id: countLabel
-            anchors.right: closeBtn.left
+            anchors.right: viewBtn.left
             anchors.rightMargin: 8
             anchors.verticalCenter: parent.verticalCenter
             text: pane.selectedPaths.length > 0 ? I18n.trn("explorer.selected", pane.selectedPaths.length)
@@ -141,6 +256,16 @@ Rectangle {
             font.pixelSize: 11
             font.features: { "tnum": 1 }
             color: Theme.textDim
+        }
+        // Arborescence ou liste.
+        GlassButton {
+            id: viewBtn
+            anchors.right: closeBtn.left
+            anchors.rightMargin: 4
+            anchors.verticalCenter: parent.verticalCenter
+            implicitHeight: 24
+            icon: pane.tree ? "../assets/icons/view-list.svg" : "../assets/icons/view-tree.svg"
+            onClicked: Widgets.explorerSplitTree = !Widgets.explorerSplitTree
         }
         GlassButton {
             id: closeBtn
@@ -196,23 +321,26 @@ Rectangle {
         anchors.topMargin: 4
         clip: true
         boundsBehavior: Flickable.StopAtBounds
-        model: model
+        model: pane.entries
 
         delegate: Item {
             id: row
             required property int index
-            required property string fileName
-            required property string filePath
-            required property bool fileIsDir
-            required property string fileSuffix
-            required property real fileSize
+            required property var modelData
+            readonly property string fileName: row.modelData.name
+            readonly property string filePath: row.modelData.path
+            readonly property bool fileIsDir: row.modelData.isDir
+            readonly property string fileSuffix: row.modelData.suffix
+            readonly property real fileSize: row.modelData.size
+            readonly property int depth: pane.tree ? row.modelData.depth : 0
+            readonly property int treeX: 6 + row.depth * pane.treeIndent
             readonly property bool selected: pane.selection[row.filePath] === true
             readonly property string icon: pane.explorer.iconFor(row.filePath, row.fileIsDir, row.fileSuffix, row.fileName)
             readonly property bool glyph: row.icon.indexOf("../assets/") === 0
             readonly property var carried: pane.carried(row.filePath)
 
             width: ListView.view.width
-            height: 28
+            height: pane.tree ? 26 : 28
 
             Rectangle {
                 anchors.fill: parent
@@ -224,10 +352,45 @@ Rectangle {
                 Behavior on color { ColorAnimation { duration: 110 } }
             }
 
+            // Les guides de l'arborescence, un par niveau au-dessus.
+            Repeater {
+                model: row.depth
+                Rectangle {
+                    required property int index
+                    x: 6 + index * pane.treeIndent + 6
+                    width: 1
+                    height: row.height
+                    color: Qt.alpha(Theme.textPrimary, index === row.depth - 1 ? 0.14 : 0.08)
+                }
+            }
+            // Le chevron d'un dossier ; un clic dessus déplie ou replie.
+            Item {
+                visible: pane.tree && row.fileIsDir
+                x: row.treeX
+                width: 14
+                height: parent.height
+                z: 2
+                NixIcon {
+                    anchors.centerIn: parent
+                    iconSize: 9
+                    source: "../assets/icons/chevron-down.svg"
+                    rotation: row.modelData.expanded ? 0 : -90
+                    color: chevronMa.containsMouse ? Theme.textPrimary : Theme.textDim
+                    Behavior on rotation { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                }
+                MouseArea {
+                    id: chevronMa
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: pane.toggleExpanded(row.filePath)
+                }
+            }
+
             Item {
                 id: rowIcon
                 anchors.left: parent.left
-                anchors.leftMargin: 8
+                anchors.leftMargin: pane.tree ? row.treeX + 16 : 8
                 anchors.verticalCenter: parent.verticalCenter
                 width: 16
                 height: 16
@@ -333,13 +496,19 @@ Rectangle {
                         pane.explorer.showMenu(row.filePath, row.fileIsDir, true, at.x, at.y, pane.carried(row.filePath), false);
                         return;
                     }
-                    pane.select(row.filePath, (mouse.modifiers & Qt.ControlModifier) !== 0);
+                    var add = (mouse.modifiers & Qt.ControlModifier) !== 0;
+                    pane.select(row.filePath, add);
+                    // En arborescence, un clic sur un dossier le déplie.
+                    if (pane.tree && row.fileIsDir && !add)
+                        pane.toggleExpanded(row.filePath);
                 }
                 onDoubleClicked: (mouse) => {
                     if (mouse.button !== Qt.LeftButton)
                         return;
                     if (row.fileIsDir) {
-                        pane.go(row.filePath);
+                        // En arborescence, le premier clic l'a déjà déplié.
+                        if (!pane.tree)
+                            pane.go(row.filePath);
                     } else {
                         Quickshell.execDetached(["xdg-open", row.filePath]);
                         pane.explorer.opened();

@@ -12,20 +12,30 @@ import Quickshell
 //   echo "widget:tout:fermer"      > /tmp/qs-panel.fifo
 //
 // Les noms sont ceux de `names`, en français comme les outils du pilote ;
-// chacun mène à un onglet du panneau (`tabs`).
+// chacun mène à un onglet du panneau (`tabs`) ou à un volet de la barre du
+// bas (`pops`, que la barre ouvre sous son bouton : `popRequested`).
 Singleton {
     id: widgets
 
-    readonly property var names: ["explorer", "stats", "agenda", "lecteur", "musique", "claude", "reglages"]
+    readonly property var names: ["explorer", "stats", "agenda", "lecteur", "musique", "claude", "reglages",
+        "son", "micro", "wifi", "bluetooth", "telephone", "notifications", "energie", "alimentation", "taches"]
 
     // Le nom donné par le pilote → l'onglet du panneau. Les anciens noms
-    // (« son », « metronome », « telephone »…) mènent à l'onglet qui les
-    // contient aujourd'hui.
+    // (« metronome », « network »…) mènent à l'onglet qui les contient
+    // aujourd'hui.
     readonly property var tabs: ({
         explorer: "files", stats: "system", agenda: "agenda", lecteur: "music", musique: "music",
         claude: "claude", reglages: "settings",
-        son: "settings", metronome: "music", accordeur: "music", network: "system", telephone: "system"
+        metronome: "music", accordeur: "music", network: "system"
     })
+
+    // Le nom donné par le pilote → le volet de la barre (Bar.qml `pop`).
+    readonly property var pops: ({
+        son: "sound", micro: "mic", wifi: "wifi", bluetooth: "bluetooth", telephone: "phone",
+        notifications: "notifications", energie: "energy", alimentation: "power", taches: "tasks"
+    })
+    // action : "ouvrir", "fermer" ou "basculer" ; la barre l'applique.
+    signal popRequested(string pop, string action)
 
     property bool panelOpen: false
     // Son onglet ("music", "files", "system", "agenda", "claude", et
@@ -39,8 +49,12 @@ Singleton {
     property string explorerPath: ""
     // Le second dossier, sous le premier (le mode split) ; vide : fermé.
     property string explorerSplitPath: ""
-    // L'Explorer en liste (nom, taille, date) plutôt qu'en tuiles.
-    property bool explorerListView: false
+    // Le second dossier en arborescence (par défaut) plutôt qu'en liste.
+    property bool explorerSplitTree: true
+    // L'affichage de l'Explorer : "grid" (les tuiles, qui vont à la ligne),
+    // "list" (nom, taille, date) ou "tree" (l'arborescence, comme la barre
+    // latérale d'un IDE : les dossiers se déplient sur place).
+    property string explorerView: "grid"
     // La machine choisie, la même pour tous les onglets qui en montrent une
     // (cf. MachinePicker) : null pour celle-ci, sinon un serveur du tailnet
     // ({ name, host }).
@@ -52,6 +66,22 @@ Singleton {
     property var explorerMachine: null
     // La hauteur que l'Explorer demande (FileExplorer.implicitHeight).
     property int explorerHeight: 356
+
+    // Le mode de l'onglet Agenda ("day", "three", "week", "month" ou "tasks"), gardé
+    // d'une ouverture à l'autre.
+    property string agendaView: "three"
+    // Une tâche que l'onglet Agenda doit ouvrir dans son éditeur, venue du
+    // volet des tâches de la barre : { task, tick }. CalendarWidget la prend
+    // et la remet à null, à son chargement si l'onglet n'existait pas encore.
+    property var agendaRequest: null
+
+    // L'onglet Agenda, sur la liste des tâches ; sur l'une d'elles, ouverte
+    // dans l'éditeur, si `task` est donnée.
+    function showTasks(task) {
+        widgets.agendaView = "tasks";
+        widgets.agendaRequest = task ? { task: task, tick: Date.now() } : null;
+        widgets.show("agenda");
+    }
 
     function isOpen(name) {
         return widgets.panelOpen && widgets.panelTab === widgets.tabs[name];
@@ -69,6 +99,11 @@ Singleton {
         if (name === "tout") {
             if (action === "fermer" || action === "basculer" || !action)
                 widgets.closeAll();
+            return true;
+        }
+        var pop = widgets.pops[name];
+        if (pop) {
+            widgets.popRequested(pop, action || "basculer");
             return true;
         }
         var tab = widgets.tabs[name];

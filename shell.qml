@@ -30,7 +30,11 @@ ShellRoot {
     //   echo "voix"     > /tmp/qs-panel.fifo   → parle au pilote (comme `anna voice`)
     //   echo "controls" > /tmp/qs-panel.fifo   → bascule les réglages
     //   echo "close"    > /tmp/qs-panel.fifo   → ferme tout
-    //   NOM : explorer, stats, agenda, lecteur, musique, claude, reglages, son, tout
+    //   NOM : explorer, stats, agenda, lecteur, musique, claude, reglages (onglets),
+    //         son, micro, wifi, bluetooth, telephone, notifications, energie,
+    //         alimentation, taches (volets de la barre), tout
+    //   echo "reglage:langue:fr" > /tmp/qs-panel.fifo → la langue de l'interface
+    //   echo "reglage:langue_voix:auto" > /tmp/qs-panel.fifo → celle de la voix ("" : l'interface)
     //   ACTION : ouvrir, fermer, basculer (le défaut)
     //   « widget:N » reste compris : 0=stats 3=musique 4=lecteur
     //   echo "metronome:ACTION[:BPM[:TEMPS]]" > /tmp/qs-panel.fifo → lance, arrête ou
@@ -82,8 +86,16 @@ ShellRoot {
                     root.barToggled();
                 } else if (msg === "voix") {
                     Pilot.voiceToggle();
+                } else if (msg.startsWith("reglage:")) {
+                    // reglage:langue:<code> ou reglage:langue_voix:<code|auto|>
+                    // (anna/src/claude/reglages.rs) : ce que le shell garde.
+                    var r = msg.split(":");
+                    if (r[1] === "langue")
+                        I18n.setLang(r[2] || "");
+                    else if (r[1] === "langue_voix")
+                        I18n.setVoice(r[2] || "");
                 } else if (msg === "controls") {
-                    Widgets.apply("son", "basculer");
+                    Widgets.apply("reglages", "basculer");
                 } else if (msg === "close") {
                     Widgets.closeAll();
                     root.barClosed();
@@ -155,6 +167,8 @@ ShellRoot {
             SidePanel {
                 screen: edges.modelData
                 barReady: bottomBar.backingWindowVisible
+                buttonInset: bottomBar.panelButtonInset
+                buttonWidth: bottomBar.panelButtonWidth
             }
         }
     }

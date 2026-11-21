@@ -12,17 +12,22 @@ import "../services"
 //          ╭─╯                  ╰─╮   ← les coins creusés, hors de l'item
 //   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  la barre
 //
-// Les coins creusés débordent de `radius` à gauche et à droite : l'item
-// garde la largeur de son contenu.
+// Les coins creusés débordent de `radius` à gauche et à droite (moins
+// quand l'item est plus bas que deux rayons) : l'item garde la largeur de
+// son contenu.
 Item {
     id: lip
 
     property color color: Theme.bgDeep
     property real radius: Theme.radius
+    // Le rayon tracé : jamais plus que la moitié de la hauteur, pour que
+    // la surface reste propre pendant qu'elle sort de la barre (un volet qui
+    // s'ouvre part de zéro).
+    readonly property real r: Math.max(0, Math.min(lip.radius, lip.height / 2))
 
     Shape {
-        x: -lip.radius
-        width: lip.width + 2 * lip.radius
+        x: -lip.r
+        width: lip.width + 2 * lip.r
         height: lip.height
         preferredRendererType: Shape.CurveRenderer
 
@@ -34,22 +39,22 @@ Item {
             startX: 0
             startY: lip.height
             PathArc {
-                x: lip.radius
-                y: lip.height - lip.radius
-                radiusX: lip.radius
-                radiusY: lip.radius
+                x: lip.r
+                y: lip.height - lip.r
+                radiusX: lip.r
+                radiusY: lip.r
                 direction: PathArc.Counterclockwise
             }
-            PathLine { x: lip.radius; y: lip.radius }
-            PathArc { x: 2 * lip.radius; y: 0; radiusX: lip.radius; radiusY: lip.radius }
+            PathLine { x: lip.r; y: lip.r }
+            PathArc { x: 2 * lip.r; y: 0; radiusX: lip.r; radiusY: lip.r }
             PathLine { x: lip.width; y: 0 }
-            PathArc { x: lip.width + lip.radius; y: lip.radius; radiusX: lip.radius; radiusY: lip.radius }
-            PathLine { x: lip.width + lip.radius; y: lip.height - lip.radius }
+            PathArc { x: lip.width + lip.r; y: lip.r; radiusX: lip.r; radiusY: lip.r }
+            PathLine { x: lip.width + lip.r; y: lip.height - lip.r }
             PathArc {
-                x: lip.width + 2 * lip.radius
+                x: lip.width + 2 * lip.r
                 y: lip.height
-                radiusX: lip.radius
-                radiusY: lip.radius
+                radiusX: lip.r
+                radiusY: lip.r
                 direction: PathArc.Counterclockwise
             }
             PathLine { x: 0; y: lip.height }

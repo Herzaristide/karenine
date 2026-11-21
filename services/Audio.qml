@@ -2,7 +2,8 @@ pragma Singleton
 import QtQuick
 import Quickshell.Services.Pipewire
 
-// Le volume de la sortie par défaut, lu et réglé par Pipewire. Ses propriétés
+// Le volume de la sortie par défaut, lu et réglé par Pipewire, et le micro
+// (l'entrée par défaut) à couper ou rouvrir. Ses propriétés
 // suivent PipeWire en direct : un changement venu d'ailleurs (touches du
 // clavier, anna, pavucontrol) s'affiche aussitôt, sans sondage.
 QtObject {
@@ -15,9 +16,13 @@ QtObject {
     readonly property bool muted: root.ready && root.sink.audio.muted
     readonly property int percent: Math.round(level * 100)
 
+    readonly property PwNode source: Pipewire.defaultAudioSource
+    readonly property bool micReady: root.source !== null && root.source.ready && root.source.audio !== null
+    readonly property bool micMuted: root.micReady && root.source.audio.muted
+
     // Sans suivi, les propriétés audio d'un nœud ne sont jamais renseignées.
     property PwObjectTracker tracker: PwObjectTracker {
-        objects: [root.sink]
+        objects: [root.sink, root.source]
     }
 
     // Plafonné à 100 % : au-delà, PipeWire amplifie en logiciel et sature.
@@ -30,5 +35,9 @@ QtObject {
     function toggleMute() {
         if (root.ready)
             root.sink.audio.muted = !root.sink.audio.muted;
+    }
+    function toggleMicMute() {
+        if (root.micReady)
+            root.source.audio.muted = !root.source.audio.muted;
     }
 }

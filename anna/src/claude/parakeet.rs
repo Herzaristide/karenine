@@ -19,10 +19,10 @@
 //!   4. `vocab.txt`: the SentencePiece tokens, `▁` for a space, the blank
 //!      last.
 //!
-//! The model is dropped after a while without use: it holds about 1 GB.
+//! The model is dropped after a while without use: it holds about 700 MB.
 
 use ort::session::builder::GraphOptimizationLevel;
-use ort::session::Session;
+use ort::session::{RunOptions, Session};
 use ort::value::TensorRef;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -35,10 +35,17 @@ pub const RATE: u32 = 16_000;
 const STATE: [usize; 3] = [2, 1, 640];
 /// At most this many tokens on one encoder vector.
 const MAX_TOKENS_PER_STEP: usize = 10;
+/// Taken off the blank's score: a word that starts on a vector where blank
+/// barely wins is written instead of lost (the first word of a request, the
+/// wake word). Higher, the decoder starts writing words over noise.
+const BLANK_PENALTY: f32 = 0.5;
 
-fn load(path: &Path, threads: usize) -> Result<Session, String> {
+/// `lean`: no prepacked copy of the weights. ONNX Runtime otherwise keeps
+/// both the int8 weights and a copy laid out for its kernels: for the encoder,
+/// 1.1 GB loaded instead of 690 MB, for a pass ~10 % slower without it.
+fn load(path: &Path, threads: usize, lean: bool) -> Result<Session, String> {
     let err = |e: &dyn std::fmt::Display| format!("{} : {e}", path.display());
-    Session::builder()
+    let mut builder = Session::builder()
         .map_err(|e| err(&e))?
         .with_optimization_level(GraphOptimizationLevel::Level3)
         .map_err(|e| err(&e))?
@@ -47,9 +54,13 @@ fn load(path: &Path, threads: usize) -> Result<Session, String> {
         .with_intra_op_spinning(false)
         .map_err(|e| err(&e))?
         .with_inter_op_spinning(false)
-        .map_err(|e| err(&e))?
-        .commit_from_file(path)
-        .map_err(|e| err(&e))
+        .map_err(|e| err(&e))?;
+    if lean {
+        builder = builder
+            .with_config_entry("session.disable_prepacking", "1")
+            .map_err(|e| err(&e))?;
+    }
+    builder.commit_from_file(path).map_err(|e| err(&e))
 }
 
 /// `vocab.txt`: one `<token> <id>` per line.
@@ -91,6 +102,9 @@ pub struct Model {
     preprocessor: Session,
     encoder: Session,
     decoder: Session,
+    /// The encoder's runs give their working memory back: without it, the
+    /// arena stays at the size of the longest recording (+130 MB for 20 s).
+    shrink: RunOptions,
     vocab: Vec<String>,
     pub last_use: Instant,
 }
@@ -106,10 +120,17 @@ impl Model {
         let threads = std::thread::available_parallelism()
             .map(|n| (n.get() / 2).clamp(1, 8))
             .unwrap_or(2);
+        let mut shrink = RunOptions::new().map_err(|e| format!("parakeet : {e}"))?;
+        shrink
+            .set("memory.enable_memory_arena_shrinkage", "cpu:0")
+            .map_err(|e| format!("parakeet : {e}"))?;
         Ok(Model {
-            preprocessor: load(&dir.join("nemo128.onnx"), 1)?,
-            encoder: load(&dir.join("encoder-model.int8.onnx"), threads)?,
-            decoder: load(&dir.join("decoder_joint-model.int8.onnx"), 1)?,
+            preprocessor: load(&dir.join("nemo128.onnx"), 1, false)?,
+            encoder: load(&dir.join("encoder-model.int8.onnx"), threads, true)?,
+            // Run once per encoder vector: its prepacked weights (17 MB)
+            // are worth their speed.
+            decoder: load(&dir.join("decoder_joint-model.int8.onnx"), 1, false)?,
+            shrink,
             vocab,
             last_use: Instant::now(),
         })
@@ -142,10 +163,13 @@ impl Model {
 
         let out = self
             .encoder
-            .run(ort::inputs! {
-                "audio_signal" => TensorRef::from_array_view((shape, &features[..])).map_err(e)?,
-                "length" => TensorRef::from_array_view(([1usize], &lens[..])).map_err(e)?,
-            })
+            .run_with_options(
+                ort::inputs! {
+                    "audio_signal" => TensorRef::from_array_view((shape, &features[..])).map_err(e)?,
+                    "length" => TensorRef::from_array_view(([1usize], &lens[..])).map_err(e)?,
+                },
+                &self.shrink,
+            )
             .map_err(e)?;
         // (1, dim, frames), frames as the inner axis.
         let (shape, encoded) = out["outputs"].try_extract_tensor::<f32>().map_err(e)?;
@@ -195,7 +219,12 @@ impl Model {
                 })
                 .map_err(e)?;
             let (_, scores) = out["outputs"].try_extract_tensor::<f32>().map_err(e)?;
-            let token = index_of_max(&scores[..self.vocab.len()]);
+            let best = index_of_max(&scores[..blank]);
+            let token = if scores[best] > scores[blank] - BLANK_PENALTY {
+                best
+            } else {
+                blank
+            };
             let skip = index_of_max(&scores[self.vocab.len()..]);
             if token != blank {
                 // The decoder moves on only with a real token.
@@ -211,11 +240,17 @@ impl Model {
                 tokens.push(token);
                 emitted += 1;
             }
-            if skip > 0 {
-                t += skip;
-                emitted = 0;
-            } else if token == blank || emitted >= MAX_TOKENS_PER_STEP {
+            // A blank moves on one vector only, whatever duration it
+            // predicts: jumping up to four over what it took for silence, it
+            // lands past the start of a word, and a whole transcript can come
+            // out empty (measured: the same recording, empty or right
+            // depending on the background noise). Only a token's duration is
+            // followed.
+            if token == blank || emitted >= MAX_TOKENS_PER_STEP {
                 t += 1;
+                emitted = 0;
+            } else if skip > 0 {
+                t += skip;
                 emitted = 0;
             }
         }

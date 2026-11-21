@@ -1,12 +1,11 @@
 //! The Claude Code sessions, for the shell's « Claude » tab: those running
 //! now — which one waits for the user, which one works and at what — and
-//! the last ones that ended, to resume them.
+//! every one that ended, to resume them.
 //!
 //! Three sources, none of them an API:
 //!
 //!   1. `~/.claude/sessions/<pid>.json`, written by each running Claude
-//!      Code: its id, folder, name and `busy` / `idle` state. The pilot
-//!      (an SDK session anna keeps warm) is left out.
+//!      Code: its id, folder, name and `busy` / `idle` state.
 //!   2. `~/.claude/projects/<folder>/<id>.jsonl`, its transcript: the title
 //!      Claude Code gives it (`ai-title`) and the git branch.
 //!   3. The hooks: `anna claude-event`, run by Claude Code on each event,
@@ -25,8 +24,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-/// How many ended sessions the tab lists.
-const RECENT: usize = 5;
 /// How much of a transcript's end is read for its title and branch.
 const TAIL: u64 = 256 * 1024;
 /// The ended sessions are looked up again at most this often.
@@ -71,6 +68,10 @@ static HEARD: LazyLock<Mutex<HashMap<String, Heard>>> = LazyLock::new(Default::d
 /// The ended sessions, and when they were looked up.
 type Recent = Option<(Instant, Vec<Session>)>;
 static RECENT_CACHE: LazyLock<Mutex<Recent>> = LazyLock::new(Default::default);
+/// What each transcript said, with the modification time and size it had:
+/// only the transcripts that changed are read again.
+type Transcripts = HashMap<PathBuf, (SystemTime, u64, Transcript)>;
+static TRANSCRIPTS: LazyLock<Mutex<Transcripts>> = LazyLock::new(Default::default);
 
 fn claude_dir() -> PathBuf {
     crate::paths::home_dir().join(".claude")
@@ -88,11 +89,6 @@ fn base(path: &str) -> String {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default()
-}
-
-/// The pilot's own sessions (anna/src/claude/pilot.rs) are not the user's.
-fn is_pilot(cwd: &str, entrypoint: &str) -> bool {
-    entrypoint == "sdk-cli" || cwd.contains("/anna/pilot")
 }
 
 // ── The hooks ───────────────────────────────────────────────────────────────
@@ -200,11 +196,39 @@ pub fn hook() {
 /// the folder it started in (a `cd` along the way does not move the
 /// project). Its beginning is read for the folder, its end for the rest; the
 /// beginning gives the title too if the end has none.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Transcript {
     title: String,
     branch: String,
     cwd: String,
+    /// The first thing the user asked: the title of a session Claude Code
+    /// gave none (a short one).
+    prompt: String,
+}
+
+/// The text of a user's message, unless it is one Claude Code wrote itself
+/// (a command, a caveat, a tool result).
+fn prompt_of(v: &Value) -> Option<String> {
+    if v.get("type").and_then(Value::as_str) != Some("user")
+        || v.get("isMeta").and_then(Value::as_bool) == Some(true)
+    {
+        return None;
+    }
+    let content = v.pointer("/message/content")?;
+    let text = match content {
+        Value::String(t) => t.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .find(|p| p.get("type").and_then(Value::as_str) == Some("text"))
+            .and_then(|p| p.get("text").and_then(Value::as_str))?
+            .to_string(),
+        _ => return None,
+    };
+    let text = text.trim();
+    if text.is_empty() || text.starts_with('<') {
+        return None;
+    }
+    Some(text.lines().next()?.chars().take(80).collect())
 }
 
 fn scan(text: &str, into: &mut Transcript) {
@@ -229,6 +253,11 @@ fn scan(text: &str, into: &mut Transcript) {
         {
             if into.cwd.is_empty() {
                 into.cwd = c.to_string();
+            }
+        }
+        if into.prompt.is_empty() {
+            if let Some(p) = prompt_of(&v) {
+                into.prompt = p;
             }
         }
     }
@@ -267,7 +296,36 @@ fn read_transcript(path: &Path) -> Transcript {
     if t.branch.is_empty() {
         t.branch = first.branch;
     }
+    t.prompt = first.prompt;
     t
+}
+
+/// `read_transcript`, from the cache while the file has not changed.
+fn transcript(path: &Path) -> Transcript {
+    let meta = std::fs::metadata(path).ok();
+    let stamp = meta
+        .as_ref()
+        .map(|m| (m.modified().unwrap_or(UNIX_EPOCH), m.len()));
+    let mut cache = TRANSCRIPTS.lock().unwrap();
+    if let (Some((m, len)), Some((cm, clen, t))) = (stamp, cache.get(path)) {
+        if m == *cm && len == *clen {
+            return t.clone();
+        }
+    }
+    let t = read_transcript(path);
+    if let Some((m, len)) = stamp {
+        cache.insert(path.to_path_buf(), (m, len, t.clone()));
+    }
+    t
+}
+
+/// The title to show: Claude Code's, else the first request.
+fn title_of(t: &Transcript) -> String {
+    if t.title.is_empty() {
+        t.prompt.clone()
+    } else {
+        t.title.clone()
+    }
 }
 
 /// The transcript of session `id`, in whichever project folder it is.
@@ -305,12 +363,12 @@ fn live() -> Vec<Session> {
         };
         let pid = v.get("pid").and_then(Value::as_u64).unwrap_or(0) as u32;
         let cwd = s(&v, "cwd");
-        if !alive(pid) || is_pilot(&cwd, &s(&v, "entrypoint")) {
+        if !alive(pid) {
             continue;
         }
         let id = s(&v, "sessionId");
         let t = transcript_of(&id)
-            .map(|p| read_transcript(&p))
+            .map(|p| transcript(&p))
             .unwrap_or_default();
         let h = heard.get(&id).cloned().unwrap_or_default();
         let state = if h.waiting {
@@ -323,10 +381,9 @@ fn live() -> Vec<Session> {
         };
         out.push(Session {
             project: base(&cwd),
-            title: if t.title.is_empty() {
-                s(&v, "name")
-            } else {
-                t.title
+            title: match title_of(&t) {
+                t if t.is_empty() => s(&v, "name"),
+                t => t,
             },
             branch: t.branch,
             activity: if state == "busy" {
@@ -362,7 +419,7 @@ fn rank(state: &str) -> u8 {
     }
 }
 
-/// The last sessions that ended: the newest transcripts that no running
+/// Every session that ended, newest first: the transcripts no running
 /// session owns.
 fn recent(live: &[Session]) -> Vec<Session> {
     let mut cache = RECENT_CACHE.lock().unwrap();
@@ -378,9 +435,6 @@ fn recent(live: &[Session]) -> Vec<Session> {
     let mut files: Vec<(SystemTime, PathBuf)> = Vec::new();
     if let Ok(projects) = std::fs::read_dir(claude_dir().join("projects")) {
         for project in projects.flatten() {
-            if project.file_name().to_string_lossy().contains("anna-pilot") {
-                continue;
-            }
             let Ok(entries) = std::fs::read_dir(project.path()) else {
                 continue;
             };
@@ -398,17 +452,15 @@ fn recent(live: &[Session]) -> Vec<Session> {
     files.sort_by_key(|f| std::cmp::Reverse(f.0));
     let mut list = Vec::new();
     for (modified, path) in files {
-        if list.len() >= RECENT + live.len() {
-            break;
-        }
         let id = path
             .file_stem()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let t = read_transcript(&path);
-        // A transcript with neither title nor folder is no session to resume
-        // (a sub-agent's, a session that never started).
-        if t.title.is_empty() || t.cwd.is_empty() || is_pilot(&t.cwd, "") {
+        let t = transcript(&path);
+        let title = title_of(&t);
+        // A transcript with neither request nor folder is no session to
+        // resume (one that never started).
+        if title.is_empty() || t.cwd.is_empty() {
             continue;
         }
         list.push(Session {
@@ -416,7 +468,7 @@ fn recent(live: &[Session]) -> Vec<Session> {
             project: base(&t.cwd),
             cwd: t.cwd,
             branch: t.branch,
-            title: t.title,
+            title,
             state: "ended".into(),
             updated: modified
                 .duration_since(UNIX_EPOCH)
@@ -428,7 +480,6 @@ fn recent(live: &[Session]) -> Vec<Session> {
     *cache = Some((Instant::now(), list.clone()));
     list.into_iter()
         .filter(|r| !live.iter().any(|l| l.id == r.id))
-        .take(RECENT)
         .collect()
 }
 
@@ -552,10 +603,16 @@ mod tests {
     }
 
     #[test]
-    fn the_pilot_is_not_listed() {
-        assert!(is_pilot("/home/a/.local/state/anna/pilot", "cli"));
-        assert!(is_pilot("/home/a/code", "sdk-cli"));
-        assert!(!is_pilot("/home/a/code/karenine", "cli"));
+    fn an_untitled_session_is_named_by_its_first_request() {
+        let mut t = Transcript::default();
+        scan(
+            "{\"type\":\"user\",\"isMeta\":true,\"message\":{\"content\":\"caveat\"}}\n\
+             {\"type\":\"user\",\"message\":{\"content\":\"<command-name>/clear</command-name>\"}}\n\
+             {\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Fix the bar\\nplease\"}]}}\n\
+             {\"type\":\"user\",\"message\":{\"content\":\"Later\"}}\n",
+            &mut t,
+        );
+        assert_eq!(title_of(&t), "Fix the bar");
     }
 
     #[test]

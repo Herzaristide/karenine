@@ -1,20 +1,20 @@
 pragma ComponentBehavior: Bound
 import QtQuick
-import QtQuick.Layouts
 import Quickshell.Io
 import "../services"
 
-// Les périphériques, première colonne des réglages : la sortie et l'entrée
-// du son, la webcam, le Wi-Fi (WifiSettings). Le volume, la luminosité et
-// le Bluetooth sont aussi dans les volets de la barre du bas (panels/Bar.qml).
+// La webcam, dans les réglages (widgets/Settings.qml) : celle que les
+// applications prennent par défaut (via le portail), et ‹ › pour en
+// changer. La section ne se montre que s'il y en a une. Le son et le Wi-Fi
+// se règlent dans leurs volets de la barre du bas (panels/Bar.qml).
 //
-// Son et webcam sont des nœuds PipeWire : `wpctl status` les liste (le
-// défaut marqué d'un *), `wpctl set-default` en change — une webcam par
-// défaut est celle que les applications prennent via le portail.
-ColumnLayout {
+// Ce sont des nœuds PipeWire : `wpctl status` les liste (le défaut marqué
+// d'un *), `wpctl set-default` en change.
+SettingsSection {
     id: root
 
-    spacing: 6
+    title: I18n.tr("settings.video")
+    visible: root.nodes.video.length > 0
 
     // { sink: [], source: [], video: [] } : [{ id, name, active }]
     property var nodes: ({ sink: [], source: [], video: [] })
@@ -83,7 +83,7 @@ ColumnLayout {
     Timer {
         interval: 3000
         repeat: true
-        running: root.visible
+        running: true  // l'onglet n'existe que tant qu'il est affiché
         triggeredOnStart: true
         onTriggered: {
             if (!statusProc.running)
@@ -91,85 +91,18 @@ ColumnLayout {
         }
     }
 
-    // ── Petits éléments ──────────────────────────────────────────
-    component Heading: Text {
-        Layout.bottomMargin: 4
-        font.family: "Inter"
-        font.pixelSize: 12
-        font.weight: Font.Medium
-        color: Theme.accentMuted
-    }
-
-    // Une ligne : ce qu'elle règle, le périphérique, et ‹ › pour en changer.
-    component DeviceRow: Rectangle {
-        id: row
-        property string label
-        property string kind
-        readonly property int count: root.nodes[row.kind].length
-
-        Layout.fillWidth: true
-        // Un nom long passe sur deux lignes : la carte grandit.
-        implicitHeight: Math.max(46, rowText.implicitHeight + 16)
-        radius: Theme.radius
-        color: Qt.alpha(Theme.textPrimary, 0.05)
-
-        Column {
-            id: rowText
-            anchors.left: parent.left
-            anchors.leftMargin: 12
-            anchors.right: arrows.left
-            anchors.rightMargin: 6
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 1
-
-            Text {
-                text: row.label
-                font.family: "Inter"
-                font.pixelSize: 10
-                color: Theme.textSecondary
-            }
-            Text {
-                width: parent.width
-                text: root.activeName(row.kind)
-                font.family: "Inter"
-                font.pixelSize: 12
-                font.weight: Font.Medium
-                color: Theme.textPrimary
-                wrapMode: Text.Wrap
-                maximumLineCount: 2
-                elide: Text.ElideRight
-            }
-        }
-
+    // ── La ligne ─────────────────────────────────────────────────
+    SettingsRow {
+        icon: "video.svg"
+        title: I18n.tr("settings.video.webcam")
+        subtitle: root.activeName("video")
         Row {
-            id: arrows
-            anchors.right: parent.right
-            anchors.rightMargin: 8
             anchors.verticalCenter: parent.verticalCenter
-            spacing: 4
-            // Rien à choisir avec un seul périphérique.
-            visible: row.count > 1
-            GlassButton { implicitWidth: 24; implicitHeight: 24; fontSize: 13; text: "‹"; onClicked: root.cycle(row.kind, -1) }
-            GlassButton { implicitWidth: 24; implicitHeight: 24; fontSize: 13; text: "›"; onClicked: root.cycle(row.kind, 1) }
+            spacing: 2
+            // Rien à choisir avec une seule.
+            visible: root.nodes.video.length > 1
+            BarButton { size: 26; icon: "chevron-left.svg"; onClicked: root.cycle("video", -1) }
+            BarButton { size: 26; icon: "chevron-right.svg"; onClicked: root.cycle("video", 1) }
         }
-    }
-
-    // ── Les lignes ───────────────────────────────────────────────
-    Heading { text: I18n.tr("settings.sound") }
-    DeviceRow { label: I18n.tr("settings.sound.output"); kind: "sink" }
-    DeviceRow { label: I18n.tr("settings.sound.input"); kind: "source" }
-
-    Heading {
-        Layout.topMargin: 10
-        text: I18n.tr("settings.video")
-    }
-    DeviceRow {
-        label: I18n.tr("settings.video.webcam")
-        kind: "video"
-        visible: root.nodes.video.length > 0
-    }
-
-    WifiSettings {
-        Layout.fillWidth: true
     }
 }

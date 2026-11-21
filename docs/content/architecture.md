@@ -17,15 +17,15 @@ services/            Cross-cutting singletons and search sources
   Theme, I18n, Widgets, Display, Tuning, DragState
   Audio, Brightness, Battery, Notifications (notification server)
   Anna, Pilot, Gesture, CursorProbe, DefaultApps, Recorder
-  Search, Fuzzy, AppSource, FileSource, SettingSource, WallpaperSource,
+  Search, Fuzzy, AppSource, FileSource, SettingSource, WallpaperSource, TaskSource,
   NoteSource, WebSource
 panels/              Top-level chrome (Wayland windows)
   ConversationBar, WidgetHub, TopIsland, LevelsIsland, TabletBar, FloatingWidgets, WidgetCard,
   PolkitPrompt, PromptHost, PromptCard, PromptButton
 widgets/             Panel contents
-  FileExplorer, HardwareStats, MachinePicker, PhoneWidget, NotificationCenter,
+  FileExplorer, HardwareStats, MachinePicker, PhoneWidget, PhonePop, NotificationCenter,
   NotificationCard, NotesWidget, MusicPlayerWidget, Metronome, Tuner, AudioRecorder,
-  Harmony, MiniGraph, GestureControls, Settings, DeviceSettings,
+  Harmony, MiniGraph, GestureControls, Settings, SettingsSection, SettingsRow, DeviceSettings,
   WifiSettings, BluetoothMenu, GlassButton, FocusRing, NixIcon
 auth/                The card shared by the lock and login screens
 lock/                Lock screen surfaces (music, stats)
@@ -55,6 +55,7 @@ the [Search](#search) page):
 | `Audio.qml` | The default output's volume, live from PipeWire (capped at 100 %: above, PipeWire amplifies in software and saturates). |
 | `Brightness.qml` | The laptop backlight (`brightnessctl`), re-read on every udev event — keys, anna or the shell — without polling. |
 | `Battery.qml` | UPower over D-Bus, no polling. The time left until empty or full: UPower's, else computed from the energy left and the power drawn. On battery, warns once at a low level and once at a critical one (desktop notification); plugging in re-arms them. Created at startup, so it watches even with nothing open. |
+| `Phone.qml` | The phone linked through KDE Connect, as anna watches it (`phone_watch`), and its actions (`anna phone …`, one at a time): read by the bottom bar (the phone's battery, `PhonePop`) and the System tab (`PhoneWidget`). |
 | `Notifications.qml` | The desktop notification server (notify-send, the browser, grimblast, the phone through kdeconnectd…). |
 | `Anna.qml` | Where to reach the anna socket (`$XDG_RUNTIME_DIR`), in one place. |
 | `Pilot.qml` | The pilot and the voice as anna runs them: what the conversation bar sends and shows (see [AI cluster](#ai)). |

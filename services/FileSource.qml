@@ -60,21 +60,48 @@ QtObject {
         src.pendingSeq = -1;
         src.pendingQuery = "";
 
-        // Dossiers d'abord : `fd` termine déjà leurs chemins par « / », ce qui
-        // suffit à les distinguer des fichiers dans la sortie.
+        // `fd` termine les chemins des dossiers par « / », ce qui suffit à
+        // les distinguer des fichiers dans la sortie.
         // `shift` laisse toutes les racines dans "$@" : une seule commande, quel
         // que soit leur nombre.
         // Les gros arbres sans fichier qu'on chercherait (caches, chaînes
-        // d'outils, builds) restent hors du parcours : à chaque requête, fd
-        // les traversait pour rien.
+        // d'outils, builds, environnements Python, couches de Docker)
+        // restent hors du parcours : à chaque requête, fd les traversait pour
+        // rien. Docker seul pesait 490 000 fichiers sur 590 000, et une
+        // recherche sans résultat proche plus d'une seconde. Il en reste
+        // 7 000 : ce qu'on a écrit ou posé soi-même.
         var excl = "--exclude .git --exclude .cache --exclude node_modules " +
                    "--exclude .cargo --exclude .rustup --exclude .npm --exclude target " +
-                   "--exclude .direnv --exclude .local/share/Trash --exclude .local/share/Steam ";
+                   "--exclude .direnv --exclude .venv " +
+                   "--exclude .local/share/Trash --exclude .local/share/Steam " +
+                   "--exclude .local/share/docker --exclude .local/share/containers " +
+                   "--exclude .local/share/uv --exclude .local/share/zed " +
+                   // Corbeilles des autres disques, index, modèles, caches GL.
+                   "--exclude '.Trash-*' --exclude .codegraph --exclude .ollama --exclude .nv " +
+                   // Thèmes d'icônes : des milliers de SVG.
+                   "--exclude .icons --exclude .local/share/icons " +
+                   // L'intérieur des applications (profil du navigateur,
+                   // Claude Desktop, Claude Code ; ~/.claude/skills et
+                   // CLAUDE.md restent trouvables).
+                   "--exclude .config/chromium --exclude .config/Claude " +
+                   "--exclude .claude/plugins --exclude .claude/projects " +
+                   "--exclude .claude/paste-cache --exclude .claude/shell-snapshots " +
+                   "--exclude .claude/jobs --exclude .claude/telemetry " +
+                   "--exclude .claude/backups --exclude .claude/sessions --exclude .claude/cache " +
+                   // Les extraits d'entraînement des mots d'éveil
+                   // (code/lab/wakeword-*/model/<mot>/) : 42 000 fichiers.
+                   "--exclude positive_train --exclude positive_test " +
+                   "--exclude negative_train --exclude negative_test ";
+        // Les deux parcours en même temps ; les dossiers passent par un
+        // fichier pour que leurs lignes ne se mêlent pas à celles des
+        // fichiers.
         src.fdProc.command = [
             "sh", "-c",
-            "q=\"$1\"; shift; " +
-            "fd -HFi --max-results 12 --type d " + excl + "-- \"$q\" \"$@\"; " +
-            "fd -HFi --max-results 24 --type f " + excl + "-- \"$q\" \"$@\"",
+            "q=\"$1\"; shift; d=$(mktemp); " +
+            "trap 'kill $! 2>/dev/null; rm -f \"$d\"; exit' TERM; " +
+            "fd -HFi --max-results 12 --type d " + excl + "-- \"$q\" \"$@\" > \"$d\" & " +
+            "fd -HFi --max-results 24 --type f " + excl + "-- \"$q\" \"$@\"; " +
+            "wait; cat \"$d\"; rm -f \"$d\"",
             "--", q
         ].concat(src.roots);
         src.fdProc.running = true;
@@ -109,9 +136,9 @@ QtObject {
 
         // Tout le flux est parcouru avant d'être classé : s'arrêter à `limit` ici
         // reviendrait à classer les premières lignes de `fd` au lieu des
-        // meilleures. Comme la commande émet les dossiers d'abord, une poignée de
-        // dossiers suffirait sinon à évincer tous les fichiers, quel que soit
-        // leur score.
+        // meilleures. Comme la commande émet les fichiers puis les dossiers, une
+        // poignée des uns suffirait sinon à évincer tous les autres, quel que
+        // soit leur score.
         for (var i = 0; i < lines.length; i++) {
             var path = lines[i];
             if (path.length === 0)

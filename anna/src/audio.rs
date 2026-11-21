@@ -104,9 +104,11 @@ fn voice_node() -> String {
 
 /// Like `start_capture`, but from the voice node, at 16 kHz. PipeWire falls
 /// back to the default mic when the node does not exist; without `pw-record`,
-/// the default device is opened directly.
+/// the default device is opened directly. Read in stereo and mixed down here
+/// (`Downmix`): a microphone on one input of an audio interface leaves the
+/// other channel empty, and PipeWire's mono, an average, would halve it.
 pub fn start_voice_capture() -> Result<(Capture, Receiver<Vec<f32>>), String> {
-    start_node_capture(&voice_node(), 16000).or_else(|e| {
+    start_pw_record(&["--target", &voice_node()], 16000, 2, "voix").or_else(|e| {
         eprintln!("anna: audio: {e}, micro par défaut");
         start_capture()
     })
@@ -117,25 +119,81 @@ pub fn start_voice_capture() -> Result<(Capture, Receiver<Vec<f32>>), String> {
 /// video or the song, not the violin played over it. At `rate`; falls back to
 /// the default mic when PipeWire cannot give it.
 pub fn start_output_capture(rate: u32) -> Result<(Capture, Receiver<Vec<f32>>), String> {
-    start_pw_record(&["-P", "{ stream.capture.sink = true }"], rate, "sortie").or_else(|e| {
+    start_pw_record(&["-P", "{ stream.capture.sink = true }"], rate, 1, "sortie").or_else(|e| {
         eprintln!("anna: audio: {e}, micro par défaut");
         start_capture()
     })
 }
 
-/// Mono `f32` samples from a PipeWire node, read from a `pw-record` child.
-fn start_node_capture(node: &str, rate: u32) -> Result<(Capture, Receiver<Vec<f32>>), String> {
-    start_pw_record(&["--target", node], rate, node)
+/// Several channels to one, for the voice: the live channels averaged, a
+/// dead one — 30 dB under the loudest, over the last second or so — left
+/// out instead of halving the voice. A real stereo microphone stays an
+/// average.
+pub struct Downmix {
+    channels: usize,
+    /// Each channel's power, smoothed over chunks.
+    power: Vec<f32>,
 }
 
-/// Mono `f32` samples from a `pw-record` child; `target` says what it links to.
+impl Downmix {
+    /// A channel this far under the loudest (power ratio, −30 dB) is dead.
+    const DEAD: f32 = 1e-3;
+
+    pub fn new(channels: usize) -> Self {
+        Downmix {
+            channels: channels.max(1),
+            power: Vec::new(),
+        }
+    }
+
+    /// Interleaved frames → mono samples.
+    pub fn push(&mut self, interleaved: &[f32]) -> Vec<f32> {
+        let n = self.channels;
+        if n == 1 {
+            return interleaved.to_vec();
+        }
+        let frames = interleaved.len() / n;
+        if frames == 0 {
+            return Vec::new();
+        }
+        let mut now = vec![0f32; n];
+        for f in interleaved.chunks_exact(n) {
+            for (p, s) in now.iter_mut().zip(f) {
+                *p += s * s;
+            }
+        }
+        for p in &mut now {
+            *p /= frames as f32;
+        }
+        if self.power.is_empty() {
+            self.power = now;
+        } else {
+            for (p, x) in self.power.iter_mut().zip(now) {
+                *p = 0.9 * *p + 0.1 * x;
+            }
+        }
+        let loudest = self.power.iter().copied().fold(0f32, f32::max);
+        let live: Vec<usize> = (0..n)
+            .filter(|&c| loudest == 0.0 || self.power[c] >= loudest * Self::DEAD)
+            .collect();
+        let k = live.len() as f32;
+        interleaved
+            .chunks_exact(n)
+            .map(|f| live.iter().map(|&c| f[c]).sum::<f32>() / k)
+            .collect()
+    }
+}
+
+/// Mono `f32` samples from a `pw-record` child; `target` says what it links
+/// to. `channels` > 1: read that many and mixed down here (`Downmix`).
 fn start_pw_record(
     target: &[&str],
     rate: u32,
+    channels: usize,
     label: &str,
 ) -> Result<(Capture, Receiver<Vec<f32>>), String> {
     let mut child = Command::new("pw-record")
-        .args(["--raw", "--format", "f32", "--channels", "1"])
+        .args(["--raw", "--format", "f32", "--channels", &channels.to_string()])
         .args(target)
         .args(["--rate", &rate.to_string(), "-"])
         .stdout(Stdio::piped())
@@ -149,16 +207,17 @@ fn start_pw_record(
     let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
     let thread = std::thread::spawn(move || {
         // 100 ms per chunk, like a cpal callback at PipeWire's default quantum.
-        let mut buf = vec![0u8; rate as usize / 10 * 4];
+        let mut buf = vec![0u8; rate as usize / 10 * 4 * channels];
+        let mut mix = Downmix::new(channels);
         while !stop_thread.load(Ordering::SeqCst) && out.read_exact(&mut buf).is_ok() {
             let _ = ready_tx.send(());
-            let chunk = buf
+            let frames: Vec<f32> = buf
                 .as_chunks::<4>()
                 .0
                 .iter()
                 .map(|b| f32::from_le_bytes(*b))
                 .collect();
-            if sample_tx.send(chunk).is_err() {
+            if sample_tx.send(mix.push(&frames)).is_err() {
                 break;
             }
         }
@@ -294,6 +353,48 @@ pub mod testbench {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rms(s: &[f32]) -> f32 {
+        (s.iter().map(|x| x * x).sum::<f32>() / s.len() as f32).sqrt()
+    }
+
+    /// `secs` of interleaved stereo: the voice on the left, `right` on the right.
+    fn stereo(right: impl Fn(f32) -> f32) -> Vec<f32> {
+        (0..1600)
+            .flat_map(|i| {
+                let v = 0.1 * (i as f32 * 0.2).sin();
+                [v, right(v)]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_empty_channel_does_not_halve_the_voice() {
+        // The UR242 through echo-cancel: the mic on FL, FR at -80 dB.
+        let mut mix = Downmix::new(2);
+        let out = mix.push(&stereo(|_| 1e-5));
+        let voice = 0.1 / 2f32.sqrt();
+        assert!((rms(&out) - voice).abs() < 0.005, "{}", rms(&out));
+    }
+
+    #[test]
+    fn a_stereo_microphone_is_averaged() {
+        let mut mix = Downmix::new(2);
+        // The same voice on both sides: the average is the voice.
+        let out = mix.push(&stereo(|v| v));
+        assert!((rms(&out) - 0.1 / 2f32.sqrt()).abs() < 0.005);
+        // A channel 10 dB down still counts: (1 + 0.316) / 2.
+        let mut mix = Downmix::new(2);
+        let out = mix.push(&stereo(|v| v * 0.316));
+        let expected = 0.1 / 2f32.sqrt() * (1.0 + 0.316) / 2.0;
+        assert!((rms(&out) - expected).abs() < 0.003, "{}", rms(&out));
+    }
+
+    #[test]
+    fn mono_passes_through() {
+        let mut mix = Downmix::new(1);
+        assert_eq!(mix.push(&[0.1, -0.2, 0.3]), vec![0.1, -0.2, 0.3]);
+    }
 
     #[test]
     fn next_pow2_rounds_up() {

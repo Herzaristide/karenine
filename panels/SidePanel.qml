@@ -10,7 +10,7 @@ import "../widgets"
 // le montre ou le cache (Widgets.panelOpen) ; il prend alors sa place aux
 // fenêtres (exclusiveZone), qui se poussent.
 //
-//   ╭ ♫ Musique ▭ Explorer ▦ Système ▣ Agenda ✦ Claude ╮   les onglets, tous
+//   ╭ ♫ Musique ▭ Explorer ▦ Système ▣ Agenda ✦ Claude ⚙ Réglages ╮   les onglets, tous
 //   │                        │   de la même largeur
 //   │   la vue de l'onglet    │
 //   │                        │
@@ -18,6 +18,26 @@ import "../widgets"
 //
 // Une vue n'existe que tant qu'elle est affichée (Loader) : cachée, son
 // widget ne fait plus tourner ses processus (sondes, lecteur, micro).
+//
+// Le mouvement : l'effet « génie » de macOS. Le panneau sort de son bouton,
+// le dernier de la barre, comme une fenêtre du Dock : d'abord un filet qui
+// monte de l'entonnoir posé sur le bouton, puis l'image s'élargit et ses
+// flancs se redressent jusqu'au panneau entier. À la fermeture, il s'y
+// engouffre, plus vite. Pendant le mouvement, c'est une image du panneau
+// ouvert (ShaderEffectSource), déformée sur une grille par
+// shaders/genie.vert ; une fois ouvert, le vrai panneau, net et vivant.
+// Les fenêtres se poussent dès l'ouverture ; à la fermeture, elles ne
+// reprennent la place qu'à la fin, quand le génie est presque rentré
+// (`releaseAt`).
+//
+// La fenêtre du panneau reste là, vide et transparente, ne prenant pas la
+// souris : rien n'est créé au moment d'ouvrir, et Hyprland n'y ajoute pas
+// sa propre animation. Elle déborde de `lipR` à gauche du panneau, pour le
+// coin creusé qui le raccorde à la barre.
+//
+// D'un onglet à l'autre, la pastille de l'onglet ouvert glisse vers le
+// nouveau, et les vues se relaient : l'ancienne s'efface en partant du côté
+// opposé, la nouvelle arrive du côté de son onglet.
 PanelWindow { // qmllint disable uncreatable-type
     id: panel
 
@@ -36,8 +56,61 @@ PanelWindow { // qmllint disable uncreatable-type
     // La fenêtre de la barre existe (shell.qml) : le panneau n'est créé
     // qu'après elle, et se recrée après elle si elle est recréée.
     property bool barReady: true
+    // Le bouton du panneau dans la barre : son retrait depuis le bord droit
+    // de l'écran et sa largeur (Bar.panelButtonInset / panelButtonWidth).
+    property real buttonInset: 14
+    property real buttonWidth: 34
 
-    visible: Widgets.panelOpen && panel.barReady
+    // La largeur du panneau, et le débord à gauche pour le coin creusé.
+    readonly property int panelW: Math.max(panel.minW, Math.min(panel.maxW, Widgets.panelWidth))
+    readonly property int lipR: Theme.radius
+
+    // Le génie. À l'ouverture, il jaillit (le début n'est qu'un filet
+    // au-dessus du bouton : il ne doit pas s'y attarder) puis se pose en
+    // douceur ; à la fermeture, il part aussitôt, plus vite encore, et
+    // ralentit à peine en entrant dans le bouton.
+    readonly property int openMs: 420
+    readonly property int closeMs: 280
+
+    // 0 : rentré dans le bouton ; 1 : ouvert.
+    property real reveal: 0
+    // Ouvert, ou en train de rentrer : les vues sont chargées.
+    readonly property bool live: Widgets.panelOpen || panel.reveal > 0
+    // Tout à fait ouvert : le vrai panneau, plus son image.
+    readonly property bool settled: panel.reveal >= 1
+    visible: panel.barReady
+    // Seul le panneau ouvert prend la souris ; en mouvement ou rentré, rien.
+    mask: Region { item: panel.settled ? panelArea : null } // qmllint disable unqualified
+
+    Connections {
+        target: Widgets
+        function onPanelOpenChanged() {
+            if (Widgets.panelOpen) {
+                hideAnim.stop();
+                showAnim.restart();
+            } else {
+                showAnim.stop();
+                hideAnim.restart();
+            }
+        }
+    }
+    Component.onCompleted: if (Widgets.panelOpen) showAnim.restart()
+    NumberAnimation {
+        id: showAnim
+        target: panel
+        property: "reveal"
+        to: 1
+        duration: panel.openMs
+        easing.type: Easing.OutCubic
+    }
+    NumberAnimation {
+        id: hideAnim
+        target: panel
+        property: "reveal"
+        to: 0
+        duration: panel.closeMs
+        easing.type: Easing.OutCubic
+    }
     // Sur la couche Top, comme la barre : la barre, créée avant, garde
     // toute la largeur et le panneau se pose au-dessus d'elle. Les volets
     // de la barre, sur la couche Overlay, passent par-dessus.
@@ -50,157 +123,318 @@ PanelWindow { // qmllint disable uncreatable-type
         right: true
         bottom: true
     }
-    implicitWidth: Math.max(panel.minW, Math.min(panel.maxW, Widgets.panelWidth))
-    exclusiveZone: panel.implicitWidth - panel.inset
-    color: Theme.bgDeep
+    implicitWidth: panel.panelW + panel.lipR
+    // Les fenêtres se poussent dès l'ouverture, et reviennent à la fin de la
+    // fermeture.
+    // À l'ouverture, aussitôt ; à la fermeture, la place reste réservée
+    // jusqu'à ce que le génie soit presque rentré (Hyprland rend la place
+    // aux fenêtres plus vite que le génie ne se referme : sans cela, elles
+    // filent dessous avant qu'il ait disparu).
+    readonly property real releaseAt: 0.1
+    exclusiveZone: Widgets.panelOpen || panel.reveal > panel.releaseAt ? panel.panelW - panel.inset : 0
+    color: "transparent"
+
+    // Le rang d'un onglet ; un inconnu, après eux.
+    function tabIndex(key) {
+        for (var i = 0; i < panel.tabs.length; i++)
+            if (panel.tabs[i].key === key)
+                return i;
+        return panel.tabs.length;
+    }
 
     readonly property var tabs: [
         { key: "music", icon: "music.svg", label: I18n.tr("widget.music") },
         { key: "files", icon: "folder.svg", label: I18n.tr("widget.explorer") },
         { key: "system", icon: "monitor.svg", label: I18n.tr("widget.stats") },
         { key: "agenda", icon: "calendar.svg", label: I18n.tr("widget.agenda") },
-        { key: "claude", icon: "claude.svg", label: I18n.tr("widget.claude"), badge: true }
+        { key: "claude", icon: "sparkles.svg", label: I18n.tr("widget.claude"), badge: true },
+        { key: "settings", icon: "settings.svg", label: I18n.tr("widget.settings") }
     ]
 
+    // ── Le panneau tel qu'ouvert ─────────────────────────────────
+    // La surface (celle des volets, raccordée à la barre par son coin
+    // creusé ; celui de droite sort de l'écran) et son contenu. Pendant le
+    // génie, il ne se montre que par son image.
     Item {
-        id: body
+        id: sheet
         anchors.fill: parent
-        anchors.topMargin: panel.edge
-        anchors.rightMargin: panel.edge
-        anchors.leftMargin: panel.inset
-        // Le bas du contenu tombe sur le bas des fenêtres : le panneau
-        // s'arrête au bord de la zone réservée par la barre, les fenêtres
-        // gaps_out (18) au-dessus.
-        anchors.bottomMargin: panel.edge
+        visible: panel.live
 
-        // ── Les onglets ──────────────────────────────────────────
-        Rectangle {
-            id: tabBar
-            anchors.left: parent.left
-            anchors.right: parent.right
-            height: 40
-            radius: Theme.radiusSmall + 3
-            color: Theme.bgElevated
+        Lip {
+            x: panel.lipR
+            width: panel.panelW
+            height: parent.height
+        }
 
-            Row {
-                id: tabRow
+        Item {
+            id: panelArea
+            x: panel.lipR
+            width: panel.panelW
+            height: parent.height
+
+            Item {
+                id: body
                 anchors.fill: parent
-                anchors.margins: 3
-                spacing: 3
+                anchors.topMargin: panel.edge
+                anchors.rightMargin: panel.edge
+                anchors.leftMargin: panel.inset
+                // Le bas du contenu tombe sur le bas des fenêtres : le panneau
+                // s'arrête au bord de la zone réservée par la barre, les fenêtres
+                // gaps_out (18) au-dessus.
+                anchors.bottomMargin: panel.edge
 
-                // Tous de la même largeur, toujours avec leur nom : l'onglet
-                // ouvert se distingue par son fond, pas par sa taille.
-                readonly property real unit: (tabRow.width - 4 * tabRow.spacing) / panel.tabs.length
+                // ── Les onglets ──────────────────────────────────────────
+                Rectangle {
+                    id: tabBar
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    height: 40
+                    radius: Theme.radiusSmall + 3
+                    color: Theme.bgElevated
 
-                Repeater {
-                    model: panel.tabs
-
+                    // Le fond de l'onglet ouvert : une pastille qui glisse de l'un à
+                    // l'autre (et s'efface hors des onglets).
                     Rectangle {
-                        id: tab
-                        required property var modelData
-                        readonly property bool active: Widgets.panelTab === tab.modelData.key
-
+                        id: tabPill
+                        readonly property int index: panel.tabIndex(Widgets.panelTab)
+                        readonly property bool onTab: tabPill.index < panel.tabs.length
+                        property real at: tabPill.onTab ? tabPill.index : 0
+                        Behavior on at { NumberAnimation { duration: 420; easing.type: Easing.OutQuint } }
+                        x: tabRow.x + tabPill.at * (tabRow.unit + tabRow.spacing)
+                        y: tabRow.y
                         width: tabRow.unit
                         height: tabRow.height
                         radius: Theme.radiusSmall
-                        color: tab.active ? Theme.bgDeep : tabMa.containsMouse ? Theme.hoverOverlay : "transparent"
-                        Behavior on color { ColorAnimation { duration: 160 } }
+                        color: Theme.bgDeep
+                        opacity: tabPill.onTab ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: 200 } }
+                    }
 
-                        Row {
-                            anchors.centerIn: parent
-                            spacing: 7
+                    Row {
+                        id: tabRow
+                        anchors.fill: parent
+                        anchors.margins: 3
+                        spacing: 3
 
-                            NixIcon {
-                                anchors.verticalCenter: parent.verticalCenter
-                                iconSize: 16
-                                source: "../assets/ui/" + tab.modelData.icon
-                                color: tab.active ? Theme.accentColor : Theme.iconColor
-                                opacity: tab.active || tabMa.containsMouse ? 1 : 0.75
-                            }
-                            // Des sessions attendent : leur nombre.
+                        // Tous de la même largeur, toujours avec leur nom : l'onglet
+                        // ouvert se distingue par son fond, pas par sa taille.
+                        readonly property real unit: (tabRow.width - (panel.tabs.length - 1) * tabRow.spacing) / panel.tabs.length
+
+                        Repeater {
+                            model: panel.tabs
+
                             Rectangle {
-                                id: waitBadge
-                                anchors.verticalCenter: parent.verticalCenter
-                                visible: tab.modelData.badge === true && ClaudeSessions.waiting > 0
-                                width: Math.max(16, waitText.implicitWidth + 8)
-                                height: 16
-                                radius: 8
-                                color: Theme.accentColor
-                                Text {
-                                    id: waitText
+                                id: tab
+                                required property var modelData
+                                readonly property bool active: Widgets.panelTab === tab.modelData.key
+
+                                width: tabRow.unit
+                                height: tabRow.height
+                                radius: Theme.radiusSmall
+                                color: !tab.active && tabMa.containsMouse ? Theme.hoverOverlay : "transparent"
+                                Behavior on color { ColorAnimation { duration: 200; easing.type: Easing.OutCubic } }
+
+                                Row {
                                     anchors.centerIn: parent
-                                    text: ClaudeSessions.waiting
-                                    font.family: panel.uiFont
-                                    font.pixelSize: 10
-                                    font.weight: Font.Bold
-                                    color: Theme.bgDeep
+                                    spacing: 7
+
+                                    NixIcon {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        iconSize: 16
+                                        source: "../assets/ui/" + tab.modelData.icon
+                                        color: tab.active ? Theme.accentColor : Theme.iconColor
+                                        opacity: tab.active || tabMa.containsMouse ? 1 : 0.75
+                                        Behavior on color { ColorAnimation { duration: 260 } }
+                                        Behavior on opacity { NumberAnimation { duration: 200 } }
+                                    }
+                                    // Des sessions attendent : leur nombre.
+                                    Rectangle {
+                                        id: waitBadge
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        visible: tab.modelData.badge === true && ClaudeSessions.waiting > 0
+                                        width: Math.max(16, waitText.implicitWidth + 8)
+                                        height: 16
+                                        radius: 8
+                                        color: Theme.accentColor
+                                        Text {
+                                            id: waitText
+                                            anchors.centerIn: parent
+                                            text: ClaudeSessions.waiting
+                                            font.family: panel.uiFont
+                                            font.pixelSize: 10
+                                            font.weight: Font.Bold
+                                            color: Theme.bgDeep
+                                        }
+                                    }
+                                    Text {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        // Trop étroit pour le nom entier : il s'abrège ; pour
+                                        // un nom lisible, il s'efface et l'icône reste seule.
+                                        readonly property real room: tab.width - 16 - 7 - 12
+                                                        - (waitBadge.visible ? waitBadge.width + 7 : 0)
+                                        visible: room >= 34
+                                        width: Math.min(implicitWidth, room)
+                                        elide: Text.ElideRight
+                                        text: tab.modelData.label
+                                        font.family: panel.uiFont
+                                        font.pixelSize: 12
+                                        font.weight: Font.Medium
+                                        color: tab.active ? Theme.textPrimary : Theme.textSecondary
+                                        Behavior on color { ColorAnimation { duration: 260 } }
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: tabMa
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: Widgets.panelTab = tab.modelData.key
                                 }
                             }
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                // Trop étroit pour le nom entier : il s'abrège.
-                                width: Math.min(implicitWidth, tab.width - 16 - 7 - 12
-                                                - (waitBadge.visible ? waitBadge.width + 7 : 0))
-                                elide: Text.ElideRight
-                                text: tab.modelData.label
-                                font.family: panel.uiFont
-                                font.pixelSize: 12
-                                font.weight: Font.Medium
-                                color: tab.active ? Theme.textPrimary : Theme.textSecondary
-                            }
-                        }
-
-                        MouseArea {
-                            id: tabMa
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: Widgets.panelTab = tab.modelData.key
                         }
                     }
                 }
+
+                // ── La vue ───────────────────────────────────────────────
+                // Deux emplacements qui alternent : celui qui reçoit le nouvel
+                // onglet le charge, puis l'amène ; l'autre s'en va et se décharge.
+                Item {
+                    id: stage
+                    anchors.top: tabBar.bottom
+                    anchors.topMargin: 16
+                    anchors.left: parent.left
+                    anchors.leftMargin: 6
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+
+                    property bool frontA: true
+
+                    Connections {
+                        target: Widgets
+                        function onPanelTabChanged() {
+                            var incoming = stage.frontA ? paneB : paneA;
+                            var outgoing = stage.frontA ? paneA : paneB;
+                            // Vers la droite des onglets : la nouvelle vue vient de
+                            // droite, l'ancienne part à gauche ; et inversement.
+                            var dir = panel.tabIndex(Widgets.panelTab) >= panel.tabIndex(outgoing.key) ? 1 : -1;
+                            outgoing.leave(-dir);
+                            incoming.enter(Widgets.panelTab, dir);
+                            stage.frontA = !stage.frontA;
+                        }
+                    }
+
+                    ViewPane { id: paneA; front: stage.frontA }
+                    ViewPane { id: paneB; front: !stage.frontA }
+                    Component.onCompleted: paneA.key = Widgets.panelTab
+                }
+
+                // Une vue : chargée tant qu'elle est devant ou qu'elle s'efface.
+                // `t` va de 0 (absente, décalée vers `side`) à 1 (à sa place).
+                component ViewPane: Loader {
+                    id: pane
+                    property string key: ""
+                    property bool front: false
+                    property real t: 0
+                    property int side: 1
+
+                    anchors.fill: parent
+                    asynchronous: true
+                    active: panel.live && pane.key !== "" && (pane.front || pane.t > 0)
+                    sourceComponent: ({
+                        "music": musicView, "files": filesView, "system": systemView,
+                        "agenda": agendaView, "claude": claudeView, "settings": settingsView
+                    })[pane.key] || musicView
+
+                    opacity: pane.t
+                    transform: Translate { x: (1 - pane.t) * pane.side * 28 }
+                    // La vue qui part ne prend plus la souris.
+                    enabled: pane.front
+
+                    function enter(key, dir) {
+                        outAnim.stop();
+                        pane.side = dir;
+                        pane.t = 0;
+                        pane.key = key;
+                        pane.arrive();
+                    }
+                    function leave(dir) {
+                        inAnim.stop();
+                        pane.side = dir;
+                        outAnim.restart();
+                    }
+                    // Elle n'arrive qu'une fois chargée : pas de vide qui glisse.
+                    function arrive() {
+                        if (pane.front && pane.status === Loader.Ready && pane.t < 1 && !inAnim.running)
+                            inAnim.restart();
+                    }
+                    onStatusChanged: pane.arrive()
+                    onFrontChanged: pane.arrive()
+                    Component.onCompleted: pane.arrive()
+
+                    SequentialAnimation {
+                        id: inAnim
+                        // Le temps que l'ancienne commence à partir.
+                        PauseAnimation { duration: 70 }
+                        NumberAnimation { target: pane; property: "t"; to: 1; duration: 380; easing.type: Easing.OutQuint }
+                    }
+                    NumberAnimation {
+                        id: outAnim
+                        target: pane
+                        property: "t"
+                        to: 0
+                        duration: 170
+                        easing.type: Easing.InCubic
+                    }
+                }
+
+                Component { id: musicView; MusicView {} }
+                // Ouvrir un fichier ne referme pas le panneau : il reste là.
+                Component { id: filesView; FileExplorer {} }
+                Component { id: systemView; FleetView {} }
+                // Un onglet, où mène aussi la palette de la barre (« Tous les
+                // réglages »).
+                Component { id: settingsView; Settings { showInternalHeader: false } }
+                Component { id: agendaView; CalendarWidget {} }
+                Component { id: claudeView; ClaudeView {} }
             }
+
+        }
+    }
+
+    // ── Le génie ─────────────────────────────────────────────────
+    // L'image du panneau ouvert, sur une grille fine en hauteur (les flancs
+    // s'incurvent) : shaders/genie.vert la tire vers le bouton.
+    ShaderEffect {
+        id: genie
+        anchors.fill: parent
+        visible: panel.reveal > 0 && !panel.settled
+
+        property real t: 1 - panel.reveal
+        property real itemW: genie.width
+        property real itemH: genie.height
+        property real buttonL: genie.width - panel.buttonInset - panel.buttonWidth
+        property real buttonR: genie.width - panel.buttonInset
+        property var source: ShaderEffectSource {
+            sourceItem: sheet
+            hideSource: genie.visible
+            live: true
         }
 
-        // ── La vue ───────────────────────────────────────────────
-        Loader {
-            id: view
-            anchors.top: tabBar.bottom
-            anchors.topMargin: 16
-            anchors.left: parent.left
-            anchors.leftMargin: 6
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            asynchronous: true
-            active: panel.visible
-            sourceComponent: ({
-                "music": musicView, "files": filesView, "system": systemView,
-                "agenda": agendaView, "claude": claudeView, "settings": settingsView
-            })[Widgets.panelTab] || musicView
-
-            opacity: view.status === Loader.Ready ? 1 : 0
-            Behavior on opacity { NumberAnimation { duration: 200 } }
-        }
-
-        Component { id: musicView; MusicView {} }
-        // Ouvrir un fichier ne referme pas le panneau : il reste là.
-        Component { id: filesView; FileExplorer {} }
-        Component { id: systemView; FleetView {} }
-        // Hors des onglets : la palette de la barre y mène (« Tous les
-        // réglages »).
-        Component { id: settingsView; Settings { showInternalHeader: false } }
-        Component { id: agendaView; CalendarWidget {} }
-        Component { id: claudeView; ClaudeView {} }
+        mesh: GridMesh { resolution: Qt.size(8, 64) }
+        vertexShader: Qt.resolvedUrl("../shaders/genie.vert.qsb")
+        fragmentShader: Qt.resolvedUrl("../shaders/genie.frag.qsb")
     }
 
     // ── Le bord gauche, qui se tire ──────────────────────────────
     // Rien ne le montre : le curseur change au survol. La fenêtre garde son
     // bord droit collé à l'écran ; tirer vers la gauche l'élargit.
     MouseArea {
-        anchors.left: parent.left
+        x: panel.lipR
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         width: 8
+        enabled: panel.settled
         hoverEnabled: true
         cursorShape: Qt.SizeHorCursor
         preventStealing: true
@@ -213,7 +447,7 @@ PanelWindow { // qmllint disable uncreatable-type
             if (!pressed)
                 return;
             Widgets.panelWidth = Math.round(Math.max(panel.minW, Math.min(panel.maxW,
-                                                     panel.implicitWidth - (mouse.x - pressX))));
+                                                     panel.panelW - (mouse.x - pressX))));
         }
     }
 }

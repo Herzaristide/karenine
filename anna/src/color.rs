@@ -1,3 +1,70 @@
+/// The accents the pilot picks from by name (`couleur_accent`): the theme's
+/// own hues (its base16 palette), muted, plus a blue and a violet in the
+/// same tone. Name, the words that ask for it, color.
+pub const ACCENTS: &[(&str, &[&str], &str)] = &[
+    ("cuivre", &["defaut", "copper", "brun", "marron"], "#d4a35f"),
+    (
+        "sable",
+        &["jaune", "or", "dore", "yellow", "gold"],
+        "#c9a95c",
+    ),
+    ("ambre", &["orange", "amber"], "#c98a4b"),
+    ("terre cuite", &["rouge", "terracotta", "red"], "#c46a5a"),
+    ("rose", &["pink", "framboise"], "#b57a8a"),
+    (
+        "prune",
+        &["violet", "mauve", "purple", "lavande"],
+        "#9a88b2",
+    ),
+    ("bleu", &["blue", "azur", "ciel"], "#7f9cc0"),
+    ("ardoise", &["bleu gris", "slate", "gris bleu"], "#8c9bb5"),
+    (
+        "vert-de-gris",
+        &["turquoise", "cyan", "teal", "bleu vert"],
+        "#7fa6a0",
+    ),
+    ("sauge", &["vert", "green", "olive"], "#8fa876"),
+    (
+        "taupe",
+        &["gris", "grey", "gray", "neutre", "beige"],
+        "#a39887",
+    ),
+];
+
+/// Lowercase, without accents or hyphens: how a requested name is compared.
+fn fold_name(name: &str) -> String {
+    name.trim()
+        .to_lowercase()
+        .chars()
+        .map(|c| match c {
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'à' | 'â' | 'ä' => 'a',
+            'î' | 'ï' => 'i',
+            'ô' | 'ö' => 'o',
+            'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            '-' | '_' => ' ',
+            c => c,
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The accent the pilot asked for: a name of `ACCENTS` (or a word for it),
+/// else a `#rrggbb` brought into the theme's tone.
+pub fn accent_for(request: &str) -> Option<Color> {
+    let asked = fold_name(request);
+    let named = ACCENTS.iter().find(|(name, words, _)| {
+        fold_name(name) == asked || words.iter().any(|w| fold_name(w) == asked)
+    });
+    match named {
+        Some((_, _, hex)) => Color::from_hex(hex),
+        None => Color::from_hex(request).map(|c| c.harmonized()),
+    }
+}
+
 /// A 24-bit RGB color with hex parsing, HSL math, and derived variants.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Color {
@@ -68,6 +135,15 @@ impl Color {
         let (ah, a_sat, _) = accent.to_hsl();
         let s = (a_sat * (0.35 + 0.65 * (s / 0.5).min(1.0))).min(1.0);
         Self::from_hsl(ah, s, l)
+    }
+
+    /// Brought into the theme's tone: the hue kept, the saturation and
+    /// lightness held where the theme's own accents sit (S ≤ 0.58, L 0.52–0.66),
+    /// so that a web color (#3b82f6) becomes a muted one of the same hue.
+    /// Greys stay grey.
+    pub fn harmonized(&self) -> Self {
+        let (h, s, l) = self.to_hsl();
+        Self::from_hsl(h, s.min(0.58), l.clamp(0.52, 0.66))
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────
@@ -200,6 +276,45 @@ mod tests {
         let white = Color::from_hex("#ffffff").unwrap();
         assert_eq!(white.mono_toward(&c), white);
         assert!(c.muted().to_hsl().2 <= 0.75 + 0.01);
+    }
+
+    #[test]
+    fn accents_are_asked_by_name_or_word() {
+        assert_eq!(accent_for("Bleu").unwrap().to_hex(), "#7f9cc0");
+        assert_eq!(accent_for("rouge").unwrap().to_hex(), "#c46a5a");
+        assert_eq!(accent_for("Terre-cuite").unwrap().to_hex(), "#c46a5a");
+        assert_eq!(accent_for(" vert de gris ").unwrap().to_hex(), "#7fa6a0");
+        assert_eq!(accent_for("doré").unwrap().to_hex(), "#c9a95c");
+        assert!(accent_for("chartreuse fluo").is_none());
+    }
+
+    #[test]
+    fn every_accent_is_already_in_tone() {
+        for (name, _, hex) in ACCENTS {
+            let c = Color::from_hex(hex).unwrap();
+            let h = c.harmonized();
+            for (a, b) in [(c.r, h.r), (c.g, h.g), (c.b, h.b)] {
+                assert!(a.abs_diff(b) <= 1, "{name} -> {}", h.to_hex());
+            }
+        }
+    }
+
+    #[test]
+    fn a_web_color_is_muted_but_keeps_its_hue() {
+        let web = Color::from_hex("#3b82f6").unwrap();
+        let soft = accent_for("#3b82f6").unwrap();
+        let ((h0, ..), (h1, s1, l1)) = (web.to_hsl(), soft.to_hsl());
+        assert!((h0 - h1).abs() < 2.0, "{}", soft.to_hex());
+        assert!(
+            s1 <= 0.59 && (0.51..=0.67).contains(&l1),
+            "{}",
+            soft.to_hex()
+        );
+        // Pure red, black and white too.
+        for hex in ["#ff0000", "#000000", "#ffffff"] {
+            let (_, s, l) = accent_for(hex).unwrap().to_hsl();
+            assert!(s <= 0.59 && (0.51..=0.67).contains(&l), "{hex}");
+        }
     }
 
     #[test]

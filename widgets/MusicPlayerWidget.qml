@@ -576,40 +576,6 @@ Item {
                             color: Theme.textSecondary
                         }
                     }
-
-                    // L'accordage de l'enregistrement, quand il s'écarte : de
-                    // quoi réaccorder le violon. Un point ambre, en douceur.
-                    Rectangle {
-                        Layout.alignment: Qt.AlignTop
-                        implicitWidth: tuningRow.implicitWidth + 16
-                        implicitHeight: 20
-                        radius: height / 2
-                        color: Qt.alpha(Theme.colorAmber, 0.18)
-                        opacity: harmony.offTune ? 1 : 0
-                        visible: opacity > 0
-                        Behavior on opacity { NumberAnimation { duration: 220 } }
-
-                        Row {
-                            id: tuningRow
-                            anchors.centerIn: parent
-                            spacing: 5
-                            Rectangle {
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: 5
-                                height: 5
-                                radius: 2.5
-                                color: Theme.colorAmber
-                            }
-                            Text {
-                                text: I18n.tr("harmony.tuning", { hz: harmony.aHz })
-                                font.family: "Inter"
-                                font.pixelSize: 10
-                                font.weight: Font.Medium
-                                font.features: { "tnum": 1 }
-                                color: Theme.textPrimary
-                            }
-                        }
-                    }
                 }
 
                 // L'harmonie de ce qui joue : l'accord, la tonalité.

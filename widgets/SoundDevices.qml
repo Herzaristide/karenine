@@ -109,7 +109,8 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.topMargin: 4
         enabled: root.ready
-        icon: root.input ? "mic.svg" : root.ready && root.current.audio.muted ? "volume-mute.svg" : "volume.svg"
+        icon: root.ready && root.current.audio.muted ? (root.input ? "mic-mute.svg" : "volume-mute.svg")
+                                                     : (root.input ? "mic.svg" : "volume.svg")
         value: root.ready ? root.current.audio.volume : 0
         fill: Theme.accentColor
         label: root.ready && root.current.audio.muted ? I18n.tr("volume.muted")

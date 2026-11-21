@@ -30,6 +30,14 @@ TestCase {
             .map(function (it) { return it.id; });
     }
 
+    // Les sources ne publient qu'une fois toutes répondues, ou passé
+    // `settleMs` : on attend que la liste ait pris la forme attendue.
+    function idsSoon(expected, withWeb, msg) {
+        tryVerify(function () {
+            return JSON.stringify(ids(withWeb)) === JSON.stringify(expected);
+        }, 2000, msg || JSON.stringify(expected));
+    }
+
     function init() {
         Search.clear();
         DefaultApps.lastUrl = "";
@@ -62,9 +70,12 @@ TestCase {
         var old = Search._seq;
         dispatch("fir");
         Search.appSource.produced(old, [item("app", "firefox", 500)]);
-        compare(ids().length, 0);
+        answerAll(Search.appSource);
+        compare(ids().length, 0, "la réponse à « fi » est jetée");
+        dispatch("fire");
+        answerAll(Search.appSource);
         Search.appSource.produced(Search._seq, [item("app", "firefox", 500)]);
-        compare(ids(), ["firefox"]);
+        idsSoon(["firefox"], false);
     }
 
     function test_type_bonus_favours_apps() {
@@ -73,7 +84,7 @@ TestCase {
         dispatch("fi");
         Search.fileSource.produced(Search._seq, [item("file", "fish", 550)]);
         Search.appSource.produced(Search._seq, [item("app", "firefox", 500)]);
-        compare(ids(), ["firefox", "fish"]);
+        idsSoon(["firefox", "fish"], false);
         compare(Search.firstItem.id, "firefox");
     }
 
@@ -84,16 +95,15 @@ TestCase {
             item("file", "near", 900 - Search.cutoff),
             item("file", "firefox.txt", 900 - Search.cutoff - 1)
         ]);
-        compare(ids(), ["foxglove", "near"]);
+        idsSoon(["foxglove", "near"], false);
     }
 
     function test_web_shrinks_when_local_is_enough() {
         dispatch("example.com");
-        // Adresse reconnue : le web propose l'adresse directe + le moteur.
-        compare(Search.results.length, 2);
         Search.fileSource.produced(Search._seq, [
             item("file", "a", 950), item("file", "b", 940), item("file", "c", 930)
         ]);
+        idsSoon(["a", "b", "c", "web:direct"], true);
         var web = Search.results.filter(function (it) { return it.type === "web"; });
         compare(web.length, 1);
         compare(web[0].id, "web:direct");
@@ -103,7 +113,7 @@ TestCase {
         dispatch("zzz");
         Search.fileSource.produced(Search._seq, [item("file", "zzz", 900)]);
         // Le moteur score 60, bien sous le seuil : il reste proposé.
-        compare(ids(true), ["zzz", "web:web"]);
+        idsSoon(["zzz", "web:web"], true);
     }
 
     function test_results_are_capped_but_always_items_stay() {
@@ -112,21 +122,60 @@ TestCase {
         for (var i = 0; i < 20; i++)
             many.push(item("file", "f" + i, 900 - i));
         Search.fileSource.produced(Search._seq, many);
-        compare(Search.results.length, Search.maxResults);
-
         Search.settingSource.produced(Search._seq, [item("setting", "setting:always", 1, { always: true })]);
+        tryVerify(function () { return ids().indexOf("setting:always") !== -1; }, 2000,
+                  "un résultat « toujours là » reste");
         compare(Search.results.length, Search.maxResults);
-        verify(ids().indexOf("setting:always") !== -1, "un résultat « toujours là » reste");
     }
 
-    function test_unanswered_source_keeps_its_previous_results() {
+    function test_previous_list_stays_until_the_new_one_is_ready() {
+        dispatch("fi");
+        answerAll(Search.appSource);
+        Search.appSource.produced(Search._seq, [item("app", "firefox", 500)]);
+        verify(!Search.loading);
+        Search.query = "fir";
+        verify(Search.loading, "la frappe d'après charge");
+        tryVerify(function () { return Search.appSource.lastQuery === "fir"; });
+        Search.fileSource.produced(Search._seq, [item("file", "fir.txt", 450)]);
+        compare(ids(), ["firefox"], "l'ancienne liste reste tant que tout n'a pas répondu");
+        answerAll(Search.fileSource);
+        compare(ids(), ["fir.txt"]);
+        verify(!Search.loading);
+    }
+
+    function test_address_alone_after_the_delay() {
+        dispatch("example.com");
+        // Adresse reconnue : le web propose l'adresse directe + le moteur.
+        tryVerify(function () { return Search.results.length === 2; });
+    }
+
+    // Toutes les sources ont répondu : la liste se publie aussitôt, sans
+    // attendre le délai.
+    function answerAll(except) {
+        var srcs = [Search.appSource, Search.fileSource, Search.settingSource,
+                    Search.wallpaperSource, Search.taskSource];
+        for (var i = 0; i < srcs.length; i++)
+            if (srcs[i] !== except)
+                srcs[i].produced(Search._seq, []);
+    }
+
+    function test_publishes_at_once_when_every_source_answered() {
+        dispatch("fi");
+        answerAll(Search.appSource);
+        Search.appSource.produced(Search._seq, [item("app", "firefox", 500)]);
+        compare(ids(), ["firefox"]);
+    }
+
+    function test_one_list_per_keystroke() {
         dispatch("fi");
         Search.appSource.produced(Search._seq, [item("app", "firefox", 500)]);
-        dispatch("fir");
-        Search.fileSource.produced(Search._seq, [item("file", "fir.txt", 450)]);
-        compare(ids(), ["firefox", "fir.txt"], "l'app n'a pas encore répondu : on garde la sienne");
-        Search.appSource.produced(Search._seq, []);
-        compare(ids(), ["fir.txt"]);
+        compare(ids(), [], "fd n'a pas répondu : rien ne s'affiche encore");
+        idsSoon(["firefox"], false, "le délai passé, on publie ce qu'on a");
+        verify(!Search.loading);
+        // Après la publication, une réponse tardive est jetée : la liste ne
+        // bouge plus sous le curseur.
+        Search.fileSource.produced(Search._seq, [item("file", "fish", 900)]);
+        compare(ids(), ["firefox"]);
     }
 
     function test_clear_empties_and_invalidates() {

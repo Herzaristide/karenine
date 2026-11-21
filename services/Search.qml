@@ -9,7 +9,8 @@ import QtQuick
 //                                  et activate(item, actionId)
 //   2. services/qmldir           : déclarer le nouveau composant
 //   3. ici                       : une propriété + une entrée dans `sources`
-//   4. panels/ConversationBar.qml : l'icône et l'étiquette du type
+//   4. panels/Bar.qml            : l'icône et l'étiquette du type
+//      (et tests/stubs : une doublure, tests/run.sh : la déclarer)
 QtObject {
     id: root
 
@@ -23,6 +24,10 @@ QtObject {
     property var results: []
 
     readonly property var firstItem: results.length > 0 ? results[0] : null
+
+    // Vrai entre une frappe et la liste qui lui répond : celle qu'on voit
+    // est encore celle de la frappe d'avant, on n'y entre pas (Bar).
+    property bool loading: false
 
     // Chaque requête porte un numéro. Une réponse qui n'a pas le numéro courant
     // est une réponse périmée : elle est jetée. C'est ce qui évite d'afficher
@@ -47,8 +52,12 @@ QtObject {
     property WebSource webSource: WebSource {
         onProduced: (seq, items) => root._collect(seq, "web", items)
     }
+    // « Ajouter la tâche » : ce qu'on tape, envoyé à Google Tâches.
+    property TaskSource taskSource: TaskSource {
+        onProduced: (seq, items) => root._collect(seq, "task", items)
+    }
     readonly property var sources: [appSource, fileSource, settingSource,
-                                    wallpaperSource, webSource]
+                                    wallpaperSource, webSource, taskSource]
 
     // Le débounce protège la seule source coûteuse (fd) sans se faire sentir
     // sur les autres, qui répondent en moins d'une milliseconde.
@@ -64,27 +73,38 @@ QtObject {
             debounce.stop();
             root._seq++;             // invalide tout ce qui est encore en vol
             root._buckets = ({});
-            root._stale = ({});
             root._shown = "";
+            settle.stop();
+            root.loading = false;
             root.results = [];
             return;
         }
+        root.loading = true;
         debounce.restart();
     }
 
-    // Les réponses de la requête précédente : une source qui n'a pas encore
-    // répondu à la nouvelle garde les siennes à l'écran en attendant. Vider la
-    // liste à chaque lettre la faisait se replier puis se redéplier (et le
-    // voile avec elle) le temps que `fd` réponde.
-    property var _stale: ({})
     // Ce qu'affiche la liste, en une chaîne : une réponse qui n'y change rien
     // ne recrée pas ses lignes.
     property string _shown: ""
 
+    // Une liste par frappe. Les sources ne répondent pas ensemble (les
+    // applications et les réglages tout de suite, `fd` et la liste des fonds
+    // plus tard) ; publier à chaque réponse déplaçait les lignes sous le
+    // curseur. On attend donc que toutes aient répondu, `settleMs` au plus,
+    // et on publie une fois : ce qui arrive après est jeté, la liste ne
+    // bouge plus jusqu'à la frappe suivante. En attendant, celle de la
+    // frappe d'avant reste à l'écran (sans quoi elle se replierait et se
+    // redéplierait à chaque lettre).
+    readonly property int settleMs: 600
+    property Timer settle: Timer {
+        interval: root.settleMs
+        onTriggered: root._publish()
+    }
+
     function _dispatch() {
         root._seq++;
-        root._stale = root._buckets;
         root._buckets = ({});
+        settle.restart();
 
         var q = root.query.trim();
         for (var i = 0; i < root.sources.length; i++)
@@ -92,11 +112,21 @@ QtObject {
     }
 
     function _collect(seq, type, items) {
-        if (seq !== root._seq)
-            return;                  // réponse périmée
+        // Périmée, ou arrivée après la publication : jetée.
+        if (seq !== root._seq || !settle.running)
+            return;
 
         root._buckets[type] = items;
+        for (var i = 0; i < root.sources.length; i++)
+            if (!root._buckets[root.sources[i].type])
+                return;              // d'autres sont encore en route
+        root._publish();
+    }
+
+    function _publish() {
+        settle.stop();
         root._rebuild();
+        root.loading = false;
     }
 
     readonly property int maxResults: 12
@@ -104,7 +134,7 @@ QtObject {
     // À correspondance égale, ce qu'on lance le plus souvent passe devant :
     // sans ce bonus, un dossier « fish » battait l'application Firefox sur
     // « fi », simplement parce que son nom est plus court.
-    readonly property var typeBonus: ({ app: 120, setting: 60, file: 0, web: 0 })
+    readonly property var typeBonus: ({ app: 120, setting: 60, file: 0, web: 0, task: 0 })
 
     // Écart toléré sous le meilleur résultat local. Les paliers de Fuzzy sont
     // espacés d'environ 300 : on garde le palier du meilleur et le haut du
@@ -123,7 +153,7 @@ QtObject {
 
         for (var i = 0; i < root.sources.length; i++) {
             var type = root.sources[i].type;
-            var items = root._buckets[type] || root._stale[type];
+            var items = root._buckets[type];
             if (!items)
                 continue;
             for (var j = 0; j < items.length; j++) {

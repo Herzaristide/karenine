@@ -477,6 +477,16 @@ Item {
                     label: I18n.tr(root.armed ? "agenda.deleteConfirm" : "agenda.delete")
                     onClicked: root.remove()
                 }
+                // Une tâche : la confier à Claude Code (son titre et ses
+                // notes tels qu'écrits ici).
+                Button {
+                    visible: root.kind === "task" && root.title.trim() !== ""
+                    label: I18n.tr("tasks.openInClaude")
+                    onClicked: {
+                        Agenda.openInClaude({ title: root.title, notes: root.notes, list: root.list });
+                        root.close();
+                    }
+                }
                 Item { Layout.fillWidth: true }
                 Button {
                     label: I18n.tr("common.cancel")

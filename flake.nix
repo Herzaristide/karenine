@@ -51,7 +51,7 @@
             installPhase = ''
               runHook preInstall
               mkdir -p "$out"
-              cp -r shell.qml lock.qml greeter.qml services panels widgets auth lock greeter assets i18n "$out"/
+              cp -r shell.qml lock.qml greeter.qml services panels widgets auth lock greeter assets i18n shaders "$out"/
               runHook postInstall
             '';
 
@@ -113,6 +113,20 @@
             sh ${self}/tests/contract-check.sh
             touch $out
           '';
+
+          # Les .qsb versionnés de shaders/ sont bien ceux de leurs sources
+          # (qsb est déterministe) : sinon, relancer shaders/build.sh.
+          shaders =
+            pkgs.runCommand "karenine-shaders" { nativeBuildInputs = [ pkgs.qt6.qtshadertools ]; } ''
+              cp -r ${self}/shaders work
+              chmod -R u+w work
+              sh work/build.sh
+              for f in work/*.qsb; do
+                cmp "$f" "${self}/shaders/$(basename "$f")" \
+                  || { echo "$(basename "$f") n'est plus à jour : shaders/build.sh" >&2; exit 1; }
+              done
+              touch $out
+            '';
 
           # Tests QML (qmltestrunner, plateforme offscreen) — voir tests/run.sh.
           qmltest =

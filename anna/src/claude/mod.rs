@@ -12,6 +12,7 @@ pub mod desk;
 pub mod mcp;
 pub mod parakeet;
 pub mod pilot;
+pub mod reglages;
 pub mod sessions;
 pub mod voice;
 pub mod wake;

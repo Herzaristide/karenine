@@ -10,8 +10,9 @@ import "../services"
 // L'onglet « Explorer » : les dossiers du PC, sans quitter la barre. À
 // gauche, les favoris (le dossier personnel, ses dossiers, et /etc/nixos) ; à
 // droite, la navigation (précédent, suivant, parent), le chemin, et le
-// contenu du dossier, les dossiers d'abord : en tuiles, ou en liste avec la
-// taille et la date, au choix. En bas, combien
+// contenu du dossier, les dossiers d'abord : en tuiles, en liste avec la
+// taille et la date, ou en arborescence (comme la barre latérale d'un IDE :
+// un clic sur un dossier le déplie sur place), au choix. En bas, combien
 // d'éléments, la sélection, et l'affichage.
 //
 //   (▣ zola  ▾)  (←)(→)(↑) ( ▭ ~ › ciph3r › karenine       ✎ ) (⌕)
@@ -19,7 +20,7 @@ import "../services"
 //   │ ▭ ciph3r │ │  ▭      ▭      ▭      ≡      ▣             │
 //   │ ▭ Docum… │ │  ai     anna   docs   flake  logo          │
 //   │ …        │ ╰─────────────────────────────────────────────╯
-//   │ ❄ nixos  │  12 éléments                 (◉) (▦) (▭) (>_)
+//   │ ❄ nixos  │  12 éléments                   (◉) (▦) (≡) (⊢)
 //   ╰──────────╯
 //
 // Le chemin s'édite : un clic dessus (à côté des segments), Ctrl+L, ou
@@ -85,9 +86,16 @@ Item {
     // Le tri : 0 le nom, 1 la taille, 2 la date ; et dans quel sens.
     property int sortKey: 0
     property bool sortReversed: false
-    // La liste plutôt que les tuiles (qui vont à la ligne), au choix, même
-    // étroit : le bouton du pied passe de l'une à l'autre.
-    readonly property bool listView: Widgets.explorerListView
+    // Les tuiles (qui vont à la ligne), la liste, ou l'arborescence, au
+    // choix, même étroit : les trois boutons du pied passent de l'un à
+    // l'autre. L'arborescence est une liste dont les dossiers se déplient
+    // sur place (cf. « L'arborescence »).
+    readonly property string viewMode: Widgets.explorerView
+    readonly property bool treeView: root.viewMode === "tree"
+    readonly property bool listView: root.viewMode === "list" || root.treeView
+    onTreeViewChanged: Qt.callLater(root.rebuildEntries)
+    // Le retrait d'un niveau de l'arborescence.
+    readonly property int treeIndent: 14
     // La taille et la date, en liste, quand il y a la place.
     readonly property bool details: root.listView && content.width >= 340
     readonly property int sizeW: 58
@@ -158,6 +166,8 @@ Item {
             root.forwardStack = [];
         }
         Widgets.explorerPath = p;
+        // Les aperçus du dossier quitté qui attendent encore ne servent plus.
+        Previews.clear();
         root.clearSelection();
         root.filter = "";
         root.filterOpen = false;
@@ -539,22 +549,43 @@ Item {
     onFilterChanged: Qt.callLater(root.rebuildEntries)
     onShowHiddenChanged: Qt.callLater(root.rebuildEntries)
 
-    function rebuildEntries() {
-        var f = root.filter.toLowerCase();
+    // Les entrées d'un dossier lu (`model`), au niveau `depth`. En
+    // arborescence, un dossier déplié est suivi de son contenu (lu par son
+    // propre FolderListModel, cf. treeModels) ; filtré, un dossier reste
+    // s'il contient (parmi ce qui est déplié) de quoi correspondre.
+    function readEntries(model, depth, f) {
         var out = [];
-        for (var i = 0; i < folder.count; i++) {
-            var name = String(folder.get(i, "fileName"));
-            if (f !== "" && name.toLowerCase().indexOf(f) < 0)
+        for (var i = 0; i < model.count; i++) {
+            var name = String(model.get(i, "fileName"));
+            var path = String(model.get(i, "filePath"));
+            var isDir = model.get(i, "fileIsDir") === true;
+            var open = root.treeView && isDir && root.expanded[path] === true;
+            var children = [];
+            if (open) {
+                var sub = root.treeModels[path];
+                if (sub && sub.status === FolderListModel.Ready)
+                    children = root.readEntries(sub, depth + 1, f);
+            }
+            if (f !== "" && name.toLowerCase().indexOf(f) < 0 && children.length === 0)
                 continue;
             out.push({
                 name: name,
-                path: folder.get(i, "filePath"),
-                isDir: folder.get(i, "fileIsDir"),
-                suffix: folder.get(i, "fileSuffix"),
-                size: folder.get(i, "fileSize"),
-                modified: folder.get(i, "fileModified")
+                path: path,
+                isDir: isDir,
+                suffix: model.get(i, "fileSuffix"),
+                size: model.get(i, "fileSize"),
+                modified: model.get(i, "fileModified"),
+                depth: depth,
+                expanded: open
             });
+            for (var k = 0; k < children.length; k++)
+                out.push(children[k]);
         }
+        return out;
+    }
+
+    function rebuildEntries() {
+        var out = root.readEntries(folder, 0, root.filter.toLowerCase());
         var same = root.entriesPath === root.path;
         var y = grid.contentY;
         var cur = grid.currentIndex;
@@ -586,6 +617,114 @@ Item {
                 grid.currentIndex = i;
                 return;
             }
+        }
+    }
+
+    // ── L'arborescence ───────────────────────────────────────────
+    // Comme la barre latérale d'un IDE : le dossier montré est la racine,
+    // un clic sur un dossier le déplie sur place (ses entrées dessous, en
+    // retrait, reliées par des guides), un second le replie. → déplie (puis
+    // descend dans le dossier), ← replie (puis remonte au parent). Chaque
+    // dossier déplié a son FolderListModel (treeModels), qui le suit sur
+    // le disque ; sortir de la racine oublie ce qui n'est plus dessous.
+    property var expanded: ({})
+    property var treeModels: ({})
+    ListModel { id: expandedModel }
+
+    function isExpanded(p) {
+        return root.expanded[p] === true;
+    }
+    function setExpanded(p, open) {
+        if (root.isExpanded(p) === open)
+            return;
+        var e = Object.assign({}, root.expanded);
+        if (open) {
+            e[p] = true;
+            expandedModel.append({ path: p });
+        } else {
+            // Ses sous-dossiers dépliés se replient avec lui.
+            for (var i = expandedModel.count - 1; i >= 0; i--) {
+                var q = expandedModel.get(i).path;
+                if (q === p || q.indexOf(p + "/") === 0) {
+                    delete e[q];
+                    expandedModel.remove(i);
+                }
+            }
+        }
+        root.expanded = e;
+        Qt.callLater(root.rebuildEntries);
+    }
+    function toggleExpanded(p) {
+        root.setExpanded(p, !root.isExpanded(p));
+    }
+    // Ne garde que les dossiers dépliés sous la racine `p`.
+    function pruneExpanded(p) {
+        var e = {};
+        for (var i = expandedModel.count - 1; i >= 0; i--) {
+            var q = expandedModel.get(i).path;
+            if (q.indexOf(p + "/") === 0)
+                e[q] = true;
+            else
+                expandedModel.remove(i);
+        }
+        root.expanded = e;
+    }
+    onPathChanged: root.pruneExpanded(root.path)
+
+    // ← et → en arborescence, sur la ligne `i`.
+    function treeLeft(i) {
+        var e = root.entries[i];
+        if (!e)
+            return;
+        if (e.isDir && e.expanded) {
+            root.setExpanded(e.path, false);
+            return;
+        }
+        var parent = root.parentOf(e.path);
+        for (var k = i - 1; k >= 0; k--) {
+            if (root.entries[k].path === parent) {
+                grid.currentIndex = k;
+                return;
+            }
+        }
+    }
+    function treeRight(i) {
+        var e = root.entries[i];
+        if (!e || !e.isDir)
+            return;
+        if (!e.expanded)
+            root.setExpanded(e.path, true);
+        else if (i + 1 < root.entries.length && root.entries[i + 1].depth > e.depth)
+            grid.currentIndex = i + 1;
+    }
+
+    Instantiator {
+        model: expandedModel
+        delegate: FolderListModel {
+            id: sub
+            required property string path
+            folder: root.folderUrl(sub.path)
+            showDirsFirst: true
+            showDotAndDotDot: false
+            showHidden: root.showHidden
+            sortField: root.sortKey === 1 ? FolderListModel.Size
+                     : root.sortKey === 2 ? FolderListModel.Time : FolderListModel.Name
+            sortReversed: root.sortReversed
+            sortCaseSensitive: false
+            onCountChanged: Qt.callLater(root.rebuildEntries)
+            onStatusChanged: Qt.callLater(root.rebuildEntries)
+        }
+        onObjectAdded: (index, object) => {
+            var m = Object.assign({}, root.treeModels);
+            m[object.path] = object;
+            root.treeModels = m;
+        }
+        onObjectRemoved: (index, object) => {
+            var m = Object.assign({}, root.treeModels);
+            if (m[object.path] === object)
+                delete m[object.path];
+            root.treeModels = m;
+            Qt.callLater(root.rebuildEntries);
         }
     }
 
@@ -1048,6 +1187,11 @@ Item {
         if (index < 0 || index >= root.entries.length)
             return;
         var p = root.entries[index].path;
+        // En arborescence, un dossier se déplie (ou se replie) sur place.
+        if (root.entries[index].isDir && root.treeView) {
+            root.toggleExpanded(p);
+            return;
+        }
         if (root.entries[index].isDir) {
             root.go(p);
             // Au clavier, la sélection reprend en haut du nouveau dossier.
@@ -1179,10 +1323,20 @@ Item {
         { key: "MUSIC", icons: ["folder-music"], glyph: "music", names: ["Music", "Musique"] },
         { key: "DESKTOP", icons: ["user-desktop", "folder-desktop"], glyph: "place-desktop",
           names: ["Desktop", "Bureau"] },
+        // Les clés ajoutées dans la configuration (xdg.userDirs.extraConfig,
+        // cf. /etc/nixos/home/xdg.nix) : aucun thème n'a leur icône, le
+        // glyphe sert partout (`icons` vide).
+        { key: "MESH", icons: [], glyph: "mesh", names: ["mesh"] },
+        { key: "OPUS", icons: [], glyph: "opus", names: ["opus"] },
         { key: "PUBLICSHARE", icons: ["folder-publicshare"], glyph: "public", names: ["Public"] },
         { key: "TEMPLATES", icons: ["folder-templates"], glyph: "templates", names: ["Templates", "Modèles"] }
     ]
+    // Sans icône du thème à chercher, le glyphe de la sorte plutôt que le
+    // dossier générique (sauf pour une clé inconnue, dont le glyphe est
+    // justement le dossier).
     function xdgIcon(kind) {
+        if (kind.icons.length === 0 && kind.glyph !== "folder")
+            return root.glyph(kind.glyph);
         return root.themed(kind.icons.concat(["folder"]), kind.glyph);
     }
 
@@ -1986,6 +2140,11 @@ Item {
 
         // Plus de favoris que de place : la liste défile.
         ListView {
+            id: placesList
+            // Étroit, les pastilles se partagent toute la largeur, sans
+            // descendre sous 38 px (au-delà, la rangée défile).
+            readonly property real pillW: Math.max(38, (placesList.width - placesList.spacing * (root.places.length - 1))
+                                                       / Math.max(1, root.places.length))
             anchors.fill: parent
             anchors.margins: root.compact ? 0 : 6
             spacing: root.compact ? 5 : 1
@@ -2004,8 +2163,7 @@ Item {
                 // Étroit, des boutons-icônes, sans nom : le favori où l'on
                 // est s'allume.
                 readonly property bool labelled: !root.compact
-                width: !root.compact ? placesCard.width - 12
-                     : placeRow.labelled ? placeLabel.implicitWidth + 11 + 16 + 8 + 12 : 38
+                width: !root.compact ? placesCard.width - 12 : placesList.pillW
                 height: root.compact ? 30 : root.placeH
                 Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
 
@@ -2023,8 +2181,8 @@ Item {
 
                 FileIcon {
                     id: placeIcon
-                    anchors.left: parent.left
-                    anchors.leftMargin: root.compact ? 11 : 10
+                    // Étroit, au milieu de sa pastille ; large, en tête de ligne.
+                    x: root.compact ? (parent.width - width) / 2 : 10
                     anchors.verticalCenter: parent.verticalCenter
                     iconSize: root.compact ? 16 : 18
                     // Étroit, le glyphe de la sorte (plus lisible qu'un
@@ -2548,7 +2706,8 @@ Item {
             model: root.entries
             readonly property int columns: root.listView ? 1 : Math.max(1, Math.floor(width / 104))
             cellWidth: width / columns
-            cellHeight: root.listView ? 34 : 104
+            // L'arborescence, plus serrée : les guides s'enchaînent d'une ligne à l'autre.
+            cellHeight: root.treeView ? 26 : root.listView ? 34 : 104
             clip: true
             boundsBehavior: Flickable.StopAtBounds
             currentIndex: -1
@@ -2619,7 +2778,11 @@ Item {
                 var c = grid.columns;
                 var shift = (event.modifiers & Qt.ShiftModifier) !== 0;
                 var ctrl = (event.modifiers & Qt.ControlModifier) !== 0;
-                if (event.key === Qt.Key_Left && n > 0) {
+                if (root.treeView && !shift && i >= 0 && event.key === Qt.Key_Left) {
+                    root.treeLeft(i);
+                } else if (root.treeView && !shift && i >= 0 && event.key === Qt.Key_Right) {
+                    root.treeRight(i);
+                } else if (event.key === Qt.Key_Left && n > 0) {
                     grid.moveTo(Math.max(0, i - 1), shift);
                 } else if (event.key === Qt.Key_Right && n > 0) {
                     grid.moveTo(Math.min(n - 1, i + 1), shift);
@@ -2674,8 +2837,27 @@ Item {
                                                             tile.modelData.suffix, tile.fileName)
                 // Une miniature (l'image elle-même), pas une icône du thème.
                 readonly property bool thumb: tile.icon === root.urlOf(tile.filePath)
+                // L'aperçu fait par anna (cf. Previews) : une vidéo, un son, un
+                // modèle 3D, une page, une partition, un MIDI. En tuiles et
+                // ici seulement (à distance, chaque fichier traverserait le
+                // réseau ; en liste, l'icône est trop petite pour rien y lire).
+                readonly property string previewKind: root.listView || root.remote || tile.fileIsDir
+                                                      ? "" : Previews.kindOf(tile.modelData.suffix)
+                readonly property string previewKey: tile.previewKind === "" ? ""
+                    : Previews.keyFor(tile.filePath, tile.modelData.modified, tile.modelData.size)
+                readonly property string preview: tile.previewKey !== "" && Previews.revision >= 0
+                                                  ? (Previews.results[tile.previewKey] || "") : ""
+                // Une waveform ou une piano-roll : blanche, teinte ici.
+                readonly property bool previewTinted: tile.preview.slice(-4) === ".svg"
+                readonly property bool previewImage: tile.preview !== "" && !tile.previewTinted
+                onPreviewKeyChanged: Previews.want(tile.previewKey, tile.filePath)
+                Component.onCompleted: Previews.want(tile.previewKey, tile.filePath)
                 // Ce qu'un glisser parti d'ici emporte.
                 readonly property var carried: root.dragPaths(tile.filePath)
+                // En arborescence : le niveau, et où commence la ligne (le
+                // chevron, puis l'icône).
+                readonly property int depth: root.treeView ? (tile.modelData.depth || 0) : 0
+                readonly property int treeX: 6 + tile.depth * root.treeIndent
 
                 width: grid.cellWidth
                 height: grid.cellHeight
@@ -2694,37 +2876,88 @@ Item {
                     Behavior on color { ColorAnimation { duration: 110 } }
                 }
 
+                // Les guides de l'arborescence : un trait par niveau au-dessus,
+                // au droit du chevron de chaque dossier parent.
+                Repeater {
+                    model: tile.depth
+                    Rectangle {
+                        required property int index
+                        x: 6 + index * root.treeIndent + 6
+                        width: 1
+                        height: tile.height
+                        color: Qt.alpha(Theme.textPrimary, index === tile.depth - 1 ? 0.14 : 0.08)
+                    }
+                }
+
+                // Le chevron d'un dossier : → replié, ↓ déplié. Un clic dessus
+                // déplie ou replie sans toucher à la sélection.
+                Item {
+                    visible: root.treeView && tile.fileIsDir
+                    x: tile.treeX
+                    width: 14
+                    height: parent.height
+                    z: 2
+                    NixIcon {
+                        anchors.centerIn: parent
+                        iconSize: 9
+                        source: "../assets/icons/chevron-down.svg"
+                        rotation: tile.modelData.expanded ? 0 : -90
+                        color: chevronMa.containsMouse ? Theme.textPrimary : Theme.textDim
+                        Behavior on rotation { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                    }
+                    MouseArea {
+                        id: chevronMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.toggleExpanded(tile.filePath)
+                    }
+                }
+
                 // La miniature d'une image, ou l'icône du thème (un glyphe à
                 // défaut : les dossiers à l'accent, les fichiers en retrait).
                 Item {
                     id: tileImage
-                    x: root.listView ? 10 : (parent.width - width) / 2
+                    x: root.treeView ? tile.treeX + 16 : root.listView ? 10 : (parent.width - width) / 2
                     y: root.listView ? (parent.height - height) / 2 : 14
-                    width: root.listView ? 20 : 46
+                    width: root.treeView ? 16 : root.listView ? 20 : 46
                     height: width
                     // Un fichier caché, un peu effacé.
                     opacity: tile.hidden ? 0.55 : 1
 
+                    // Un fond sous les photos et les vidéos ; un modèle 3D (fond
+                    // transparent), une page ou une partition n'en ont pas besoin.
                     Rectangle {
                         anchors.fill: parent
                         anchors.margins: -1
-                        visible: tile.thumb
+                        visible: tile.thumb || (tile.previewImage
+                                                && (tile.previewKind === "video" || tile.previewKind === "audio"))
                         radius: 4
                         color: Qt.alpha(Theme.textPrimary, 0.06)
                     }
                     Image {
                         anchors.fill: parent
-                        visible: tile.thumb
-                        source: tile.thumb ? tile.icon : ""
+                        visible: tile.thumb || tile.previewImage
+                        source: tile.previewImage ? tile.preview : tile.thumb ? tile.icon : ""
                         sourceSize.width: 96
                         sourceSize.height: 96
-                        fillMode: Image.PreserveAspectCrop
+                        // Une photo, une image de vidéo ou une pochette se rognent
+                        // au carré ; une page, une partition, un modèle tiennent entiers.
+                        fillMode: tile.previewImage && tile.previewKind !== "video" && tile.previewKind !== "audio"
+                                  ? Image.PreserveAspectFit : Image.PreserveAspectCrop
                         asynchronous: true
                         smooth: true
                     }
+                    NixIcon {
+                        anchors.fill: parent
+                        visible: tile.previewTinted
+                        iconSize: tileImage.width
+                        source: tile.previewTinted ? tile.preview : ""
+                        color: Theme.accentColor
+                    }
                     FileIcon {
                         anchors.centerIn: parent
-                        visible: !tile.thumb
+                        visible: !tile.thumb && tile.preview === ""
                         iconSize: tileImage.width
                         source: tile.thumb ? "" : tile.icon
                         tint: tile.fileIsDir ? Theme.accentColor : Theme.textSecondary
@@ -2744,7 +2977,7 @@ Item {
                     maximumLineCount: root.listView ? 1 : 2
                     elide: Text.ElideMiddle
                     font.family: "Inter"
-                    font.pixelSize: root.listView ? 13 : 11
+                    font.pixelSize: root.treeView ? 12 : root.listView ? 13 : 11
                     font.weight: tile.fileIsDir ? Font.DemiBold : Font.Medium
                     lineHeight: 0.95
                     color: tile.hidden ? Theme.textSecondary : Theme.textPrimary
@@ -2893,9 +3126,17 @@ Item {
                             root.toggle(tile.index);
                         else
                             root.selectOnly(tile.index);
+                        // En arborescence, un simple clic sur un dossier le
+                        // déplie ou le replie, comme dans un IDE.
+                        if (root.treeView && tile.fileIsDir
+                                && !(mouse.modifiers & (Qt.ShiftModifier | Qt.ControlModifier)))
+                            root.toggleExpanded(tile.filePath);
                     }
                     onDoubleClicked: (mouse) => {
                         if (mouse.button !== Qt.LeftButton)
+                            return;
+                        // En arborescence, le premier clic a déjà déplié le dossier.
+                        if (root.treeView && tile.fileIsDir)
                             return;
                         root.clearSelection();
                         root.activate(tile.index);
@@ -2921,7 +3162,7 @@ Item {
     }
 
     // ── Le pied : où l'on en est, et l'affichage ─────────────────
-    //   24 éléments                                              (◉) (▦)
+    //   24 éléments                                      (◉) (▦) (≡) (⊢)
     //   3 sélectionnés · 4,2 Mo  ×
     Item {
         id: footer
@@ -2991,11 +3232,18 @@ Item {
                 accent: root.showHidden
                 onClicked: root.showHidden = !root.showHidden
             }
-            // Tuiles ou liste.
-            GlassButton {
-                implicitHeight: 24
-                icon: Widgets.explorerListView ? "../assets/icons/view-grid.svg" : "../assets/icons/view-list.svg"
-                onClicked: Widgets.explorerListView = !Widgets.explorerListView
+            // Tuiles, liste ou arborescence.
+            Repeater {
+                model: [{ mode: "grid", icon: "../assets/icons/view-grid.svg" },
+                        { mode: "list", icon: "../assets/icons/view-list.svg" },
+                        { mode: "tree", icon: "../assets/icons/view-tree.svg" }]
+                GlassButton {
+                    required property var modelData
+                    implicitHeight: 24
+                    icon: modelData.icon
+                    accent: root.viewMode === modelData.mode
+                    onClicked: Widgets.explorerView = modelData.mode
+                }
             }
         }
     }

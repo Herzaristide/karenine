@@ -1,6 +1,7 @@
 {
   "display": "Bernanos",
-  "near": ["bernanos", "bernano"],
+  "near": ["bernanos", "bernano", "bernos"],
   "neighbours": ["bernard", "bernadette"],
+  "initials": ["b", "f"],
   "threshold": 0.5
 }

@@ -33,6 +33,10 @@ use tokio::sync::broadcast;
 /// Forget the conversation after this many requests, or this long without one.
 const MAX_TURNS: u32 = 20;
 const MAX_IDLE: Duration = Duration::from_secs(20 * 60);
+/// Requests are commands, each on its own: the conversation is kept only
+/// while the pilot waits for an answer to its question, or for a command
+/// said this soon after the last one (« encore », « non, l'autre »).
+const FOLLOW_UP: Duration = Duration::from_secs(45);
 /// Model calls for one request at most (each tool round is one more).
 const MAX_STEPS: usize = 16;
 /// Messages kept in the conversation; older requests are dropped whole.
@@ -52,7 +56,7 @@ const THINKING_BUDGET: u32 = 2048;
 const PROMPT: &str = r#"Tu es {nom}, l'assistant intégré à l'interface de l'utilisateur (Hyprland sur NixOS). Il te parle depuis la barre de conversation en bas de l'écran (au clavier, ou à la voix en disant « {nom} »), souvent en quelques mots. Ta réponse s'affiche juste au-dessus de la barre.
 
 Ce que tu fais :
-- Tu agis sur le bureau avec tes outils : fenêtres et workspaces, son, luminosité, lecture média, applications, URL, projets, captures, couleur d'accent, notes du coffre Obsidian, l'agenda et les tâches Google, le métronome (`metronome` : lancer, arrêter, tempo et mesure, sans ouvrir de widget), et les onglets du panneau de droite (`widget` : explorer, stats, agenda, lecteur, musique, claude, reglages).
+- Tu agis sur le bureau avec tes outils : fenêtres et workspaces, son, luminosité, lecture média, applications, URL, projets, captures, couleur d'accent, notes du coffre Obsidian, l'agenda et les tâches Google, le métronome (`metronome` : lancer, arrêter, tempo et mesure, sans ouvrir de widget), les onglets du panneau de droite et les volets de la barre (`widget` : explorer, stats, agenda, lecteur, musique, claude, reglages ; son, micro, wifi, bluetooth, telephone, notifications, energie, alimentation, taches), et les réglages (`reglage` : thème, langue, voix, micro, sortie et entrée du son, Wi-Fi, Bluetooth, verrouiller, veille).
 - L'agenda Google : `agenda` le lit (événements et tâches, avec leurs id) ; `evenement_creer`, `evenement_modifier`, `evenement_supprimer`, `tache_creer`, `tache_modifier`, `tache_supprimer` y écrivent. Pour modifier, déplacer ou supprimer, lis d'abord l'agenda pour trouver l'id ; pour déplacer un événement, donne seulement son nouveau `debut` (il garde sa durée). Écris les heures en heure locale (« 2026-11-20T14:00 »), en t'appuyant sur la date du [contexte]. Ne supprime que sur une demande claire, et dis ce que tu as supprimé.
 - Tu réponds aussi à toutes ses questions, comme un assistant généraliste : culture, sciences, histoire, langue, définitions, explications, calculs et conversions, conseils, recettes… Réponds de ce que tu sais, sans le renvoyer ailleurs.
 - Tu n'as pas de moteur de recherche. Pour lire une page dont tu as l'adresse, utilise `lire_page`. Pour ce qui change ou est récent (actualité, météo, horaires, prix, versions) et que tu ne sais pas avec certitude, dis-le franchement plutôt que d'inventer, et propose d'ouvrir une recherche dans le navigateur (`ouvrir_url`).
@@ -61,6 +65,7 @@ Ce que tu fais :
 - Tu ne fais pas de travail de code sur ses projets : pour ça, propose d'ouvrir le projet (`ouvrir_projet`, dans Zed ou un terminal) et laisse l'utilisateur s'en charger. Expliquer une notion de programmation reste une question comme une autre.
 
 Comment :
+- Une demande d'action passe toujours par l'outil qui la fait : ne dis jamais qu'une chose est faite sans avoir appelé cet outil.
 - Agis d'abord, puis confirme en une phrase courte (« Volume à 30 %. », « Zed ouvert sur karenine. »). Pas de préambule, pas de « bien sûr ».
 - Une réponse à une question : directe, la réponse d'abord, puis l'essentiel ; quelques lignes suffisent le plus souvent, une quinzaine au plus si le sujet l'exige. Markdown si utile (listes, gras), pas de titres.
 - Ne change pas la fenêtre ou le workspace affichés sauf si on te le demande : l'utilisateur est peut-être en train de travailler.
@@ -100,7 +105,10 @@ impl Default for Config {
         Config {
             provider: "ollama".into(),
             url: OLLAMA_URL.into(),
-            model: "qwen3.5:9b".into(),
+            // Measured on the 32 tools (21/11/2026, RTX 3070): without
+            // thinking, qwen3.5:9b called the tool asked for 5 times in 18
+            // and claimed the rest done; qwen3.5:4b, 36 in 36, in 0.6 s.
+            model: "qwen3.5:4b".into(),
             think: false,
         }
     }
@@ -451,6 +459,8 @@ pub struct Pilot {
     /// ends without a word.
     generation: AtomicU32,
     busy: AtomicBool,
+    /// The last answer was a question: the next request answers it.
+    asking: AtomicBool,
     /// A text block is streaming into the log's last entry.
     in_text: AtomicBool,
     turns: AtomicU32,
@@ -496,6 +506,7 @@ impl Pilot {
         Arc::new(Pilot {
             generation: AtomicU32::new(0),
             busy: AtomicBool::new(false),
+            asking: AtomicBool::new(false),
             in_text: AtomicBool::new(false),
             turns: AtomicU32::new(0),
             last: Mutex::new(Instant::now()),
@@ -543,10 +554,14 @@ impl Pilot {
         self.turns.store(0, Ordering::SeqCst);
     }
 
-    /// Too long idle or too many requests: the conversation starts over.
+    /// The conversation starts over: a new command (no question pending,
+    /// not a quick follow-up), or too many requests.
     fn stale(&self) -> bool {
-        let last = *lock(&self.last);
-        last.elapsed() > MAX_IDLE || self.turns.load(Ordering::SeqCst) >= MAX_TURNS
+        let idle = lock(&self.last).elapsed();
+        let asking = self.asking.swap(false, Ordering::SeqCst);
+        idle > MAX_IDLE
+            || (!asking && idle > FOLLOW_UP)
+            || self.turns.load(Ordering::SeqCst) >= MAX_TURNS
     }
 
     /// A request is about to come (the user starts speaking): a local model
@@ -590,6 +605,8 @@ impl Pilot {
         }
         if self.stale() {
             self.forget();
+            // The shell shows the log as the conversation: it starts over too.
+            lock(&self.log).clear();
         }
 
         // Built ahead a moment ago, or now.
@@ -610,16 +627,26 @@ impl Pilot {
 
         let generation = self.generation.load(Ordering::SeqCst);
         let me = Arc::clone(self);
+        let started = Instant::now();
         // The HTTP client and the desk calls block: a thread of its own.
         std::thread::spawn(move || {
             let result = me.converse(generation, message);
             if me.generation.load(Ordering::SeqCst) != generation {
                 return;
             }
+            eprintln!("anna: pilote : {:.1} s", started.elapsed().as_secs_f32());
             if let Err(e) = result {
                 me.close_text();
                 me.push("error", &e);
             }
+            // Ended on a question: the next request is its answer.
+            let asked = lock(&me.log).back().is_some_and(|e| {
+                e["kind"] == "reply"
+                    && e["text"]
+                        .as_str()
+                        .is_some_and(|t| t.trim_end().ends_with('?'))
+            });
+            me.asking.store(asked, Ordering::SeqCst);
             me.busy.store(false, Ordering::SeqCst);
             me.publish();
         });

@@ -6,8 +6,9 @@ import "../services"
 // La vue Claude du panneau de droite : les sessions Claude Code, par
 // urgence. Celles qui attendent une réponse d'abord, entourées de l'accent,
 // avec ce qu'elles demandent ; puis celles qui travaillent, et à quoi ;
-// puis celles qui sont ouvertes sans rien faire ; enfin les dernières
-// terminées, à reprendre. Un clic sur une session ouverte amène son
+// puis celles qui sont ouvertes sans rien faire ; enfin les terminées, à
+// reprendre : celles du jour, puis les autres regroupées par jour.
+// En haut, de quoi filtrer : un champ (titre, projet, branche) et le projet. Un clic sur une session ouverte amène son
 // terminal au premier plan : on y répond, le panneau n'écrit jamais dans
 // une session.
 //
@@ -24,9 +25,62 @@ Flickable {
     clip: true
     boundsBehavior: Flickable.StopAtBounds
 
-    readonly property var waiting: ClaudeSessions.live.filter(s => s.state === "waiting")
-    readonly property var busy: ClaudeSessions.live.filter(s => s.state === "busy")
-    readonly property var idle: ClaudeSessions.live.filter(s => s.state === "idle")
+    // Les filtres : le projet choisi ("" : tous) et le texte cherché.
+    property string project: ""
+    property string query: ""
+
+    function matches(s) {
+        if (root.project !== "" && s.project !== root.project)
+            return false;
+        var q = root.query.trim().toLowerCase();
+        if (q === "")
+            return true;
+        return (s.title + " " + s.project + " " + s.branch).toLowerCase().indexOf(q) >= 0;
+    }
+
+    readonly property var live: ClaudeSessions.live.filter(s => root.matches(s))
+    readonly property var waiting: root.live.filter(s => s.state === "waiting")
+    readonly property var busy: root.live.filter(s => s.state === "busy")
+    readonly property var idle: root.live.filter(s => s.state === "idle")
+    readonly property var recent: ClaudeSessions.recent.filter(s => root.matches(s))
+
+    // Les projets des sessions, le plus fréquent d'abord.
+    readonly property var projects: {
+        var n = {};
+        ClaudeSessions.live.concat(ClaudeSessions.recent).forEach(s => {
+            if (s.project !== "")
+                n[s.project] = (n[s.project] || 0) + 1;
+        });
+        return Object.keys(n).sort((a, b) => n[b] - n[a] || a.localeCompare(b));
+    }
+
+    function midnight(ms) {
+        var d = new Date(ms);
+        return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    }
+
+    // Les terminées, par jour : [{ label, today, items }], le plus récent
+    // d'abord. Celles du jour gardent leur « il y a », les autres leur heure.
+    readonly property var days: {
+        var today = root.tick >= 0 ? root.midnight(Date.now()) : 0;
+        var out = [];
+        root.recent.forEach(s => {
+            var day = root.midnight(s.updated);
+            var g = out.length > 0 && out[out.length - 1].day === day ? out[out.length - 1] : null;
+            if (!g) {
+                var d = new Date(day);
+                var n = Math.round((today - day) / 86400000);
+                var label = n <= 0 ? I18n.tr("claude.today")
+                          : n === 1 ? I18n.tr("claude.yesterday")
+                          : I18n.locale.toString(d, d.getFullYear() === new Date().getFullYear()
+                                                    ? "dddd d MMMM" : "dddd d MMMM yyyy");
+                g = { day: day, label: label, today: n <= 0, items: [] };
+                out.push(g);
+            }
+            g.items.push(s);
+        });
+        return out;
+    }
 
     // « il y a 2 min », « il y a 3 h », « hier » ; rien sans date.
     function ago(ms) {
@@ -73,6 +127,101 @@ Flickable {
             font.family: "Inter"
             font.pixelSize: 11
             color: Theme.textDim
+        }
+    }
+
+    // Une pastille de filtre.
+    component Chip: Rectangle {
+        id: chip
+        property string label
+        property bool active: false
+        signal clicked()
+        implicitWidth: chipText.implicitWidth + 18
+        implicitHeight: 24
+        radius: 12
+        color: chip.active ? Qt.alpha(Theme.accentColor, 0.18)
+             : chipMa.containsMouse ? Theme.hoverOverlay : Qt.alpha(Theme.textPrimary, 0.06)
+        Text {
+            id: chipText
+            anchors.centerIn: parent
+            text: chip.label
+            font.family: "Inter"
+            font.pixelSize: 11
+            font.weight: Font.Medium
+            color: chip.active ? Theme.accentColor : Theme.textSecondary
+        }
+        MouseArea {
+            id: chipMa
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: chip.clicked()
+        }
+    }
+
+    // Une session terminée, sur une ligne : son titre, son projet, sa date
+    // (« il y a 2 h » le jour même, l'heure sinon) ; un clic la reprend
+    // dans un terminal.
+    component RecentRow: Rectangle {
+        id: recentRow
+        required property var modelData
+        property bool sameDay: true
+        Layout.fillWidth: true
+        implicitHeight: 38
+        radius: Theme.radiusSmall
+        color: recentMa.containsMouse ? Theme.hoverOverlay : "transparent"
+
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 10
+            anchors.rightMargin: 6
+            spacing: 8
+
+            Text {
+                Layout.fillWidth: true
+                text: recentRow.modelData.title
+                elide: Text.ElideRight
+                font.family: "Inter"
+                font.pixelSize: 13
+                color: Theme.textPrimary
+            }
+            Rectangle {
+                visible: root.project === ""
+                implicitWidth: projText.implicitWidth + 12
+                implicitHeight: 18
+                radius: 5
+                color: Theme.hoverOverlay
+                Text {
+                    id: projText
+                    anchors.centerIn: parent
+                    text: recentRow.modelData.project
+                    font.family: "JetBrains Mono"
+                    font.pixelSize: 10
+                    color: Theme.textSecondary
+                }
+            }
+            Text {
+                text: root.tick < 0 ? ""
+                    : recentRow.sameDay ? root.ago(recentRow.modelData.updated)
+                    : I18n.locale.toString(new Date(recentRow.modelData.updated), "HH:mm")
+                font.family: "Inter"
+                font.pixelSize: 11
+                font.features: { "tnum": 1 }
+                color: Theme.textDim
+            }
+            NixIcon {
+                iconSize: 15
+                source: "../assets/ui/reboot.svg"
+                color: recentMa.containsMouse ? Theme.accentColor : Theme.textSecondary
+            }
+        }
+
+        MouseArea {
+            id: recentMa
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: ClaudeSessions.resume(recentRow.modelData)
         }
     }
 
@@ -240,6 +389,86 @@ Flickable {
         width: root.width
         spacing: 8
 
+        // Les filtres : le champ, puis les projets (dès qu'il y en a deux).
+        Rectangle {
+            visible: ClaudeSessions.live.length + ClaudeSessions.recent.length > 0
+            Layout.fillWidth: true
+            implicitHeight: 32
+            radius: Theme.radiusSmall
+            color: Theme.bgElevated
+            border.width: search.activeFocus ? 1 : 0
+            border.color: Qt.alpha(Theme.accentColor, 0.6)
+
+            TextInput {
+                id: search
+                anchors.left: parent.left
+                anchors.leftMargin: 10
+                anchors.right: clear.left
+                anchors.rightMargin: 6
+                anchors.verticalCenter: parent.verticalCenter
+                clip: true
+                font.family: "Inter"
+                font.pixelSize: 12
+                color: Theme.textPrimary
+                selectionColor: Qt.alpha(Theme.accentColor, 0.45)
+                onTextChanged: root.query = search.text
+                Keys.onEscapePressed: (event) => {
+                    if (search.text !== "")
+                        search.text = "";
+                    else
+                        event.accepted = false;
+                }
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: search.text.length === 0
+                    text: I18n.tr("claude.search")
+                    font: search.font
+                    color: Theme.textDim
+                }
+            }
+            Text {
+                id: clear
+                anchors.right: parent.right
+                anchors.rightMargin: 10
+                anchors.verticalCenter: parent.verticalCenter
+                visible: search.text !== ""
+                text: "×"
+                font.pixelSize: 14
+                color: clearMa.containsMouse ? Theme.textPrimary : Theme.textDim
+                MouseArea {
+                    id: clearMa
+                    anchors.fill: parent
+                    anchors.margins: -6
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: search.text = ""
+                }
+            }
+        }
+
+        Flow {
+            visible: root.projects.length > 1
+            Layout.fillWidth: true
+            spacing: 4
+
+            Chip {
+                label: I18n.tr("claude.allProjects")
+                active: root.project === ""
+                onClicked: root.project = ""
+            }
+            Repeater {
+                model: root.projects
+                Chip {
+                    id: projChip
+                    required property string modelData
+                    label: projChip.modelData
+                    active: root.project === projChip.modelData
+                    onClicked: root.project = root.project === projChip.modelData ? "" : projChip.modelData
+                }
+            }
+        }
+
         // Rien d'ouvert, rien de récent.
         Text {
             Layout.fillWidth: true
@@ -248,6 +477,19 @@ Flickable {
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.Wrap
             text: I18n.tr("claude.empty")
+            font.family: "Inter"
+            font.pixelSize: 13
+            color: Theme.textSecondary
+        }
+        // Des sessions, mais aucune pour ces filtres.
+        Text {
+            Layout.fillWidth: true
+            Layout.topMargin: 24
+            visible: ClaudeSessions.live.length + ClaudeSessions.recent.length > 0
+                     && root.live.length === 0 && root.recent.length === 0
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
+            text: I18n.tr("claude.noMatch")
             font.family: "Inter"
             font.pixelSize: 13
             color: Theme.textSecondary
@@ -283,71 +525,24 @@ Flickable {
             SessionCard {}
         }
 
-        Heading {
-            visible: ClaudeSessions.recent.length > 0
-            text: I18n.tr("claude.recent")
-        }
+        // Les terminées, un groupe par jour.
         Repeater {
-            model: ClaudeSessions.recent
+            model: root.days
 
-            // Une session terminée, sur une ligne : son titre, son projet, sa
-            // date ; un clic la reprend dans un terminal.
-            Rectangle {
-                id: recentRow
+            ColumnLayout {
+                id: dayGroup
                 required property var modelData
                 Layout.fillWidth: true
-                implicitHeight: 38
-                radius: Theme.radiusSmall
-                color: recentMa.containsMouse ? Theme.hoverOverlay : "transparent"
+                spacing: 2
 
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 10
-                    anchors.rightMargin: 6
-                    spacing: 8
-
-                    Text {
-                        Layout.fillWidth: true
-                        text: recentRow.modelData.title
-                        elide: Text.ElideRight
-                        font.family: "Inter"
-                        font.pixelSize: 13
-                        color: Theme.textPrimary
-                    }
-                    Rectangle {
-                        implicitWidth: projText.implicitWidth + 12
-                        implicitHeight: 18
-                        radius: 5
-                        color: Theme.hoverOverlay
-                        Text {
-                            id: projText
-                            anchors.centerIn: parent
-                            text: recentRow.modelData.project
-                            font.family: "JetBrains Mono"
-                            font.pixelSize: 10
-                            color: Theme.textSecondary
-                        }
-                    }
-                    Text {
-                        text: root.tick >= 0 ? root.ago(recentRow.modelData.updated) : ""
-                        font.family: "Inter"
-                        font.pixelSize: 11
-                        color: Theme.textDim
-                    }
-                    NixIcon {
-                        iconSize: 15
-                        source: "../assets/ui/reboot.svg"
-                        color: recentMa.containsMouse ? Theme.accentColor : Theme.textSecondary
-                    }
+                Heading {
+                    text: dayGroup.modelData.label
+                    count: dayGroup.modelData.items.length
                 }
-
-                MouseArea {
-                    id: recentMa
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        ClaudeSessions.resume(recentRow.modelData);
+                Repeater {
+                    model: dayGroup.modelData.items
+                    RecentRow {
+                        sameDay: dayGroup.modelData.today
                     }
                 }
             }

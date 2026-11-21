@@ -18,8 +18,7 @@ import "../services"
 //
 // À gauche l'accord en grand (l'accord à jouer), ses notes, ceux d'avant ;
 // à droite la roue, qui pivote vers la tonalité quand elle change, avec
-// l'énergie de chaque note en couronne intérieure. L'accordage de
-// l'enregistrement (`offTune`, `aHz`), le lecteur l'affiche en tête.
+// l'énergie de chaque note en couronne intérieure.
 //
 // anna écoute la sortie du PC (pas le micro), et seulement tant que la
 // connexion est ouverte : `active` suit la lecture.
@@ -49,10 +48,6 @@ Item {
     property var _pending: null
 
     readonly property bool listening: chromaSock.connected
-    // L'enregistrement s'écarte du la 440 (un violon s'y réaccorde), et son
-    // la, en Hz : le lecteur l'affiche en tête.
-    readonly property bool offTune: !!key && Math.abs(tuning) >= 6
-    readonly property int aHz: Math.round(440 * Math.pow(2, tuning / 1200))
 
     readonly property var sharpNames: ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
     readonly property var flatNames:  ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]

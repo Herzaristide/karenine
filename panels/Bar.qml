@@ -15,8 +15,9 @@ import "../widgets"
 // du pilote, les volets — y reste attaché par des coins creusés
 // (widgets/Lip.qml).
 //
-//  ⌂ ▣▣ ♫ 4 5 │ ❄  Demander à Karénine…        ᯤ ᛒ ▯ │ 🔊 🎤 │ ⌗ ● │ 🔔 🎨 │ ▮87 % 14:32 ⏻ │ ▤
-//  workspaces    le flocon, puis le champ       connexions  audio   capture  toi      machine     le panneau
+//  ⏻ 14:32 │ ⌂ ▣▣ ♫ 4 5 │ ❄  Demander à Karénine…      ᯤ ᛒ │ 🔊 🎤 │ ⌗ ● │ ☑ 🔔 │ ▯64 % ▮87 % │ ✦
+//  l'heure   workspaces    le flocon, puis le champ     connexions audio   capture  tâches,   téléphone, batterie  le panneau
+//                                                                                   notif.
 //
 // Les workspaces 1-5 de l'écran montrent les icônes de leurs fenêtres ; un
 // clic y va. Le flocon parle au pilote : un clic ouvre le micro, la phrase
@@ -107,22 +108,37 @@ PanelWindow { // qmllint disable uncreatable-type
             bar.activateResult(Search.results[bar.selected]);
             return;
         }
+        // « tâche … » : Entrée ajoute la tâche plutôt que de la demander
+        // au pilote. Relue ici : la liste peut avoir une frappe de retard.
+        var task = Search.taskSource.parse(input.text);
+        if (task.asked && task.title !== "" && Google.connected) {
+            bar.activateResult({ type: "task", payload: task });
+            return;
+        }
         var text = input.text.trim();
         if (text.length === 0)
             return;
         bar.launch(text);
         Pilot.pilotAsk(text, false);
         input.text = "";
-        answer.notice = "";
+        answer.clearNotice();
         answer.show();
         // Le clavier redevient libre : un clic dans le champ le reprend.
         bar.focusRequested = false;
     }
 
+    // Le bouton du panneau de droite, compté depuis le bord droit de
+    // l'écran : le panneau sort de lui (SidePanel).
+    readonly property real panelButtonInset: tray.anchors.rightMargin
+    readonly property real panelButtonWidth: panelBtn.width
+
     // ── Les volets ───────────────────────────────────────────────
     // Le volet ouvert ("" : aucun) et le bouton sous lequel il se tient.
     property string pop: ""
     property Item popAnchor: null
+    // Le volet en tiroir ("" : aucun). Le téléphone et l'alimentation n'en
+    // ont pas : leurs boutons montent en colonne au-dessus d'eux (BarStack).
+    readonly property string drawer: bar.pop === "phone" || bar.pop === "power" ? "" : bar.pop
 
     function togglePop(name, button) {
         if (bar.pop === name) {
@@ -133,10 +149,70 @@ PanelWindow { // qmllint disable uncreatable-type
         bar.pop = name;
     }
 
+    // Un volet demandé d'ailleurs (le pilote, la FIFO : Widgets.apply),
+    // ouvert sous son bouton comme d'un clic. Il reste jusqu'à ce que la
+    // souris y passe puis le quitte, ou qu'on le referme.
+    Connections {
+        target: Widgets
+        function onPopRequested(name, action) {
+            var buttons = {
+                sound: soundBtn, mic: micBtn, wifi: wifiBtn, bluetooth: btBtn, phone: phoneBtn,
+                notifications: notifBtn, tasks: tasksBtn, power: powerBtn,
+                energy: batteryBtn.visible ? batteryBtn : clockBtn
+            };
+            var on = action === "ouvrir" ? true
+                   : action === "fermer" ? false
+                   : bar.pop !== name;
+            if (on) {
+                bar.popAnchor = buttons[name] || null;
+                bar.pop = name;
+            } else if (bar.pop === name) {
+                bar.pop = "";
+            }
+        }
+    }
+
+    // Le volet se referme quand la souris le quitte : ni sur lui, ni sur la
+    // colonne de son bouton (le chemin de l'un à l'autre). Pas avant que la
+    // souris y soit passée une fois, ni tant qu'un champ du volet a le
+    // clavier (le mot de passe d'un Wi-Fi).
+    readonly property bool anchorHovered: {
+        if (!bar.popAnchor || !stripHover.hovered)
+            return false;
+        var p = bar.popAnchor.mapFromItem(strip, stripHover.point.position.x, 0);
+        return p.x >= 0 && p.x < bar.popAnchor.width;
+    }
+    readonly property bool popHovered: bar.pop !== ""
+        && (bar.anchorHovered || popHover.hovered || phoneHover.hovered || powerHover.hovered)
+    property bool popArmed: false
+
+    onPopChanged: bar.popArmed = bar.popHovered
+    onPopHoveredChanged: {
+        if (bar.popHovered) {
+            bar.popArmed = true;
+            popLeave.stop();
+        } else if (bar.popArmed) {
+            popLeave.restart();
+        }
+    }
+
+    Timer {
+        id: popLeave
+        interval: 350
+        onTriggered: {
+            // Un champ qui a le clavier garde le volet ouvert ; celui des
+            // tâches, qui le prend dès l'ouverture, seulement s'il a du texte.
+            var f = popHost.Window.activeFocusItem as TextInput;
+            if (bar.popHovered || (f !== null && (bar.pop !== "tasks" || f.text !== "")))
+                return;
+            bar.pop = "";
+        }
+    }
+
     // La largeur du contenu de chaque volet.
     readonly property var popWidths: ({
-        "wifi": 320, "bluetooth": 320, "phone": 520, "sound": 300, "mic": 300,
-        "notifications": 380, "style": 300, "energy": 300, "power": 392
+        "wifi": 320, "bluetooth": 320, "sound": 300, "mic": 300,
+        "notifications": 380, "energy": 300, "tasks": 380
     })
 
     // ── La recherche ─────────────────────────────────────────────
@@ -146,10 +222,22 @@ PanelWindow { // qmllint disable uncreatable-type
     // La suggestion retenue au clavier ; -1 : Entrée va au pilote.
     property int selected: -1
 
+    // La liste ne change qu'une fois par frappe (Search) : taper ramène
+    // déjà au champ.
+    // ↑ pressé pendant le chargement : il s'applique à l'arrivée de la
+    // liste, sur sa première ligne.
+    property bool pendingUp: false
     Connections {
         target: Search
         function onResultsChanged() {
             bar.selected = -1;
+        }
+        function onLoadingChanged() {
+            if (Search.loading)
+                return;
+            if (bar.pendingUp && Search.results.length > 0)
+                bar.selected = 0;
+            bar.pendingUp = false;
         }
     }
 
@@ -180,6 +268,12 @@ PanelWindow { // qmllint disable uncreatable-type
     // par la première, ↓ depuis elle revient au champ (-1). Vrai s'ils ont
     // servi.
     function rowStep(dir) {
+        // Pendant le chargement, la liste à l'écran est celle de la frappe
+        // d'avant : on n'y entre pas, ↑ attend la nouvelle.
+        if (Search.loading && bar.searching) {
+            bar.pendingUp = dir > 0;
+            return true;
+        }
         var n = results.on ? Search.results.length : 0;
         if (n === 0 || (dir < 0 && bar.selected < 0))
             return false;
@@ -227,6 +321,8 @@ PanelWindow { // qmllint disable uncreatable-type
             return DefaultApps.browser ? DefaultApps.browser.icon : "";
         case "wallpaper":
             return bar.glyph("wallpaper");
+        case "task":
+            return bar.glyph("check");
         case "note":
             if (p.create)
                 return bar.glyph("file-new");
@@ -249,7 +345,8 @@ PanelWindow { // qmllint disable uncreatable-type
     readonly property var typeLabels: ({
         "app": I18n.tr("search.type.app"), "file": I18n.tr("search.type.file"),
         "setting": I18n.tr("search.type.setting"), "web": I18n.tr("search.type.web"),
-        "wallpaper": I18n.tr("search.type.wallpaper"), "note": I18n.tr("search.type.note")
+        "wallpaper": I18n.tr("search.type.wallpaper"), "note": I18n.tr("search.type.note"),
+        "task": I18n.tr("search.type.task")
     })
 
     // ── Le dernier tour du pilote ────────────────────────────────
@@ -285,9 +382,14 @@ PanelWindow { // qmllint disable uncreatable-type
     readonly property bool asking: !Pilot.pilotBusy && bar.turn !== null
                                    && !bar.turn.failed && bar.turn.reply.trim().endsWith("?")
 
+    // Une nouvelle demande commence : la réponse d'avant lui laisse la
+    // place.
     onVoiceOnChanged: {
-        if (bar.voiceOn)
+        if (bar.voiceOn) {
             bar.pop = "";
+            if (!Pilot.pilotBusy)
+                answer.hide();
+        }
     }
 
     Connections {
@@ -295,20 +397,20 @@ PanelWindow { // qmllint disable uncreatable-type
         // Une demande partie d'ailleurs (la voix, `anna`) : sa réponse
         // s'affiche ici aussi.
         function onPilotBusyChanged() {
-            if (Pilot.pilotBusy)
+            if (Pilot.pilotBusy) {
+                // Une demande part : la conversation, pas un vieux message.
+                answer.clearNotice();
                 answer.show();
+            }
         }
         function onPilotDone() {
-            var t = bar.turn;
-            answer.hideLater(t ? t.reply.length : 0);
+            answer.settle();
         }
-        // Rien entendu, modèle absent… : dit une fois, brièvement.
+        // Une vraie panne de la voix (modèle absent, micro…) : dite une
+        // fois, brièvement, et partie d'elle-même.
         function onVoiceErrorChanged() {
-            if (Pilot.voiceError.length === 0)
-                return;
-            answer.notice = "🎙 " + Pilot.voiceError;
-            answer.show();
-            answer.hideLater(0);
+            if (Pilot.voiceError.length > 0)
+                answer.flash(Pilot.voiceError);
         }
     }
 
@@ -603,24 +705,27 @@ PanelWindow { // qmllint disable uncreatable-type
                 border.width: 0
             }
         }
-        Component { id: phonePop; PhoneWidget { implicitHeight: 96 } }
         Component { id: soundPop; SoundDevices { input: false } }
         Component { id: micPop; SoundDevices { input: true } }
         Component {
             id: notifPop
             NotificationCenter {}
         }
+        Component { id: energyPop; EnergyCard {} }
         Component {
-            id: stylePop
-            StyleCard {
-                onOpenSettings: {
+            id: tasksPop
+            TaskList {
+                compact: true
+                onOpenTask: (task) => {
                     bar.pop = "";
-                    Widgets.show("settings");
+                    Widgets.showTasks(task);
+                }
+                onOpenAll: {
+                    bar.pop = "";
+                    Widgets.showTasks(null);
                 }
             }
         }
-        Component { id: energyPop; EnergyCard {} }
-        Component { id: powerPop; PowerCard { onLeaving: bar.dismiss() } }
 
         // ── La barre ─────────────────────────────────────────────
         Rectangle {
@@ -631,18 +736,63 @@ PanelWindow { // qmllint disable uncreatable-type
             height: bar.barH
             color: Theme.bgDeep
 
+            HoverHandler { id: stripHover }
+
+            // ── À gauche : l'alimentation, puis l'heure ──
+            Row {
+                id: machineRow
+                anchors.left: parent.left
+                anchors.leftMargin: 14
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 2
+
+                BarButton {
+                    id: powerBtn
+                    icon: "power.svg"
+                    on: bar.pop === "power"
+                    onClicked: bar.togglePop("power", powerBtn)
+                }
+                // Sans batterie, la luminosité reste à portée sous l'heure.
+                BarPill {
+                    id: clockBtn
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: clockText.implicitWidth + 16
+                    height: 34
+                    interactive: !Battery.present && Brightness.present
+                    on: !Battery.present && bar.pop === "energy"
+                    onClicked: bar.togglePop("energy", clockBtn)
+
+                    Text {
+                        id: clockText
+                        anchors.centerIn: parent
+                        text: Qt.formatTime(clock.date, "HH:mm")
+                        font.family: bar.uiFont
+                        font.pixelSize: 14
+                        font.weight: Font.Medium
+                        font.features: { "tnum": 1 }
+                        color: Theme.textPrimary
+                    }
+                }
+            }
+
+            Separator {
+                id: machineSep
+                anchors.left: machineRow.right
+                anchors.leftMargin: 14
+            }
+
             // ── Les workspaces ──
             Row {
                 id: wsRow
-                anchors.left: parent.left
-                anchors.leftMargin: 18
+                anchors.left: machineSep.right
+                anchors.leftMargin: 14
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 4
 
                 Repeater {
                     model: [1, 2, 3, 4, 5]
 
-                    Rectangle {
+                    BarPill {
                         id: wsButton
                         required property int modelData
                         readonly property bool focused: wsButton.modelData === bar.currentWs
@@ -650,13 +800,10 @@ PanelWindow { // qmllint disable uncreatable-type
 
                         width: Math.max(30, wsIconsRow.implicitWidth + 16)
                         height: 30
-                        radius: Theme.radiusSmall
-                        color: wsButton.focused ? Theme.selectedFill
-                             : wsMa.containsMouse || wsButton.icons.length > 0 ? Theme.hoverOverlay : "transparent"
-                        Behavior on color { ColorAnimation { duration: 160 } }
-                        Behavior on width { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-                        scale: wsMa.pressed ? 0.94 : 1
-                        Behavior on scale { NumberAnimation { duration: 120 } }
+                        on: wsButton.focused
+                        rest: wsButton.icons.length > 0
+                        Behavior on width { NumberAnimation { duration: 320; easing.type: Easing.OutQuint } }
+                        onClicked: bar.goTo(wsButton.modelData)
 
                         // Vide : son numéro.
                         Text {
@@ -667,7 +814,8 @@ PanelWindow { // qmllint disable uncreatable-type
                             font.pixelSize: 13
                             font.weight: wsButton.focused ? Font.DemiBold : Font.Medium
                             font.features: { "tnum": 1 }
-                            color: wsButton.focused ? Theme.accentColor : Theme.textDim
+                            color: wsButton.focused ? Theme.accentColor : wsButton.hovered ? Theme.textSecondary : Theme.textDim
+                            Behavior on color { ColorAnimation { duration: 220 } }
                         }
 
                         // Occupé : les icônes de ses fenêtres.
@@ -686,17 +834,15 @@ PanelWindow { // qmllint disable uncreatable-type
                                     iconSize: 16
                                     source: "../assets/ui/" + appIcon.modelData + ".svg"
                                     color: wsButton.focused ? Theme.accentColor : Theme.iconColor
-                                    opacity: wsButton.focused ? 1 : 0.75
+                                    opacity: wsButton.focused || wsButton.hovered ? 1 : 0.75
+                                    Behavior on color { ColorAnimation { duration: 220 } }
+                                    Behavior on opacity { NumberAnimation { duration: 200 } }
+                                    // Une fenêtre arrive : son icône éclot.
+                                    scale: 0.4
+                                    Component.onCompleted: scale = 1
+                                    Behavior on scale { NumberAnimation { duration: 340; easing.type: Easing.OutBack; easing.overshoot: 1.8 } }
                                 }
                             }
-                        }
-
-                        MouseArea {
-                            id: wsMa
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: bar.goTo(wsButton.modelData)
                         }
                     }
                 }
@@ -815,6 +961,9 @@ PanelWindow { // qmllint disable uncreatable-type
                     selectedTextColor: Theme.textPrimary
 
                     onTextChanged: {
+                        // Taper ramène au champ : la liste reprend vie.
+                        bar.selected = -1;
+                        bar.pendingUp = false;
                         Search.query = text;
                         if (text.length > 0)
                             bar.pop = "";
@@ -1002,12 +1151,6 @@ PanelWindow { // qmllint disable uncreatable-type
                     on: bar.pop === "bluetooth"
                     onClicked: bar.togglePop("bluetooth", btBtn)
                 }
-                BarButton {
-                    id: phoneBtn
-                    icon: "phone.svg"
-                    on: bar.pop === "phone"
-                    onClicked: bar.togglePop("phone", phoneBtn)
-                }
 
                 Item { width: 10; height: 1 }
                 Separator {}
@@ -1020,11 +1163,12 @@ PanelWindow { // qmllint disable uncreatable-type
                     on: bar.pop === "sound"
                     onClicked: (button) => button === Qt.RightButton ? Audio.toggleMute() : bar.togglePop("sound", soundBtn)
                 }
+                // Un clic droit coupe le micro, comme le son.
                 BarButton {
                     id: micBtn
-                    icon: "mic.svg"
+                    icon: Audio.micMuted ? "mic-mute.svg" : "mic.svg"
                     on: bar.pop === "mic"
-                    onClicked: bar.togglePop("mic", micBtn)
+                    onClicked: (button) => button === Qt.RightButton ? Audio.toggleMicMute() : bar.togglePop("mic", micBtn)
                 }
 
                 Item { width: 10; height: 1 }
@@ -1057,7 +1201,15 @@ PanelWindow { // qmllint disable uncreatable-type
                 Separator {}
                 Item { width: 10; height: 1 }
 
-                // Ce qui est à soi : les notifications, le style.
+                // Les tâches : celles qui restent à faire, en pastille.
+                BarButton {
+                    id: tasksBtn
+                    icon: "tasks.svg"
+                    badge: Agenda.pendingCount
+                    on: bar.pop === "tasks"
+                    onClicked: bar.togglePop("tasks", tasksBtn)
+                }
+                // Les notifications. (Le thème et l'accent : onglet Réglages du panneau.)
                 BarButton {
                     id: notifBtn
                     icon: "bell.svg"
@@ -1065,37 +1217,70 @@ PanelWindow { // qmllint disable uncreatable-type
                     on: bar.pop === "notifications"
                     onClicked: bar.togglePop("notifications", notifBtn)
                 }
-                BarButton {
-                    id: styleBtn
-                    icon: "palette.svg"
-                    on: bar.pop === "style"
-                    onClicked: bar.togglePop("style", styleBtn)
-                }
 
                 Item { width: 10; height: 1 }
                 Separator {}
                 Item { width: 10; height: 1 }
 
-                // La machine : la batterie (et l'écran), l'heure, l'alimentation.
-                Rectangle {
+                // Le téléphone et la batterie (et l'écran) ; l'heure et
+                // l'alimentation sont à gauche.
+                // Le téléphone : connecté, sa batterie, comme celle du PC ; le
+                // pourcentage s'ouvre et se referme avec la connexion.
+                BarPill {
+                    id: phoneBtn
+                    readonly property bool showLevel: Phone.battery >= 0
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 34 + (phoneBtn.showLevel ? phoneLevel.implicitWidth + 6 : 0)
+                    height: 34
+                    clip: true
+                    on: bar.pop === "phone"
+                    Behavior on width { NumberAnimation { duration: 360; easing.type: Easing.OutQuint } }
+                    onClicked: bar.togglePop("phone", phoneBtn)
+
+                    NixIcon {
+                        x: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        iconSize: 18
+                        source: "../assets/ui/phone.svg"
+                        color: phoneBtn.on ? Theme.accentColor
+                             : Phone.charging ? Theme.colorSuccess
+                             : Phone.low ? Theme.colorDanger : Theme.iconColor
+                        opacity: Phone.connected || phoneBtn.on || phoneBtn.hovered ? 1 : 0.8
+                        Behavior on color { ColorAnimation { duration: 260 } }
+                        Behavior on opacity { NumberAnimation { duration: 200 } }
+                    }
+                    Text {
+                        id: phoneLevel
+                        x: 32
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.verticalCenterOffset: phoneBtn.showLevel ? 0 : 4
+                        text: I18n.tr("common.percent", { n: Math.max(0, Phone.battery) })
+                        font.family: bar.uiFont
+                        font.pixelSize: 13
+                        font.features: { "tnum": 1 }
+                        color: Theme.textSecondary
+                        opacity: phoneBtn.showLevel ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
+                        Behavior on anchors.verticalCenterOffset { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
+                    }
+                }
+                BarPill {
                     id: batteryBtn
                     visible: Battery.present
                     anchors.verticalCenter: parent.verticalCenter
                     width: batteryRow.implicitWidth + 16
                     height: 34
-                    radius: Theme.radiusSmall
-                    color: bar.pop === "energy" ? Theme.selectedFill
-                         : batteryMa.containsMouse ? Theme.hoverOverlay : "transparent"
-                    Behavior on color { ColorAnimation { duration: 160 } }
+                    on: bar.pop === "energy"
+                    Behavior on width { NumberAnimation { duration: 300; easing.type: Easing.OutQuint } }
+                    onClicked: bar.togglePop("energy", batteryBtn)
 
                     Row {
                         id: batteryRow
                         anchors.centerIn: parent
                         spacing: 6
-                        NixIcon {
+                        BarIcon {
                             anchors.verticalCenter: parent.verticalCenter
-                            iconSize: 18
-                            source: "../assets/ui/" + (Battery.status === "Charging" ? "bolt.svg" : "battery.svg")
+                            icon: Battery.status === "Charging" ? "bolt.svg" : "battery.svg"
                             color: Battery.status === "Charging" ? Theme.colorSuccess
                                  : Battery.percent <= Battery.lowAt ? Theme.colorDanger : Theme.iconColor
                         }
@@ -1105,60 +1290,20 @@ PanelWindow { // qmllint disable uncreatable-type
                             font.family: bar.uiFont
                             font.pixelSize: 13
                             font.features: { "tnum": 1 }
-                            color: Theme.textSecondary
+                            color: batteryBtn.on ? Theme.textPrimary : Theme.textSecondary
+                            Behavior on color { ColorAnimation { duration: 220 } }
                         }
                     }
-                    MouseArea {
-                        id: batteryMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: bar.togglePop("energy", batteryBtn)
-                    }
-                }
-                // Sans batterie, la luminosité reste à portée sous l'heure.
-                Rectangle {
-                    id: clockBtn
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: clockText.implicitWidth + 16
-                    height: 34
-                    radius: Theme.radiusSmall
-                    color: !Battery.present && bar.pop === "energy" ? Theme.selectedFill
-                         : clockMa.containsMouse && !Battery.present ? Theme.hoverOverlay : "transparent"
-
-                    Text {
-                        id: clockText
-                        anchors.centerIn: parent
-                        text: Qt.formatTime(clock.date, "HH:mm")
-                        font.family: bar.uiFont
-                        font.pixelSize: 14
-                        font.weight: Font.Medium
-                        font.features: { "tnum": 1 }
-                        color: Theme.textPrimary
-                    }
-                    MouseArea {
-                        id: clockMa
-                        anchors.fill: parent
-                        enabled: !Battery.present && Brightness.present
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: bar.togglePop("energy", clockBtn)
-                    }
-                }
-                BarButton {
-                    id: powerBtn
-                    icon: "power.svg"
-                    on: bar.pop === "power"
-                    onClicked: bar.togglePop("power", powerBtn)
                 }
 
                 Item { width: 10; height: 1 }
                 Separator {}
                 Item { width: 10; height: 1 }
 
-                // Le panneau de droite.
+                // Le panneau de droite : il s'ouvre depuis ce bouton.
                 BarButton {
-                    icon: "sidebar.svg"
+                    id: panelBtn
+                    icon: "claude.svg"
                     // Une session Claude attend une réponse : un point.
                     dot: ClaudeSessions.waiting > 0
                     on: Widgets.panelOpen
@@ -1238,8 +1383,8 @@ PanelWindow { // qmllint disable uncreatable-type
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.namespace: "quickshell-bar-over"
         WlrLayershell.exclusionMode: ExclusionMode.Ignore
-        // Le mot de passe d'un réseau Wi-Fi s'y tape.
-        WlrLayershell.keyboardFocus: bar.pop === "wifi" ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand
+        // Le mot de passe d'un réseau Wi-Fi s'y tape, et les tâches.
+        WlrLayershell.keyboardFocus: bar.pop === "wifi" || bar.pop === "tasks" ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand
 
         anchors { // qmllint disable unqualified unresolved-type
             left: true
@@ -1253,15 +1398,19 @@ PanelWindow { // qmllint disable uncreatable-type
         mask: Region { // qmllint disable unqualified
             Region { item: answer.on ? answer : null }
             Region { item: results.on ? results : null }
-            Region { item: bar.pop !== "" ? popHost : null }
+            Region { item: bar.drawer !== "" ? popHost : null }
+            Region { item: phoneStack.visible ? phoneStack : null }
+            Region { item: powerStack.visible ? powerStack : null }
         }
 
         Item {
             anchors.fill: parent
 
-        // ── La réponse, au-dessus du champ ───────────────────────
-        // En haut, ce qui a été demandé, discret, et de quoi la fermer ; puis
-        // ce que le pilote a fait, en pastilles ; puis sa réponse.
+        // ── Le résultat de la commande, au-dessus du champ ───────
+        // Une commande, pas une conversation : seulement ce que le pilote
+        // vient de faire, en lignes discrètes, et sa confirmation — puis ça
+        // s'efface. Ni la demande, ni les tours précédents. Pour répondre à
+        // une question du pilote, on tape simplement dans la barre.
         Item {
             id: answer
 
@@ -1269,21 +1418,110 @@ PanelWindow { // qmllint disable uncreatable-type
             // Un message d'anna plutôt qu'un tour du pilote (erreur de la voix).
             property string notice: ""
 
+            // La réponse arrivée reste à l'écran tant qu'on ne fait rien, et
+            // s'en va au premier geste (souris, clavier) — ou dès qu'une
+            // nouvelle demande commence. Pas de minuterie : on la lit à son
+            // rythme, mais elle ne s'attarde jamais au-delà.
+            property bool armed: false
+
             function show() {
-                hideTimer.stop();
+                graceTimer.stop();
+                answer.armed = false;
                 answer.shown = true;
             }
             function hide() {
-                hideTimer.stop();
+                graceTimer.stop();
+                answer.armed = false;
                 answer.shown = false;
+                answer.clearNotice();
+            }
+            // Le tour est fini : un court répit (qu'un geste déjà en cours ne
+            // la ferme pas à peine apparue), puis le premier geste la ferme.
+            function settle() {
+                if (answer.shown)
+                    graceTimer.restart();
+            }
+            Timer {
+                id: graceTimer
+                interval: 900
+                onTriggered: answer.armed = answer.shown && !Pilot.pilotBusy
+            }
+            // ext-idle-notify : « inactif » après une seconde sans geste, puis
+            // « actif » au geste suivant, où qu'il ait lieu — c'est lui qui
+            // la ferme. Les inhibiteurs (une vidéo) n'y changent rien.
+            IdleMonitor {
+                enabled: answer.armed
+                timeout: 1
+                respectInhibitors: false
+                onIsIdleChanged: {
+                    if (isIdle || !answer.armed || Pilot.pilotBusy)
+                        return;
+                    // On la lit à la souris (défilement, lien), ou on tape
+                    // dans la barre : elle reste.
+                    if (answerHover.hovered || input.activeFocus)
+                        return;
+                    answer.hide();
+                }
+            }
+
+            // Un message d'anna : quatre secondes, survolé ou non, puis la
+            // bulle revient à ce qu'elle montrait — ou se ferme si elle
+            // n'était ouverte que pour lui.
+            function flash(text) {
+                noticeTimer.keepOpen = answer.on && answer.notice.length === 0;
+                answer.notice = text;
+                answer.show();
+                noticeTimer.restart();
+            }
+            function clearNotice() {
+                noticeTimer.stop();
                 answer.notice = "";
             }
-            // Le temps de lire : plus long pour une longue réponse. Une
-            // question du pilote reste une minute, le temps d'y répondre.
-            function hideLater(length) {
-                hideTimer.interval = bar.asking ? 60000 : Math.min(45000, 5000 + 45 * length);
-                if (!answerHover.hovered)
-                    hideTimer.restart();
+            Timer {
+                id: noticeTimer
+                property bool keepOpen: false
+                interval: 4000
+                onTriggered: {
+                    answer.notice = "";
+                    if (!noticeTimer.keepOpen && !Pilot.pilotBusy)
+                        answer.hide();
+                }
+            }
+
+            // Le journal du pilote, recopié pas à pas : la réponse qui
+            // s'écrit ne change que son texte, un nouveau message s'ajoute —
+            // les autres restent tels quels, sans clignoter. Un journal
+            // raccourci ou vidé (nouvelle conversation) est recopié d'un coup.
+            ListModel { id: thread }
+            function sync() {
+                var items = Pilot.pilotItems;
+                var rebuild = items.length < thread.count
+                    || (thread.count > 1 && (thread.get(0).kind !== items[0].kind
+                                             || thread.get(0).text !== items[0].text));
+                if (rebuild)
+                    thread.clear();
+                for (var i = 0; i < items.length; i++) {
+                    if (i < thread.count) {
+                        if (thread.get(i).text !== items[i].text)
+                            thread.setProperty(i, "text", items[i].text);
+                    } else {
+                        thread.append({ kind: items[i].kind, text: items[i].text, fresh: !rebuild });
+                    }
+                }
+            }
+            Connections {
+                target: Pilot
+                function onPilotItemsChanged() { answer.sync(); }
+            }
+            Component.onCompleted: answer.sync()
+
+            // Le début du tour en cours : ce qui précède est estompé.
+            readonly property int current: {
+                var items = Pilot.pilotItems;
+                for (var i = items.length - 1; i >= 0; i--)
+                    if (items[i].kind === "user")
+                        return i;
+                return 0;
             }
 
             readonly property bool hasContent: notice.length > 0 || bar.turn !== null
@@ -1306,19 +1544,12 @@ PanelWindow { // qmllint disable uncreatable-type
             Behavior on rise { NumberAnimation { duration: 420; easing.type: Easing.OutQuint } }
             transform: Translate { y: answer.rise }
 
-            Timer {
-                id: hideTimer
-                onTriggered: answer.hide()
-            }
-
-            // Survoler la réponse la retient ; la quitter relance le compte.
+            // Le pointeur dessus la retient ; le geste qui l'en sort la ferme.
             HoverHandler {
                 id: answerHover
                 onHoveredChanged: {
-                    if (hovered)
-                        hideTimer.stop();
-                    else if (answer.shown && !Pilot.pilotBusy)
-                        hideTimer.restart();
+                    if (!hovered && answer.armed)
+                        answer.hide();
                 }
             }
 
@@ -1343,13 +1574,13 @@ PanelWindow { // qmllint disable uncreatable-type
                 contentHeight: column.implicitHeight
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
-                // La fin de la réponse reste en vue pendant qu'elle s'écrit.
+                // La fin de la conversation reste en vue pendant qu'elle s'écrit.
                 onContentHeightChanged: contentY = Math.max(0, contentHeight - height)
 
                 Column {
                     id: column
                     width: flick.width
-                    spacing: 10
+                    spacing: 8
 
                     Text {
                         width: parent.width
@@ -1362,103 +1593,77 @@ PanelWindow { // qmllint disable uncreatable-type
                         color: Theme.colorDanger
                     }
 
-                    // Ce qui a été demandé, et la croix, à droite.
-                    Item {
-                        width: parent.width
-                        height: Math.max(heard.implicitHeight, 22)
-                        visible: answer.notice.length === 0 && bar.turn !== null
+                    Repeater {
+                        model: answer.notice.length === 0 ? thread : null
 
-                        Text {
-                            id: heard
-                            anchors.left: parent.left
-                            anchors.right: closeBtn.left
-                            anchors.rightMargin: 10
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: "<font color='" + Theme.accentColor + "'>›</font>  "
-                                  + (bar.turn ? bar.turn.heard.replace(/&/g, "&amp;").replace(/</g, "&lt;") : "")
-                            textFormat: Text.StyledText
-                            wrapMode: Text.Wrap
-                            maximumLineCount: 2
-                            elide: Text.ElideRight
-                            font.family: bar.uiFont
-                            font.pixelSize: 12
-                            color: Theme.textSecondary
-                        }
+                        Item {
+                            id: msg
+                            required property int index
+                            required property string kind
+                            required property string text
+                            required property bool fresh
 
-                        BarButton {
-                            id: closeBtn
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            size: 24
-                            icon: "close.svg"
-                            onClicked: answer.hide()
-                        }
-                    }
+                            // Une confirmation courte en plus grand, une longue
+                            // réponse à la taille du texte courant.
+                            readonly property bool long: msg.text.length > 220
 
-                    // Ce que le pilote a fait : une pastille par action.
-                    Flow {
-                        width: parent.width
-                        spacing: 6
-                        visible: answer.notice.length === 0 && bar.turn !== null && bar.turn.actions.length > 0
+                            // Seulement le tour en cours, et sans la demande.
+                            visible: msg.index > answer.current && msg.kind !== "user"
+                            width: column.width
+                            height: msg.kind === "action" ? actionLine.height : said.height
 
-                        Repeater {
-                            model: answer.notice.length === 0 && bar.turn ? bar.turn.actions : []
+                            // Un nouveau message entre en glissant vers le haut.
+                            property real appear: 1
+                            NumberAnimation on appear {
+                                running: msg.fresh
+                                from: 0
+                                to: 1
+                                duration: 220
+                                easing.type: Easing.OutCubic
+                            }
+                            opacity: msg.appear
+                            transform: Translate { y: (1 - msg.appear) * 6 }
 
-                            Rectangle {
-                                id: chip
-                                required property string modelData
-                                width: Math.min(chipLabel.implicitWidth + 18, column.width)
-                                height: 22
-                                radius: 6
-                                color: Theme.hoverOverlay
+                            // Ce que le pilote fait : une ligne discrète.
+                            Row {
+                                id: actionLine
+                                visible: msg.kind === "action"
+                                width: column.width
+                                spacing: 8
 
+                                Rectangle {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: 5
+                                    height: 5
+                                    radius: 2.5
+                                    color: Theme.accentColor
+                                }
                                 Text {
-                                    id: chipLabel
-                                    anchors.centerIn: parent
-                                    width: Math.min(implicitWidth, column.width - 18)
-                                    text: chip.modelData
+                                    width: column.width - 13
+                                    text: msg.kind === "action" ? msg.text : ""
                                     elide: Text.ElideRight
                                     font.family: "JetBrains Mono"
-                                    font.pixelSize: 10
+                                    font.pixelSize: 11
                                     color: Theme.textSecondary
                                 }
                             }
-                        }
-                    }
 
-                    Text {
-                        width: parent.width
-                        visible: answer.notice.length === 0 && bar.turn !== null && bar.turn.reply.length > 0
-                        text: bar.turn ? bar.turn.reply : ""
-                        textFormat: Text.MarkdownText
-                        wrapMode: Text.Wrap
-                        // Une confirmation courte s'affiche plus grand, une
-                        // longue réponse à la taille du texte courant.
-                        font.family: bar.uiFont
-                        font.pixelSize: text.length > 220 ? 14 : 16
-                        font.weight: text.length > 220 ? Font.Normal : Font.Medium
-                        lineHeight: 1.2
-                        color: bar.turn && bar.turn.failed ? Theme.colorDanger : Theme.textPrimary
-                        linkColor: Theme.accentColor
-                        onLinkActivated: (link) => Qt.openUrlExternally(link)
-                    }
-
-                    // Le pilote attend une réponse : on la tape dans la barre.
-                    Rectangle {
-                        visible: bar.asking && answer.notice.length === 0
-                        width: askLabel.implicitWidth + 20
-                        height: 24
-                        radius: 6
-                        color: Theme.selectedFill
-
-                        Text {
-                            id: askLabel
-                            anchors.centerIn: parent
-                            text: "↵ " + I18n.tr("bar.answerHere")
-                            font.family: bar.uiFont
-                            font.pixelSize: 11
-                            font.weight: Font.Medium
-                            color: Theme.textPrimary
+                            // Ce qu'il répond.
+                            Text {
+                                id: said
+                                visible: msg.kind === "reply" || msg.kind === "error"
+                                width: column.width
+                                text: said.visible ? msg.text : ""
+                                textFormat: Text.MarkdownText
+                                wrapMode: Text.Wrap
+                                font.family: bar.uiFont
+                                font.pixelSize: msg.long ? 14 : 16
+                                font.weight: msg.long ? Font.Normal : Font.Medium
+                                lineHeight: 1.2
+                                color: msg.kind === "error" ? Theme.colorDanger : Theme.textPrimary
+                                linkColor: Theme.accentColor
+                                onLinkActivated: (link) => Qt.openUrlExternally(link)
+                            }
                         }
                     }
 
@@ -1488,6 +1693,19 @@ PanelWindow { // qmllint disable uncreatable-type
                         }
                     }
                 }
+            }
+
+            // La fermer : au survol seulement, dans le coin.
+            BarButton {
+                anchors.top: parent.top
+                anchors.right: parent.right
+                anchors.margins: 6
+                size: 22
+                icon: "close.svg"
+                opacity: answerHover.hovered ? 1 : 0
+                visible: opacity > 0
+                Behavior on opacity { NumberAnimation { duration: 160 } }
+                onClicked: answer.hide()
             }
         }
 
@@ -1625,7 +1843,7 @@ PanelWindow { // qmllint disable uncreatable-type
                         Text {
                             id: kindLabel
                             anchors.centerIn: parent
-                            text: row.current ? "↵ " + I18n.tr("common.open")
+                            text: row.current ? "↵ " + (row.modelData.type === "task" ? I18n.tr("common.add") : I18n.tr("common.open"))
                                               : bar.typeLabels[row.modelData.type] || row.modelData.type
                             font.family: bar.uiFont
                             font.pixelSize: 10
@@ -1688,26 +1906,149 @@ PanelWindow { // qmllint disable uncreatable-type
             }
         }
 
+        // ── Les boutons du téléphone, qui montent au-dessus de lui ──
+        PhonePop {
+            id: phoneStack
+            shown: bar.pop === "phone"
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: bar.barH
+            x: {
+                // Centrée sur son bouton, au pixel ; contre un bord de l'écran,
+                // son coin creusé peut en sortir.
+                // (Lus pour suivre le bouton quand la rangée bouge.)
+                void (phoneBtn.x + tray.x + root.width);
+                var p = phoneBtn.mapToItem(root, phoneBtn.width / 2, 0);
+                return Math.round(Math.max(0, Math.min(p.x - width / 2, root.width - width)));
+            }
+            HoverHandler { id: phoneHover }
+        }
+
+        // ── L'alimentation, de même, au-dessus de son bouton ──
+        PowerStack {
+            id: powerStack
+            shown: bar.pop === "power"
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: bar.barH
+            x: {
+                // Centrée sur son bouton, au pixel ; contre un bord de l'écran,
+                // son coin creusé peut en sortir.
+                // (Lus pour suivre le bouton quand la rangée bouge.)
+                void (powerBtn.x + machineRow.x + root.width);
+                var p = powerBtn.mapToItem(root, powerBtn.width / 2, 0);
+                return Math.round(Math.max(0, Math.min(p.x - width / 2, root.width - width)));
+            }
+            onLeaving: bar.dismiss()
+            HoverHandler { id: powerHover }
+        }
+
         // ── Le volet ouvert, au-dessus de son bouton ─────────────
+        // Il sort de la barre comme un tiroir : sa surface monte et
+        // s'élargit depuis la largeur du bouton, le contenu monte avec elle
+        // en apparaissant ; à la fermeture, il y redescend, plus vite. D'un
+        // volet à l'autre, la surface glisse vers le nouveau bouton en
+        // changeant de taille, pendant que les contenus se relaient en
+        // fondu.
         Item {
             id: popHost
 
             readonly property int pad: 16
-            readonly property int contentW: bar.popWidths[bar.pop] || 300
+            // Le volet à l'écran : gardé pendant qu'il se referme.
+            property string shown: ""
+            // 0 : rentré dans la barre ; 1 : ouvert.
+            property real open: 0
+            // Ouvert pour de bon : les changements de taille et de place
+            // s'animent (avant, ils suivent `open`).
+            readonly property bool settled: popHost.open >= 1
+
+            readonly property int contentW: bar.popWidths[popHost.shown]
+                || (popLoader.item ? popLoader.implicitWidth : 300)
+            readonly property real fullW: popHost.contentW + 2 * popHost.pad
+            readonly property real fullH: Math.min(popLoader.implicitHeight + popHost.pad + 12, bar.above - 20)
+
+            property real animW: popHost.fullW
+            property real animH: popHost.fullH
+            Behavior on animW { enabled: popHost.settled; NumberAnimation { duration: 420; easing.type: Easing.OutQuint } }
+            Behavior on animH { enabled: popHost.settled; NumberAnimation { duration: 420; easing.type: Easing.OutQuint } }
+
+            // Le milieu du bouton, là où le volet se centre.
+            readonly property real anchorX: {
+                if (!bar.popAnchor)
+                    return root.width / 2;
+                return bar.popAnchor.mapToItem(root, bar.popAnchor.width / 2, 0).x;
+            }
+            readonly property real anchorW: bar.popAnchor ? bar.popAnchor.width : 34
+            property real centerX: popHost.anchorX
+            Behavior on centerX { enabled: popHost.settled; NumberAnimation { duration: 460; easing.type: Easing.OutQuint } }
 
             anchors.bottom: parent.bottom
             anchors.bottomMargin: bar.barH
-            width: contentW + 2 * pad
-            height: Math.min(popLoader.implicitHeight + pad + 12, bar.above - 20)
+            width: popHost.anchorW + (popHost.animW - popHost.anchorW) * popHost.open
+            height: popHost.animH * popHost.open
             // Centré sur son bouton, sans sortir de l'écran (les coins
             // creusés compris).
-            x: {
-                if (!bar.popAnchor)
-                    return 0;
-                var p = bar.popAnchor.mapToItem(root, bar.popAnchor.width / 2, 0);
-                return Math.max(Theme.radius + 8, Math.min(p.x - width / 2, root.width - width - Theme.radius - 8));
+            x: Math.max(Theme.radius + 8, Math.min(popHost.centerX - width / 2, root.width - width - Theme.radius - 8))
+            visible: popHost.open > 0.001
+
+            NumberAnimation {
+                id: openAnim
+                target: popHost
+                property: "open"
+                to: 1
+                duration: 460
+                easing.type: Easing.OutExpo
             }
-            visible: bar.pop !== ""
+            NumberAnimation {
+                id: closeAnim
+                target: popHost
+                property: "open"
+                to: 0
+                duration: 220
+                easing.type: Easing.OutCubic
+                onFinished: popHost.shown = ""
+            }
+
+            // D'un volet à l'autre : l'ancien contenu s'efface, le nouveau
+            // monte en apparaissant.
+            property real fade: 1
+            property real lift: 0
+            SequentialAnimation {
+                id: swapAnim
+                ParallelAnimation {
+                    NumberAnimation { target: popHost; property: "fade"; to: 0; duration: 110; easing.type: Easing.InCubic }
+                    NumberAnimation { target: popHost; property: "lift"; to: -4; duration: 110; easing.type: Easing.InCubic }
+                }
+                ScriptAction { script: { popHost.shown = bar.drawer; popHost.lift = 8; } }
+                ParallelAnimation {
+                    NumberAnimation { target: popHost; property: "fade"; to: 1; duration: 260; easing.type: Easing.OutCubic }
+                    NumberAnimation { target: popHost; property: "lift"; to: 0; duration: 340; easing.type: Easing.OutQuint }
+                }
+            }
+
+            Connections {
+                target: bar
+                function onDrawerChanged() {
+                    if (bar.drawer === "") {
+                        openAnim.stop();
+                        swapAnim.stop();
+                        closeAnim.restart();
+                    } else if (popHost.shown === "" || popHost.open < 0.05) {
+                        // Du fond de la barre : le contenu monte avec la surface.
+                        closeAnim.stop();
+                        swapAnim.stop();
+                        popHost.fade = 1;
+                        popHost.lift = 0;
+                        popHost.shown = bar.drawer;
+                        openAnim.restart();
+                    } else {
+                        closeAnim.stop();
+                        if (popHost.open < 1)
+                            openAnim.restart();
+                        swapAnim.restart();
+                    }
+                }
+            }
+
+            HoverHandler { id: popHover }
 
             Lip {
                 anchors.fill: parent
@@ -1720,20 +2061,28 @@ PanelWindow { // qmllint disable uncreatable-type
                 onWheel: (wheel) => wheel.accepted = true
             }
 
-            Loader {
-                id: popLoader
-                x: popHost.pad
-                y: popHost.pad
-                width: popHost.contentW
-                height: Math.min(implicitHeight, popHost.height - popHost.pad - 12)
-                active: bar.pop !== ""
-                focus: true
-                Keys.onEscapePressed: bar.pop = ""
-                sourceComponent: ({
-                    "wifi": wifiPop, "bluetooth": btPop, "phone": phonePop, "sound": soundPop,
-                    "mic": micPop, "notifications": notifPop, "style": stylePop,
-                    "energy": energyPop, "power": powerPop
-                })[bar.pop] || null
+            // Le contenu, découpé par la surface qui grandit : posé contre son
+            // haut, il monte avec elle.
+            Item {
+                anchors.fill: parent
+                clip: popHost.open < 1
+
+                Loader {
+                    id: popLoader
+                    x: (popHost.width - popHost.contentW) / 2
+                    y: popHost.height - popHost.animH + popHost.pad + popHost.lift
+                    width: popHost.contentW
+                    height: Math.min(implicitHeight, popHost.animH - popHost.pad - 12)
+                    opacity: popHost.fade * Math.min(1, popHost.open * 1.6 - 0.3)
+                    active: popHost.shown !== ""
+                    focus: true
+                    Keys.onEscapePressed: bar.pop = ""
+                    sourceComponent: ({
+                        "wifi": wifiPop, "bluetooth": btPop, "sound": soundPop,
+                        "mic": micPop, "notifications": notifPop,
+                        "energy": energyPop, "tasks": tasksPop
+                    })[popHost.shown] || null
+                }
             }
         }
         }

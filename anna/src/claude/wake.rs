@@ -289,11 +289,14 @@ pub fn listen(voice: Arc<Voice>) {
         let rate = capture.sample_rate;
         let keep = (rate as f64 * PREROLL.as_secs_f64()) as usize;
         let mut recent: VecDeque<f32> = VecDeque::with_capacity(keep + 4096);
-        let mut quiet_until = Instant::now();
+        // Listening again after a turn of its own: the word's echo is let go.
+        let mut quiet_until = Instant::now() + COOLDOWN;
         let mut was_busy = false;
         let mut resampler = Resampler::new(rate, super::parakeet::RATE);
         let mut samples = Vec::new();
+        let mut mic = Some((capture, rx));
         while voice.wake_on() {
+            let Some((_, rx)) = mic.as_ref() else { break };
             let chunk = match rx.recv_timeout(Duration::from_millis(300)) {
                 Ok(c) => c,
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
@@ -326,11 +329,16 @@ pub fn listen(voice: Arc<Voice>) {
             };
             if score.is_some_and(|s| s >= threshold) && Instant::now() >= quiet_until {
                 eprintln!("anna: mot d'activation ({:.2})", score.unwrap_or(0.0));
-                voice.woken(recent.iter().copied().collect(), rate);
-                detector.reset();
+                // The turn reads on from this microphone (no gap at the start
+                // of the request); a new one is opened once it is over.
+                voice.woken(recent.iter().copied().collect(), rate, mic.take());
+                break;
             }
         }
-        drop(capture);
+        drop(mic);
+        while voice.busy() {
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
 }
 

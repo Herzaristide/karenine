@@ -78,7 +78,7 @@ change starts the conversation over. Ollama's context window must hold the
 prompt and the tools — about 5 300 tokens before the first word: with
 Ollama's default of 4096, it silently drops half of it. Set
 `OLLAMA_CONTEXT_LENGTH` to 16384 on the Ollama service (on an 8 GB GPU,
-`qwen3.5:9b` then stays wholly in VRAM; at 32k it spills over). `~/.config/anna/pilote.md`, if it exists, is appended to the
+`qwen3.5:9b` then stays wholly in VRAM; at 32k it spills over). The default model is `qwen3.5:4b`: without thinking, the 9b often answers « done » without calling the tool. `~/.config/anna/pilote.md`, if it exists, is appended to the
 prompt (preferred apps, habits, projects…).
 
 | File | Role |
@@ -134,7 +134,7 @@ appears once sent.
   Whisper, which always encodes 30 s of audio, it only encodes what was
   said, and its TDT decoder skips silence and long sounds.
 - It is loaded with the first word (about 3 s) and dropped after 10 minutes
-  without use, to give back its memory (about 1 GB) — not while the wake
+  without use, to give back its memory (about 700 MB) — not while the wake
   word is on: it is then loaded with it and kept, so that a turn it starts
   never waits for the loading. A request said while
   it loads waits for it at the end.

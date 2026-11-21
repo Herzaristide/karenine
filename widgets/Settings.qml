@@ -5,33 +5,28 @@ import QtQuick.Controls
 import Quickshell
 import "../services"
 
+// L'onglet « Réglages » du panneau de droite : un seul fil, par sections
+// (SettingsSection), chacune une carte de lignes (SettingsRow).
+//
+//   APPARENCE    le thème, la couleur d'accent (teintes ou n'importe laquelle)
+//   VOIX         le mot d'éveil, la langue parlée
+//   ÉCRAN        celui qui porte l'interface
+//   LANGUE       celle de l'interface
+//   VIDÉO        la webcam (DeviceSettings), s'il y en a une
+//   ASSISTANT    le modèle du pilote (AssistantSettings)
+//   COMPTE       Google, pour l'agenda (GoogleAccount)
+//
+// Le son et le Wi-Fi se règlent dans leurs volets de la barre du bas. Tout
+// s'applique tout de suite : anna l'enregistre.
 Item {
     id: root
 
-    property bool rainbowActive: false
-    property real rainbowHue: 0.0
-
-    // Set to false when rendered inside SettingsWindow (which provides its own title bar)
-    property bool showInternalHeader: true
-
-    // ── Rainbow cycling timer ─────────────────────────────────────
-    Timer {
-        id: rainbowTimer
-        interval: 100
-        repeat: true
-        running: root.rainbowActive
-        onTriggered: {
-            root.rainbowHue = (root.rainbowHue + 0.025) % 1.0
-            colorPicker.pickerH = root.rainbowHue
-            fieldCanvas.requestPaint()
-            colorPicker.updateAccent()
-        }
-    }
+    // Gardé pour les appelants : l'onglet n'a pas d'en-tête.
+    property bool showInternalHeader: false
 
     // ── Le clavier ────────────────────────────────────────────────
-    // Tab passe d'un réglage à l'autre ; Entrée ou Espace actionne, les
-    // flèches règlent les sélecteurs de couleur. Les colonnes dépassent la
-    // hauteur du widget : ce qui prend le clavier défile en vue.
+    // Tab passe d'un réglage à l'autre ; ce qui prend le clavier défile en
+    // vue.
     readonly property Item keyboardItem: Window.activeFocusItem
     onKeyboardItemChanged: {
         var it = root.keyboardItem;
@@ -47,906 +42,321 @@ Item {
             flick.contentY = Math.min(flick.contentHeight - flick.height, y + it.height - flick.height + 8);
     }
 
-    // Entrée ou Espace : `action()`. Pour les réglages faits
-    // d'un rectangle et d'une MouseArea.
-    function activates(event, action) {
-        if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            action();
-            event.accepted = true;
-        }
+    // La couleur d'accent à une teinte donnée : saturation et luminosité ne
+    // bougent pas (plancher 0,35, qu'elle reste une couleur).
+    function accentAt(h) {
+        var c = Theme.accentColor;
+        return Qt.hsva(h, Math.max(0.35, c.hsvSaturation), Math.max(0.35, c.hsvValue), 1);
     }
 
-    // Les flèches sur un sélecteur : ← → pour `dx`, ↑ ↓ pour `dy`, un pas
-    // de 2 % (Maj : 10 %). Faux pour les autres touches.
-    function arrows(event, move) {
-        var s = event.modifiers & Qt.ShiftModifier ? 0.1 : 0.02;
-        var k = event.key;
-        if (k === Qt.Key_Left) move(-s, 0);
-        else if (k === Qt.Key_Right) move(s, 0);
-        else if (k === Qt.Key_Up) move(0, s);
-        else if (k === Qt.Key_Down) move(0, -s);
-        else return false;
-        event.accepted = true;
-        return true;
+    // ‹ › : deux petits boutons pour passer d'un choix à l'autre.
+    component Stepper: Row {
+        id: stepper
+        signal step(int dir)
+        spacing: 2
+        BarButton { size: 26; icon: "chevron-left.svg"; onClicked: stepper.step(-1) }
+        BarButton { size: 26; icon: "chevron-right.svg"; onClicked: stepper.step(1) }
     }
 
-    // ── UI ────────────────────────────────────────────────────────
     Flickable {
         id: flick
         anchors.fill: parent
-        contentHeight: mainCol.implicitHeight
+        contentHeight: col.implicitHeight + 24
         clip: true
         boundsBehavior: Flickable.StopAtBounds
 
-        ScrollBar.vertical: ScrollBar {
-            policy: ScrollBar.AsNeeded
-        }
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-        // En largeur, dans la capsule de la barre : une colonne par section
-        // (périphériques, écran, apparence ; palette commentée).
-        RowLayout {
-            id: mainCol
-            width: parent.width
-            spacing: 18
+        ColumnLayout {
+            id: col
+            width: flick.width - 12
+            spacing: 22
 
-            // Les périphériques : son, webcam, luminosité.
-            DeviceSettings {
+            // ── Apparence ────────────────────────────────────────
+            SettingsSection {
                 Layout.fillWidth: true
-                Layout.preferredWidth: 1
-                Layout.alignment: Qt.AlignTop
-            }
+                title: I18n.tr("settings.appearance")
 
-            ColumnLayout {
-                Layout.fillWidth: true
-                Layout.preferredWidth: 1
-                Layout.alignment: Qt.AlignTop
-                spacing: 0
+                SettingsRow {
+                    icon: "theme.svg"
+                    title: I18n.tr("setting.theme")
+                    Segmented {
+                        implicitWidth: 168
+                        options: [{ label: I18n.tr("settings.theme.dark"), value: true },
+                                  { label: I18n.tr("settings.theme.light"), value: false }]
+                        current: Theme.darkMode
+                        onPicked: Theme.toggleTheme()
+                    }
+                }
 
-                // ── Header ───────────────────────────────────────────
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.bottomMargin: 8
-                    spacing: 8
-                    visible: root.showInternalHeader
-
+                SettingsRow {
+                    icon: "palette.svg"
+                    title: I18n.tr("setting.accent")
+                    subtitle: Theme.accentHex.toUpperCase()
                     Text {
-                        text: I18n.tr("settings.title")
-                        font.family: "Inter"
-                        font.pixelSize: 14
-                        font.weight: Font.Bold
-                        color: Theme.textPrimary
-                        Layout.fillWidth: true
-                    }
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 1
-                    color: Theme.accentDark
-                    Layout.bottomMargin: 16
-                    visible: root.showInternalHeader
-                }
-
-                // ── COMPTE section ─────────────────────────────────
-                // Le compte Google : l'onglet Agenda y lit les agendas et
-                // les tâches.
-                Text {
-                    Layout.bottomMargin: 10
-                    text: I18n.tr("settings.account")
-                    font.family: "Inter"
-                    font.pixelSize: 12
-                    font.letterSpacing: 0
-                    color: Theme.accentMuted
-                }
-
-                GoogleAccount {
-                    Layout.fillWidth: true
-                    Layout.bottomMargin: 18
-                }
-
-                // ── ÉCRAN section ──────────────────────────────────
-                // Où s'affichent la barre et les panneaux.
-                Text {
-                    Layout.bottomMargin: 10
-                    text: I18n.tr("settings.screen")
-                    font.family: "Inter"
-                    font.pixelSize: 12
-                    font.letterSpacing: 0
-                    color: Theme.accentMuted
-                }
-
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    Layout.bottomMargin: 12
-                    spacing: 6
-
-                    // « Auto » en tête : la valeur de la config Nix, puis le
-                    // premier écran branché si elle ne correspond à rien.
-                    Repeater {
-                        model: [null].concat(Quickshell.screens)
-
-                        delegate: Rectangle {
-                            id: screenRow
-
-                            required property var modelData
-                            readonly property string key: modelData ? Display.screenKey(modelData) : ""
-                            readonly property bool selected: Display.preferred === key
-                            readonly property bool shown: modelData !== null && Display.primary === modelData
-
-                            // Deux lignes, comme les périphériques : le nom, puis
-                            // la sortie et la définition. Choisi : la teinte des
-                            // onglets.
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 46
-                            radius: Theme.radiusSmall
-                            color: selected ? Theme.selectedFill
-                                            : Qt.alpha(Theme.textPrimary, rowMa.containsMouse || activeFocus ? 0.09 : 0.05)
-                            border.color: selected ? "transparent" : Theme.dividerColor
-                            border.width: 1
-                            Behavior on color { ColorAnimation { duration: 160 } }
-
-                            activeFocusOnTab: true
-                            Keys.onPressed: (event) => root.activates(event, () => Display.setPreferred(screenRow.key))
-                            FocusRing { radius: screenRow.radius + gap }
-
-                            Column {
-                                anchors.left: parent.left
-                                anchors.leftMargin: 12
-                                anchors.right: shownDot.left
-                                anchors.rightMargin: 6
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 1
-
-                                Text {
-                                    width: parent.width
-                                    text: screenRow.modelData ? screenRow.modelData.model || screenRow.modelData.name
-                                                              : I18n.tr("settings.screen.auto")
-                                    font.family: "Inter"
-                                    font.pixelSize: 12
-                                    font.weight: Font.Medium
-                                    color: Theme.textPrimary
-                                    elide: Text.ElideRight
-                                }
-                                Text {
-                                    width: parent.width
-                                    text: screenRow.modelData
-                                          ? screenRow.modelData.name + "  ·  " + screenRow.modelData.width
-                                            + "×" + screenRow.modelData.height
-                                          : I18n.tr("settings.screen.default", { name: Display.defaultName || "—" })
-                                    font.family: "Inter"
-                                    font.pixelSize: 10
-                                    color: Theme.textSecondary
-                                    elide: Text.ElideRight
-                                }
-                            }
-
-                            // L'écran qui porte l'interface en ce moment : en
-                            // « Auto », c'est la seule façon de savoir lequel.
-                            Rectangle {
-                                id: shownDot
-                                anchors.right: parent.right
-                                anchors.rightMargin: 12
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: 6
-                                height: 6
-                                radius: 3
-                                color: Theme.glow(0)
-                                opacity: screenRow.shown ? 1.0 : 0.0
-                            }
-
-                            MouseArea {
-                                id: rowMa
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: Display.setPreferred(screenRow.key)
-                            }
-                        }
-                    }
-                }
-
-                // ── VOIX section ───────────────────────────────────
-                // Le mot d'éveil « Karénine » (anna/src/claude/wake.rs) :
-                // anna le garde d'un redémarrage à l'autre.
-                Text {
-                    Layout.topMargin: 6
-                    Layout.bottomMargin: 10
-                    text: I18n.tr("settings.voice")
-                    font.family: "Inter"
-                    font.pixelSize: 12
-                    font.letterSpacing: 0
-                    color: Theme.accentMuted
-                }
-
-                Rectangle {
-                    id: wakeRow
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 46
-                    Layout.bottomMargin: 18
-                    radius: Theme.radius
-                    color: Qt.alpha(Theme.textPrimary, wakeMa.containsMouse || activeFocus ? 0.09 : 0.05)
-                    Behavior on color { ColorAnimation { duration: 160 } }
-
-                    activeFocusOnTab: true
-                    Keys.onPressed: (event) => root.activates(event, () => Pilot.voiceWakeToggle())
-                    FocusRing { radius: wakeRow.radius + gap }
-
-                    Column {
-                        anchors.left: parent.left
-                        anchors.leftMargin: 12
-                        anchors.right: wakePill.left
-                        anchors.rightMargin: 8
                         anchors.verticalCenter: parent.verticalCenter
-                        spacing: 1
-
-                        Text {
-                            width: parent.width
-                            text: I18n.tr("settings.voice.wake", { word: Pilot.voiceWakeWord })
-                            font.family: "Inter"
-                            font.pixelSize: 12
-                            font.weight: Font.Medium
-                            color: Theme.textPrimary
-                            elide: Text.ElideRight
-                        }
-                        // Si le micro ou les modèles manquent, anna l'éteint
-                        // et dit pourquoi.
-                        Text {
-                            width: parent.width
-                            text: !Pilot.voiceWake && Pilot.voiceError
-                                  ? Pilot.voiceError
-                                  : Pilot.voiceWake ? I18n.tr("settings.voice.listening") : I18n.tr("common.off")
-                            font.family: "Inter"
-                            font.pixelSize: 10
-                            color: Theme.textSecondary
-                            elide: Text.ElideRight
-                        }
-                    }
-
-                    Rectangle {
-                        id: wakePill
-                        anchors.right: parent.right
-                        anchors.rightMargin: 12
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: 44; height: 22; radius: 11
-                        color: Pilot.voiceWake ? Theme.accentColor : Theme.accentDark
-                        Behavior on color { ColorAnimation { duration: 200 } }
-
-                        Rectangle {
-                            width: 16; height: 16; radius: 8
-                            anchors.verticalCenter: parent.verticalCenter
-                            x: Pilot.voiceWake ? 24 : 4
-                            color: Theme.iconColor
-                            Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                        }
-                    }
-
-                    MouseArea {
-                        id: wakeMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: Pilot.voiceWakeToggle()
-                    }
-                }
-
-                // La langue parlée (réponses du pilote) : à part de
-                // celle de l'interface. ‹ › passent d'un choix à l'autre.
-                Rectangle {
-                    id: voiceLangRow
-                    readonly property int at: Math.max(0, I18n.voiceChoices.findIndex(c => c.code === I18n.voice))
-
-                    function step(d) {
-                        var n = I18n.voiceChoices.length;
-                        I18n.setVoice(I18n.voiceChoices[(voiceLangRow.at + d + n) % n].code);
-                    }
-
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 46
-                    Layout.topMargin: -10
-                    Layout.bottomMargin: 18
-                    radius: Theme.radius
-                    color: Qt.alpha(Theme.textPrimary, activeFocus ? 0.09 : 0.05)
-
-                    activeFocusOnTab: true
-                    Keys.onLeftPressed: voiceLangRow.step(-1)
-                    Keys.onRightPressed: voiceLangRow.step(1)
-                    Keys.onPressed: (event) => root.activates(event, () => voiceLangRow.step(1))
-                    FocusRing { radius: voiceLangRow.radius + gap }
-
-                    Column {
-                        anchors.left: parent.left
-                        anchors.leftMargin: 12
-                        anchors.right: voiceLangButtons.left
-                        anchors.rightMargin: 8
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 1
-
-                        Text {
-                            width: parent.width
-                            text: I18n.tr("settings.voice.language")
-                            font.family: "Inter"
-                            font.pixelSize: 12
-                            font.weight: Font.Medium
-                            color: Theme.textPrimary
-                            elide: Text.ElideRight
-                        }
-                        Text {
-                            width: parent.width
-                            text: I18n.voiceChoices.length > 0 ? I18n.voiceChoices[voiceLangRow.at].name : ""
-                            font.family: "Inter"
-                            font.pixelSize: 10
-                            color: Theme.textSecondary
-                            elide: Text.ElideRight
-                        }
-                    }
-
-                    Row {
-                        id: voiceLangButtons
-                        anchors.right: parent.right
-                        anchors.rightMargin: 8
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 4
-                        GlassButton { implicitWidth: 24; implicitHeight: 24; fontSize: 13; text: "‹"; onClicked: voiceLangRow.step(-1) }
-                        GlassButton { implicitWidth: 24; implicitHeight: 24; fontSize: 13; text: "›"; onClicked: voiceLangRow.step(1) }
-                    }
-                }
-
-                // ── ASSISTANT section ──────────────────────────────
-                // Le modèle du pilote : local (Ollama) ou une API.
-                Text {
-                    Layout.bottomMargin: 10
-                    text: I18n.tr("settings.assistant")
-                    font.family: "Inter"
-                    font.pixelSize: 12
-                    font.letterSpacing: 0
-                    color: Theme.accentMuted
-                }
-
-                AssistantSettings {
-                    Layout.fillWidth: true
-                    Layout.bottomMargin: 18
-                }
-
-                // ── LANGUE section ─────────────────────────────────
-                // Une ligne par fichier de i18n/ : une langue ajoutée là
-                // apparaît ici d'elle-même.
-                Text {
-                    Layout.bottomMargin: 10
-                    text: I18n.tr("settings.language")
-                    font.family: "Inter"
-                    font.pixelSize: 12
-                    font.letterSpacing: 0
-                    color: Theme.accentMuted
-                }
-
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    Layout.bottomMargin: 18
-                    spacing: 6
-
-                    Repeater {
-                        model: I18n.available
-
-                        delegate: Rectangle {
-                            id: langRow
-
-                            required property var modelData
-                            readonly property bool selected: I18n.lang === modelData.code
-
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 36
-                            radius: Theme.radiusSmall
-                            color: selected ? Theme.selectedFill
-                                            : Qt.alpha(Theme.textPrimary, langMa.containsMouse || activeFocus ? 0.09 : 0.05)
-                            border.color: selected ? "transparent" : Theme.dividerColor
-                            border.width: 1
-                            Behavior on color { ColorAnimation { duration: 160 } }
-
-                            activeFocusOnTab: true
-                            Keys.onPressed: (event) => root.activates(event, () => I18n.setLang(langRow.modelData.code))
-                            FocusRing { radius: langRow.radius + gap }
-
-                            Text {
-                                anchors.left: parent.left
-                                anchors.leftMargin: 12
-                                anchors.right: langCode.left
-                                anchors.rightMargin: 6
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: langRow.modelData.name
-                                font.family: "Inter"
-                                font.pixelSize: 12
-                                font.weight: Font.Medium
-                                color: Theme.textPrimary
-                                elide: Text.ElideRight
-                            }
-
-                            Text {
-                                id: langCode
-                                anchors.right: parent.right
-                                anchors.rightMargin: 12
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: langRow.modelData.code
-                                font.family: "Inter"
-                                font.pixelSize: 10
-                                color: Theme.textSecondary
-                            }
-
-                            MouseArea {
-                                id: langMa
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: I18n.setLang(langRow.modelData.code)
-                            }
-                        }
-                    }
-                }
-            }
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                Layout.preferredWidth: 1
-                Layout.alignment: Qt.AlignTop
-                spacing: 0
-
-                // ── APPARENCE section ──────────────────────────────
-                Text {
-                    Layout.bottomMargin: 10
-                    text: I18n.tr("settings.appearance")
-                    font.family: "Inter"
-                    font.pixelSize: 12
-                    font.letterSpacing: 0
-                    color: Theme.accentMuted
-                }
-
-                // ── Dark / Light mode toggle ───────────────────────
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.bottomMargin: 12
-                    spacing: 8
-
-                    // Toggle pill
-                    Rectangle {
-                        id: themePill
-                        Layout.preferredWidth: 44; Layout.preferredHeight: 22; radius: 11
-                        color: Theme.darkMode ? Theme.accentDark : Theme.accentColor
-                        Behavior on color { ColorAnimation { duration: 200 } }
-
-                        activeFocusOnTab: true
-                        Keys.onPressed: (event) => root.activates(event, () => Theme.toggleTheme())
-                        FocusRing {}
-
-                        // Knob
-                        Rectangle {
-                            width: 16; height: 16; radius: 8
-                            anchors.verticalCenter: parent.verticalCenter
-                            x: Theme.darkMode ? 24 : 4
-                            color: Theme.iconColor
-                            Behavior on x { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: Theme.toggleTheme()
-                        }
-                    }
-
-                    Item { Layout.fillWidth: true }
-
-                    Text {
-                        text: Theme.darkMode ? I18n.tr("settings.theme.dark") : I18n.tr("settings.theme.light")
-                        font.family: "Inter"
-                        font.pixelSize: 11
-                        color: Theme.textSecondary
-                    }
-                }
-
-                // Color preview chip + hex input
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.bottomMargin: 8
-                    spacing: 8
-
-                    Rectangle {
-                        Layout.preferredWidth: 24; Layout.preferredHeight: 24; radius: 5
-                        color: Theme.accentColor
-                        border.color: Theme.dividerColor
-                        border.width: 1
-                    }
-
-                    TextField {
-                        id: hexField
-                        Layout.fillWidth: true
-                        text: Theme.accentColor.toString().toUpperCase()
+                        text: I18n.tr("settings.reset")
                         font.family: "Inter"
                         font.pixelSize: 12
-                        color: Theme.textPrimary
-                        leftPadding: 8; rightPadding: 8
-                        selectByMouse: true
-                        background: Rectangle {
-                            color: Theme.bgInput
-                            radius: 6
-                            border.color: Theme.accentDark
-                            border.width: 1
-                        }
-                        Connections {
-                            target: Theme
-                            function onAccentColorChanged() {
-                                if (!hexField.activeFocus)
-                                    hexField.text = Theme.accentColor.toString().toUpperCase()
-                            }
-                        }
-                        onEditingFinished: {
-                            var t = text.trim()
-                            if (!t.startsWith("#")) t = "#" + t
-                            if (/^#[0-9a-fA-F]{6}$/.test(t) || /^#[0-9a-fA-F]{3}$/.test(t)) {
-                                colorPicker.initFromColor(Qt.color(t))
-                                Theme.setAccentColor(t.toLowerCase())
-                            } else {
-                                text = Theme.accentColor.toString().toUpperCase()
-                            }
+                        font.weight: Font.Medium
+                        color: resetMa.containsMouse ? Theme.textPrimary : Theme.textSecondary
+                        Behavior on color { ColorAnimation { duration: 160 } }
+                        MouseArea {
+                            id: resetMa
+                            anchors.fill: parent
+                            anchors.margins: -6
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: Theme.resetToDefaults()
                         }
                     }
                 }
 
-                // ── Color picker ─────────────────────────────────────
+                // Les teintes, puis n'importe laquelle de l'arc-en-ciel.
                 Item {
-                    id: colorPicker
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 144  // 120 field + 8 gap + 14 hue + 2 padding
-                    Layout.bottomMargin: 16
+                    implicitHeight: accentBox.implicitHeight + 18
 
-                    // Internal HSV state (0.0 – 1.0 each)
-                    property real pickerH: 0.667
-                    property real pickerS: 0.5
-                    property real pickerV: 0.56
+                    ColumnLayout {
+                        id: accentBox
+                        x: 12
+                        width: parent.width - 24
+                        spacing: 14
 
-                    Component.onCompleted: initFromColor(Theme.accentColor)
+                        Row {
+                            spacing: 10
+                            Repeater {
+                                model: Theme.presets
 
-                    function initFromColor(c) {
-                        var hsv = rgbToHsv(c.r, c.g, c.b)
-                        pickerH = hsv.h
-                        pickerS = hsv.s
-                        pickerV = hsv.v
-                    }
+                                Rectangle {
+                                    id: swatch
+                                    required property string modelData
+                                    readonly property bool active: Theme.accentHex.toLowerCase() === swatch.modelData.toLowerCase()
+                                    width: 26
+                                    height: 26
+                                    radius: 13
+                                    color: swatch.modelData
+                                    scale: swatchMa.pressed ? 0.88 : swatchMa.containsMouse ? 1.08 : 1
+                                    Behavior on scale { SpringAnimation { spring: 5; damping: 0.35; epsilon: 0.002 } }
 
-                    function rgbToHsv(r, g, b) {
-                        var max = Math.max(r, g, b), min = Math.min(r, g, b)
-                        var delta = max - min
-                        var h = 0, s = 0, v = max
-                        if (max > 0) s = delta / max
-                        if (delta > 0) {
-                            if (max === r)      h = ((g - b) / delta) % 6
-                            else if (max === g) h = (b - r) / delta + 2
-                            else               h = (r - g) / delta + 4
-                            h /= 6
-                            if (h < 0) h += 1
-                        }
-                        return { h: h, s: s, v: v }
-                    }
-
-                    function hsvToHex(h, s, v) {
-                        var i = Math.floor(h * 6), f = h * 6 - i
-                        var p = v * (1 - s), q = v * (1 - f * s), t = v * (1 - (1 - f) * s)
-                        var r, g, b
-                        switch (i % 6) {
-                            case 0: r = v; g = t; b = p; break
-                            case 1: r = q; g = v; b = p; break
-                            case 2: r = p; g = v; b = t; break
-                            case 3: r = p; g = q; b = v; break
-                            case 4: r = t; g = p; b = v; break
-                            case 5: r = v; g = p; b = q; break
-                        }
-                        function x2h(n) { var s = Math.round(n * 255).toString(16); return s.length === 1 ? "0"+s : s }
-                        return "#" + x2h(r) + x2h(g) + x2h(b)
-                    }
-
-                    function updateAccent() {
-                        Theme.setAccentColor(hsvToHex(pickerH, pickerS, pickerV))
-                    }
-
-                    // Re-sync HSV when accent.hex is loaded (or changed externally),
-                    // but not while the user is actively dragging the picker.
-                    property bool userInteracting: false
-                    Connections {
-                        target: Theme
-                        function onAccentColorChanged() {
-                            if (!colorPicker.userInteracting)
-                                colorPicker.initFromColor(Theme.accentColor)
-                        }
-                    }
-
-                    // ── Saturation / brightness field ─────────────────
-                    Canvas {
-                        id: fieldCanvas
-                        anchors.top: parent.top
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        height: 120
-
-                        Connections {
-                            target: colorPicker
-                            function onPickerHChanged() { fieldCanvas.requestPaint() }
-                        }
-
-                        // ← → : la saturation ; ↑ ↓ : la luminosité.
-                        activeFocusOnTab: true
-                        Keys.onPressed: (event) => root.arrows(event, (dx, dy) => {
-                            colorPicker.userInteracting = true
-                            colorPicker.pickerS = Math.max(0, Math.min(1, colorPicker.pickerS + dx))
-                            colorPicker.pickerV = Math.max(0, Math.min(1, colorPicker.pickerV + dy))
-                            colorPicker.updateAccent()
-                            colorPicker.userInteracting = false
-                        })
-                        FocusRing { radius: 6 }
-
-                        onPaint: {
-                            var ctx = getContext("2d"), w = width, h = height
-                            // Base: pure hue at full saturation + value
-                            ctx.fillStyle = colorPicker.hsvToHex(colorPicker.pickerH, 1.0, 1.0)
-                            ctx.fillRect(0, 0, w, h)
-                            // White → transparent (left = white, right = saturated)
-                            var wg = ctx.createLinearGradient(0, 0, w, 0)
-                            wg.addColorStop(0.0, "rgba(255,255,255,1)")
-                            wg.addColorStop(1.0, "rgba(255,255,255,0)")
-                            ctx.fillStyle = wg; ctx.fillRect(0, 0, w, h)
-                            // Transparent → black (top = bright, bottom = dark)
-                            var bg = ctx.createLinearGradient(0, 0, 0, h)
-                            bg.addColorStop(0.0, "rgba(0,0,0,0)")
-                            bg.addColorStop(1.0, "rgba(0,0,0,1)")
-                            ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h)
-                        }
-
-                        // Crosshair cursor
-                        Rectangle {
-                            x: colorPicker.pickerS * fieldCanvas.width  - width  / 2
-                            y: (1 - colorPicker.pickerV) * fieldCanvas.height - height / 2
-                            width: 14; height: 14; radius: 7
-                            color: "transparent"
-                            border.color: Theme.iconColor; border.width: 2
-                            antialiasing: true
-                            Rectangle {
-                                anchors.centerIn: parent
-                                width: 6; height: 6; radius: 3
-                                color: "transparent"
-                                border.color: Qt.rgba(0, 0, 0, 0.55); border.width: 1
-                            }
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.CrossCursor
-                            function pick(mouse) {
-                                colorPicker.pickerS = Math.max(0, Math.min(1, mouse.x / width))
-                                colorPicker.pickerV = Math.max(0, Math.min(1, 1 - mouse.y / height))
-                                colorPicker.updateAccent()
-                            }
-                            onPressed:         (mouse) => { colorPicker.userInteracting = true; pick(mouse) }
-                            onReleased:        colorPicker.userInteracting = false
-                            onPositionChanged: (mouse) => { if (pressed) pick(mouse) }
-                        }
-                    }
-
-                    // ── Hue strip ─────────────────────────────────────
-                    Item {
-                        id: hueRow
-                        anchors.top: fieldCanvas.bottom
-                        anchors.topMargin: 8
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        height: 14
-
-                        // ← → (ou ↑ ↓) : la teinte.
-                        activeFocusOnTab: true
-                        Keys.onPressed: (event) => root.arrows(event, (dx, dy) => {
-                            colorPicker.userInteracting = true
-                            colorPicker.pickerH = Math.max(0, Math.min(0.9999, colorPicker.pickerH + dx + dy))
-                            fieldCanvas.requestPaint()
-                            colorPicker.updateAccent()
-                            colorPicker.userInteracting = false
-                        })
-                        FocusRing { radius: 6 }
-
-                        Canvas {
-                            id: hueCanvas
-                            anchors.fill: parent
-                            onPaint: {
-                                var ctx = getContext("2d")
-                                var grad = ctx.createLinearGradient(0, 0, width, 0)
-                                for (var i = 0; i <= 12; i++) {
-                                    var stop = i / 12
-                                    grad.addColorStop(stop, "hsl(" + Math.round(stop * 360) + ",100%,50%)")
+                                    // L'anneau autour de la teinte choisie.
+                                    Rectangle {
+                                        anchors.centerIn: parent
+                                        width: parent.width + 8
+                                        height: parent.height + 8
+                                        radius: width / 2
+                                        color: "transparent"
+                                        border.width: 2
+                                        border.color: swatch.modelData
+                                        opacity: swatch.active ? 1 : 0
+                                        scale: swatch.active ? 1 : 0.7
+                                        Behavior on opacity { NumberAnimation { duration: 180 } }
+                                        Behavior on scale { NumberAnimation { duration: 320; easing.type: Easing.OutBack; easing.overshoot: 2 } }
+                                    }
+                                    MouseArea {
+                                        id: swatchMa
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: Theme.setAccentColor(swatch.modelData)
+                                    }
                                 }
-                                var r = 4
-                                ctx.beginPath()
-                                ctx.moveTo(r, 0); ctx.lineTo(width - r, 0)
-                                ctx.arcTo(width, 0,      width,      r,          r)
-                                ctx.lineTo(width, height - r)
-                                ctx.arcTo(width, height, width - r,  height,     r)
-                                ctx.lineTo(r, height)
-                                ctx.arcTo(0, height,     0,          height - r, r)
-                                ctx.lineTo(0, r)
-                                ctx.arcTo(0, 0,          r,          0,          r)
-                                ctx.closePath()
-                                ctx.fillStyle = grad; ctx.fill()
+                            }
+                        }
+
+                        // N'importe quelle teinte : elle ne part à anna qu'au
+                        // lâcher, chaque changement d'accent rechargeant Hyprland.
+                        Item {
+                            id: hues
+                            Layout.fillWidth: true
+                            implicitHeight: 18
+                            property real dragValue: -1
+                            readonly property real hue: Theme.accentColor.hsvHue < 0 ? 0 : Theme.accentColor.hsvHue
+                            readonly property real shown: hues.dragValue >= 0 ? hues.dragValue : hues.hue
+
+                            Rectangle {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: parent.width
+                                height: 6
+                                radius: 3
+                                gradient: Gradient {
+                                    orientation: Gradient.Horizontal
+                                    GradientStop { position: 0 / 6; color: root.accentAt(0 / 6) }
+                                    GradientStop { position: 1 / 6; color: root.accentAt(1 / 6) }
+                                    GradientStop { position: 2 / 6; color: root.accentAt(2 / 6) }
+                                    GradientStop { position: 3 / 6; color: root.accentAt(3 / 6) }
+                                    GradientStop { position: 4 / 6; color: root.accentAt(4 / 6) }
+                                    GradientStop { position: 5 / 6; color: root.accentAt(5 / 6) }
+                                    GradientStop { position: 6 / 6; color: root.accentAt(0.999) }
+                                }
+                            }
+                            Rectangle {
+                                anchors.verticalCenter: parent.verticalCenter
+                                x: hues.shown * (hues.width - width)
+                                width: 16
+                                height: 16
+                                radius: 8
+                                color: root.accentAt(hues.shown)
+                                border.width: 3
+                                border.color: Theme.bgDeep
+                                scale: hueMa.pressed ? 1.2 : 1
+                                Behavior on scale { SpringAnimation { spring: 5; damping: 0.35; epsilon: 0.002 } }
                             }
                             MouseArea {
+                                id: hueMa
                                 anchors.fill: parent
+                                anchors.topMargin: -8
+                                anchors.bottomMargin: -8
+                                preventStealing: true
                                 cursorShape: Qt.PointingHandCursor
-                                function pick(mouse) {
-                                    colorPicker.pickerH = Math.max(0, Math.min(0.9999, mouse.x / width))
-                                    fieldCanvas.requestPaint()
-                                    colorPicker.updateAccent()
+                                function follow(mx) {
+                                    hues.dragValue = Math.max(0, Math.min(0.999, (mx - 8) / Math.max(1, hues.width - 16)));
                                 }
-                                onPressed:         (mouse) => { colorPicker.userInteracting = true; pick(mouse) }
-                                onReleased:        colorPicker.userInteracting = false
-                                onPositionChanged: (mouse) => { if (pressed) pick(mouse) }
+                                onPressed: (mouse) => follow(mouse.x)
+                                onPositionChanged: (mouse) => follow(mouse.x)
+                                onReleased: {
+                                    Theme.setAccentColor(root.accentAt(hues.dragValue).toString());
+                                    hues.dragValue = -1;
+                                }
                             }
                         }
-
-                        // Thumb indicator
-                        Rectangle {
-                            x: colorPicker.pickerH * hueRow.width - width / 2
-                            y: -2
-                            width: 5; height: hueRow.height + 4; radius: 2.5
-                            color: Theme.iconColor
-                            border.color: Qt.rgba(0, 0, 0, 0.45); border.width: 1
-                            antialiasing: true
-                        }
                     }
                 }
-
-                // ── Rainbow + Reset row ───────────────────────────
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.bottomMargin: 16
-                    spacing: 8
-
-                // ── Rainbow cycling button ─────────────────────────
-                Item {
-                    id: rainbowBtn
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 32
-
-                    function toggle() {
-                        if (!root.rainbowActive) {
-                            // Start from current hue so it doesn't jump
-                            root.rainbowHue = colorPicker.pickerH
-                        }
-                        root.rainbowActive = !root.rainbowActive
-                    }
-
-                    activeFocusOnTab: true
-                    Keys.onPressed: (event) => root.activates(event, rainbowBtn.toggle)
-                    FocusRing { radius: Theme.radiusSmall + gap }
-
-                    // Rainbow gradient background
-                    Canvas {
-                        id: rainbowBtnBg
-                        anchors.fill: parent
-                        onPaint: {
-                            var ctx = getContext("2d")
-                            var grad = ctx.createLinearGradient(0, 0, width, 0)
-                            for (var i = 0; i <= 12; i++) {
-                                grad.addColorStop(i / 12, "hsl(" + Math.round(i / 12 * 360) + ",90%,55%)")
-                            }
-                            var r = 8
-                            ctx.beginPath()
-                            ctx.moveTo(r, 0); ctx.lineTo(width - r, 0)
-                            ctx.arcTo(width, 0,      width,      r,          r)
-                            ctx.lineTo(width, height - r)
-                            ctx.arcTo(width, height, width - r,  height,     r)
-                            ctx.lineTo(r, height)
-                            ctx.arcTo(0, height,     0,          height - r, r)
-                            ctx.lineTo(0, r)
-                            ctx.arcTo(0, 0,          r,          0,          r)
-                            ctx.closePath()
-                            ctx.fillStyle = grad
-                            ctx.fill()
-                        }
-                    }
-
-                    // Dimming overlay — lighter when active
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: Theme.radiusSmall
-                        color: Theme.bgDeep
-                        opacity: root.rainbowActive ? 0.10 : 0.50
-                        Behavior on opacity { NumberAnimation { duration: 250 } }
-                    }
-
-                    // Active border glow
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: Theme.radiusSmall
-                        color: "transparent"
-                        border.color: Theme.iconColor
-                        border.width: 1
-                        opacity: root.rainbowActive ? 0.8 : 0.0
-                        Behavior on opacity { NumberAnimation { duration: 250 } }
-                    }
-
-                    // Icon + label
-                    Row {
-                        anchors.centerIn: parent
-                        spacing: 6
-
-                        Text {
-                            text: root.rainbowActive ? I18n.tr("common.stop") : I18n.tr("settings.rainbow")
-                            font.family: "Inter"
-                            font.pixelSize: 11
-                            font.weight: Font.Medium
-                            color: Theme.iconColor
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: rainbowBtn.toggle()
-                    }
-                }
-
-                // ── Reset to default button ───────────────────────
-                Item {
-                    id: resetBtn
-                    Layout.preferredWidth: 78
-                    Layout.preferredHeight: 32
-
-                    function reset() {
-                        root.rainbowActive = false
-                        Theme.resetToDefaults()
-                    }
-
-                    activeFocusOnTab: true
-                    Keys.onPressed: (event) => root.activates(event, resetBtn.reset)
-                    FocusRing { radius: Theme.radiusSmall + gap }
-
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: Theme.radiusSmall
-                        color: Qt.alpha(Theme.textPrimary, 0.1)
-                        border.color: Theme.dividerColor
-                        border.width: 1
-                    }
-
-                    Row {
-                        anchors.centerIn: parent
-                        spacing: 5
-                        NixIcon {
-                            anchors.verticalCenter: parent.verticalCenter
-                            iconSize: 12
-                            source: "../assets/icons/reset.svg"
-                            color: Theme.textSecondary
-                        }
-                        Text {
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: I18n.tr("settings.reset")
-                            font.family: "Inter"
-                            font.pixelSize: 11
-                            font.weight: Font.Medium
-                            color: Theme.textSecondary
-                        }
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: resetBtn.reset()
-                    }
-                }
-
-                } // end RowLayout
-
-                Item { Layout.preferredHeight: 8 }
             }
 
-            // La palette base16, désactivée le temps de décider si on la garde,
-            // est retirée du fichier : elle vit dans l'historique (commit 5654a85,
-            // widgets/Settings.qml), avec son état en tête de fichier.
+            // ── Voix ─────────────────────────────────────────────
+            // Le mot d'éveil (anna/src/claude/wake.rs), et la langue des
+            // réponses du pilote, à part de celle de l'interface.
+            SettingsSection {
+                Layout.fillWidth: true
+                title: I18n.tr("settings.voice")
+
+                SettingsRow {
+                    icon: "mic.svg"
+                    title: I18n.tr("settings.voice.wake", { word: Pilot.voiceWakeWord })
+                    // Si le micro ou les modèles manquent, anna l'éteint et
+                    // dit pourquoi.
+                    subtitle: !Pilot.voiceWake && Pilot.voiceError ? Pilot.voiceError
+                            : Pilot.voiceWake ? I18n.tr("settings.voice.listening") : I18n.tr("common.off")
+                    clickable: true
+                    onClicked: Pilot.voiceWakeToggle()
+                    SettingsSwitch {
+                        anchors.verticalCenter: parent.verticalCenter
+                        checked: Pilot.voiceWake
+                        onToggled: Pilot.voiceWakeToggle()
+                    }
+                }
+
+                SettingsRow {
+                    id: voiceLang
+                    readonly property int at: Math.max(0, I18n.voiceChoices.findIndex(c => c.code === I18n.voice))
+                    function step(d) {
+                        var n = I18n.voiceChoices.length;
+                        if (n > 0)
+                            I18n.setVoice(I18n.voiceChoices[(voiceLang.at + d + n) % n].code);
+                    }
+                    icon: "chat.svg"
+                    title: I18n.tr("settings.voice.language")
+                    subtitle: I18n.voiceChoices.length > 0 ? I18n.voiceChoices[voiceLang.at].name : ""
+                    Keys.onLeftPressed: voiceLang.step(-1)
+                    Keys.onRightPressed: voiceLang.step(1)
+                    Stepper {
+                        anchors.verticalCenter: parent.verticalCenter
+                        onStep: (d) => voiceLang.step(d)
+                    }
+                }
+            }
+
+            // ── Écran ────────────────────────────────────────────
+            // « Auto » en tête : la valeur de la config Nix, puis le premier
+            // écran branché si elle ne correspond à rien. Le point : celui
+            // qui porte l'interface en ce moment.
+            SettingsSection {
+                Layout.fillWidth: true
+                title: I18n.tr("settings.screen")
+
+                Repeater {
+                    model: [null].concat(Quickshell.screens)
+
+                    SettingsRow {
+                        id: screenRow
+                        required property var modelData
+                        readonly property string key: screenRow.modelData ? Display.screenKey(screenRow.modelData) : ""
+                        icon: "monitor.svg"
+                        title: screenRow.modelData ? screenRow.modelData.model || screenRow.modelData.name
+                                                   : I18n.tr("settings.screen.auto")
+                        subtitle: (screenRow.modelData
+                                   ? screenRow.modelData.name + "  ·  " + screenRow.modelData.width + "×" + screenRow.modelData.height
+                                   : I18n.tr("settings.screen.default", { name: Display.defaultName || "—" }))
+                                  + (screenRow.modelData !== null && Display.primary === screenRow.modelData ? "  ·  ●" : "")
+                        clickable: true
+                        selected: Display.preferred === screenRow.key
+                        onClicked: Display.setPreferred(screenRow.key)
+                    }
+                }
+            }
+
+            // ── Langue ───────────────────────────────────────────
+            // Une ligne par fichier de i18n/ : une langue ajoutée là apparaît
+            // ici d'elle-même.
+            SettingsSection {
+                Layout.fillWidth: true
+                title: I18n.tr("settings.language")
+
+                Repeater {
+                    model: I18n.available
+
+                    SettingsRow {
+                        id: langRow
+                        required property var modelData
+                        icon: "globe.svg"
+                        title: langRow.modelData.name
+                        clickable: true
+                        selected: I18n.lang === langRow.modelData.code
+                        onClicked: I18n.setLang(langRow.modelData.code)
+                    }
+                }
+            }
+
+            // ── Vidéo ────────────────────────────────────────────
+            DeviceSettings {
+                Layout.fillWidth: true
+            }
+
+            // ── Assistant ────────────────────────────────────────
+            SettingsSection {
+                Layout.fillWidth: true
+                title: I18n.tr("settings.assistant")
+
+                Item {
+                    Layout.fillWidth: true
+                    implicitHeight: assistant.implicitHeight + 24
+                    AssistantSettings {
+                        id: assistant
+                        x: 12
+                        y: 12
+                        width: parent.width - 24
+                    }
+                }
+            }
+
+            // ── Compte ───────────────────────────────────────────
+            // Google : l'onglet Agenda y lit les agendas et les tâches.
+            SettingsSection {
+                Layout.fillWidth: true
+                title: I18n.tr("settings.account")
+
+                Item {
+                    Layout.fillWidth: true
+                    implicitHeight: account.implicitHeight + 24
+                    GoogleAccount {
+                        id: account
+                        x: 12
+                        y: 12
+                        width: parent.width - 24
+                    }
+                }
+            }
         }
     }
-
 }

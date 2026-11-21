@@ -79,6 +79,8 @@ pub struct Endpointer {
     speaking: bool,
     silence: f32,
     elapsed: f32,
+    /// The loudest frame fed, for the log of a turn that heard nothing.
+    peak: f32,
 }
 
 impl Default for Endpointer {
@@ -90,6 +92,7 @@ impl Default for Endpointer {
             speaking: false,
             silence: 0.0,
             elapsed: 0.0,
+            peak: 0.0,
         }
     }
 }
@@ -101,18 +104,54 @@ fn rms(frame: &[f32]) -> f32 {
     (frame.iter().map(|s| s * s).sum::<f32>() / frame.len() as f32).sqrt()
 }
 
+/// The levels of audio from before the turn (16 kHz), over its FRAME-long
+/// frames: the room's (20th percentile — the wake word fills only part of
+/// it) and the voice's, the word itself (95th). `None` when too short.
+fn levels_of(audio: &[f32]) -> Option<(f32, f32)> {
+    let len = (parakeet::RATE as f32 * FRAME) as usize;
+    let mut levels: Vec<f32> = audio.chunks_exact(len).map(rms).collect();
+    if levels.len() < NOISE_FRAMES {
+        return None;
+    }
+    levels.sort_by(|a, b| a.total_cmp(b));
+    Some((levels[levels.len() / 5], levels[levels.len() * 19 / 20]))
+}
+
 impl Endpointer {
+    /// Well above the room, never so low that hiss counts. The floor is
+    /// low: an audio interface's quiet room is ~1e-5, a voice through one of
+    /// its inputs mixed down to mono well under 0.01.
+    fn threshold_over(floor: f32) -> f32 {
+        (floor * 3.5).max(0.002)
+    }
+
+    /// One whose levels were measured already, before the turn: the room's
+    /// (`floor`) and the voice's (`voice`, the wake word just said). After
+    /// the word the request often follows at once, and measuring the room
+    /// over it would set the threshold above the voice itself; the voice
+    /// known, the threshold stays well under it, however low the input gain.
+    pub fn with_levels(floor: f32, voice: f32) -> Self {
+        let threshold = Self::threshold_over(floor)
+            .min(voice * 0.3)
+            .max(floor * 2.0);
+        Endpointer {
+            noise: vec![floor; NOISE_FRAMES],
+            threshold,
+            ..Default::default()
+        }
+    }
+
     /// Feed one frame (FRAME seconds); says whether to go on.
     pub fn feed(&mut self, frame: &[f32]) -> Endpoint {
         let level = rms(frame);
+        self.peak = self.peak.max(level);
         self.elapsed += FRAME;
         if self.noise.len() < NOISE_FRAMES {
             self.noise.push(level);
             if self.noise.len() == NOISE_FRAMES {
                 let mut n = self.noise.clone();
                 n.sort_by(|a, b| a.total_cmp(b));
-                // Well above the room, never so low that hiss counts.
-                self.threshold = (n[NOISE_FRAMES / 2] * 3.5).max(0.012);
+                self.threshold = Self::threshold_over(n[NOISE_FRAMES / 2]);
             }
             return Endpoint::More;
         }
@@ -140,6 +179,11 @@ impl Endpointer {
             };
         }
         Endpoint::More
+    }
+
+    /// The threshold, and the loudest frame so far.
+    pub fn levels(&self) -> (f32, f32) {
+        (self.threshold, self.peak)
     }
 
     /// Whether speech has been heard so far.
@@ -270,8 +314,7 @@ impl Resampler {
     }
 }
 
-/// 16-bit mono PCM WAV, for the tests.
-#[cfg(test)]
+/// 16-bit mono PCM WAV.
 pub fn wav(samples: &[f32], rate: u32) -> Vec<u8> {
     let data_len = (samples.len() * 2) as u32;
     let mut out = Vec::with_capacity(44 + data_len as usize);
@@ -508,6 +551,9 @@ fn ends_sentence(text: &str) -> bool {
     text.trim_end().ends_with(['.', '?', '!', '…'])
 }
 
+/// A microphone being read: the capture, and its samples.
+pub type Mic = (crate::audio::Capture, std::sync::mpsc::Receiver<Vec<f32>>);
+
 /// A partial transcript: how many samples it covered, and the text (`None`:
 /// no model yet).
 type Partial = (usize, Option<Result<String, String>>);
@@ -553,6 +599,13 @@ pub struct Voice {
     /// turn as `waking`, a word heard but not yet confirmed.
     confirmed: AtomicBool,
     preroll: Mutex<Option<(Vec<f32>, u32)>>,
+    /// The same audio, kept until the turn's outcome is known, for
+    /// `keep_wake_clip`.
+    wake_clip: Mutex<Option<(Vec<f32>, u32)>>,
+    /// The wake word's microphone, handed over with `preroll`: the turn goes
+    /// on reading it, without the gap a new capture would leave while it
+    /// starts — the beginning of the request.
+    mic: Mutex<Option<Mic>>,
     /// For handing transcripts to the pilot from plain threads.
     rt: tokio::runtime::Handle,
     /// Set to end the current recording now.
@@ -582,6 +635,8 @@ impl Voice {
             woken: AtomicBool::new(false),
             confirmed: AtomicBool::new(false),
             preroll: Mutex::new(None),
+            wake_clip: Mutex::new(None),
+            mic: Mutex::new(None),
             rt: tokio::runtime::Handle::current(),
             stop: Arc::new(AtomicBool::new(false)),
             model: Arc::new(Mutex::new(None)),
@@ -744,22 +799,37 @@ impl Voice {
                         if !confirmed {
                             eprintln!("anna: mot d'activation confirmé : « {text} »");
                         }
+                        self.keep_wake_clip(true, &text);
                         Ok(Some(rest))
                     }
-                    None if confirmed => Ok(Some(drop_first_word(&text))),
+                    None if confirmed => {
+                        self.keep_wake_clip(true, &text);
+                        Ok(Some(drop_first_word(&text)))
+                    }
                     None => {
                         eprintln!("anna: mot d'activation non confirmé : « {text} »");
+                        self.keep_wake_clip(false, &text);
                         lock(&self.text).clear();
                         self.set_phase(Phase::Idle);
                         return;
                     }
                 },
                 Ok(None) => {
+                    eprintln!("anna: mot d'activation : rien entendu ensuite");
+                    let heard = if confirmed {
+                        "(confirmé, sans demande)".to_string()
+                    } else {
+                        lock(&self.text).clone()
+                    };
+                    self.keep_wake_clip(confirmed, &heard);
                     lock(&self.text).clear();
                     self.set_phase(Phase::Idle);
                     return;
                 }
-                Err(e) => Err(e),
+                Err(e) => {
+                    eprintln!("anna: mot d'activation : {e}");
+                    Err(e)
+                }
             }
         } else {
             result
@@ -772,15 +842,16 @@ impl Voice {
                     let me = Arc::clone(self);
                     handle.spawn(async move {
                         if let Err(e) = me.pilot.ask(&text, false).await {
+                            eprintln!("anna: voix → pilote : {e}");
                             *lock(&me.error) = e;
                             me.publish();
                         }
                     });
                 }
             }
+            // Nothing said: no error, the bar simply stops listening.
             Ok(_) => {
                 lock(&self.text).clear();
-                *lock(&self.error) = "rien entendu".into();
                 self.set_phase(Phase::Idle);
             }
             Err(e) => {
@@ -788,6 +859,32 @@ impl Voice {
                 self.set_phase(Phase::Idle);
             }
         }
+    }
+
+    /// The wake word's audio, for training its model on the real thing
+    /// (lab/wakeword-<word>/train_moi.sh): under
+    /// `~/.local/share/anna/wake-clips/{confirmed,rejected}/`, with what the
+    /// transcript heard next to it. Only if that directory exists — created
+    /// by hand to opt in. A rejected turn is most often a false trigger: a
+    /// video, a call, a conversation.
+    fn keep_wake_clip(&self, confirmed: bool, heard: &str) {
+        let Some((audio, rate)) = lock(&self.wake_clip).take() else {
+            return;
+        };
+        let root = crate::paths::home_dir().join(".local/share/anna/wake-clips");
+        if !root.is_dir() {
+            return;
+        }
+        let dir = root.join(if confirmed { "confirmed" } else { "rejected" });
+        if std::fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis());
+        let base = dir.join(format!("{stamp}"));
+        let _ = std::fs::write(base.with_extension("wav"), wav(&audio, rate));
+        let _ = std::fs::write(base.with_extension("txt"), heard);
     }
 
     pub fn start(self: &Arc<Self>, send: bool) {
@@ -798,12 +895,15 @@ impl Voice {
     }
 
     /// The wake word was heard (wake.rs): listen to the request, with the
-    /// word's audio in front so that the transcript confirms it.
-    pub fn woken(self: &Arc<Self>, preroll: Vec<f32>, rate: u32) {
+    /// word's audio in front so that the transcript confirms it, on the
+    /// microphone that heard it (`mic`, at `rate`).
+    pub fn woken(self: &Arc<Self>, preroll: Vec<f32>, rate: u32, mic: Option<Mic>) {
         if !self.begin(true, true) {
             return;
         }
+        *lock(&self.wake_clip) = Some((preroll.clone(), rate));
         *lock(&self.preroll) = Some((preroll, rate));
+        *lock(&self.mic) = mic;
         self.spawn_record();
     }
 
@@ -879,7 +979,10 @@ impl Voice {
     /// Record until the end of speech, showing the transcript as it comes,
     /// then transcribe the whole. `None`: nothing said.
     fn record(&self) -> Result<Option<String>, String> {
-        let (capture, rx) = crate::audio::start_voice_capture()?;
+        let (capture, rx) = match lock(&self.mic).take() {
+            Some(mic) => mic,
+            None => crate::audio::start_voice_capture()?,
+        };
         let rate = capture.sample_rate;
         // The wake word's audio, if it started the turn.
         let preroll = lock(&self.preroll)
@@ -908,7 +1011,10 @@ impl Voice {
         mut next: impl FnMut() -> Result<Option<Vec<f32>>, String>,
     ) -> Result<Option<String>, String> {
         let frame_len = (rate as f32 * FRAME) as usize;
-        let mut ep = Endpointer::default();
+        let levels = levels_of(&preroll);
+        let mut ep = levels.map_or_else(Endpointer::default, |(floor, voice)| {
+            Endpointer::with_levels(floor, voice)
+        });
         // Everything heard, at the model's 16 kHz.
         let mut all: Vec<f32> = preroll;
         let start = all.len();
@@ -962,6 +1068,8 @@ impl Voice {
                     (true, None) if self.confirmed.load(Ordering::SeqCst) => (text, true),
                     (true, None) if text.split_whitespace().count() >= WAKE_GIVE_UP => {
                         eprintln!("anna: mot d'activation non confirmé : « {text} »");
+                        // For keep_wake_clip: what was heard instead.
+                        *lock(&self.text) = text;
                         return Ok(None);
                     }
                     // Shown as heard, for the user to see why.
@@ -1028,6 +1136,31 @@ impl Voice {
                 last_partial = Instant::now();
             }
         };
+        // The energy heard no speech, but the transcript holds a request
+        // after the confirmed word: it is what was said.
+        let request_heard = || {
+            last_partial_text
+                .as_ref()
+                .and_then(|(_, t)| strip_wake(t))
+                .is_some_and(|r| !r.trim().is_empty())
+        };
+        let outcome = if outcome == Endpoint::Nothing
+            && woken
+            && self.confirmed.load(Ordering::SeqCst)
+            && request_heard()
+        {
+            Endpoint::Done
+        } else {
+            outcome
+        };
+        if woken && !ep.heard_speech() {
+            let (threshold, peak) = ep.levels();
+            let (floor, voice) = levels.unwrap_or_default();
+            eprintln!(
+                "anna: mot d'activation : pas de parole au-dessus du seuil \
+                 (seuil {threshold:.4}, pièce {floor:.5}, mot {voice:.4}, crête {peak:.4})"
+            );
+        }
         if outcome == Endpoint::Nothing {
             return Ok(None);
         }
@@ -1076,7 +1209,10 @@ mod tests {
     }
 
     fn run(script: &[(f32, usize)]) -> Endpoint {
-        let mut ep = Endpointer::default();
+        feed(Endpointer::default(), script)
+    }
+
+    fn feed(mut ep: Endpointer, script: &[(f32, usize)]) -> Endpoint {
         for &(amp, count) in script {
             for _ in 0..count {
                 match ep.feed(&frame(amp)) {
@@ -1092,6 +1228,42 @@ mod tests {
     fn speech_then_silence_ends_the_turn() {
         // Room noise, two seconds of speech, then quiet.
         assert_eq!(run(&[(0.002, 20), (0.2, 66), (0.002, 60)]), Endpoint::Done);
+    }
+
+    #[test]
+    fn a_request_said_right_after_the_wake_word_is_heard() {
+        // « Bernanos, ouvre Zed » in one go: the turn starts mid-speech.
+        // Measured over the voice itself, the room's level puts the
+        // threshold above it, and the request is taken for silence…
+        assert_eq!(run(&[(0.2, 66), (0.002, 300)]), Endpoint::Nothing);
+        // …measured before the word (the preroll), it is heard and ends.
+        let mut preroll: Vec<f32> = (0..50).flat_map(|_| frame(0.002)).collect();
+        preroll.extend((0..30).flat_map(|_| frame(0.2)));
+        let (floor, voice) = levels_of(&preroll).expect("long enough");
+        assert!(floor < 0.01, "the word is not the room: {floor}");
+        assert_eq!(
+            feed(
+                Endpointer::with_levels(floor, voice),
+                &[(0.2, 66), (0.002, 60)]
+            ),
+            Endpoint::Done
+        );
+    }
+
+    #[test]
+    fn a_faint_voice_on_a_silent_input_is_heard() {
+        // An audio interface: the room at 1e-5, the voice under 0.01 (one
+        // input of several, mixed down) — below any fixed threshold.
+        let mut preroll: Vec<f32> = (0..50).flat_map(|_| frame(0.000_01)).collect();
+        preroll.extend((0..30).flat_map(|_| frame(0.006)));
+        let (floor, voice) = levels_of(&preroll).expect("long enough");
+        assert_eq!(
+            feed(
+                Endpointer::with_levels(floor, voice),
+                &[(0.006, 66), (0.000_01, 60)]
+            ),
+            Endpoint::Done
+        );
     }
 
     #[test]
@@ -1231,7 +1403,26 @@ mod tests {
             strip_word("Bernano ouvre Zed", &b).as_deref(),
             Some("Ouvre Zed")
         );
+        // As the model heard it on 21/11/2026, each time.
+        for heard in [
+            "Bernos, change la couleur.",
+            "Bernados, change la couleur.",
+            "Bernanus, change la couleur.",
+            "Bernadus, change la couleur.",
+            "Bernalus, change la couleur.",
+            "Bernus, change la couleur.",
+            "Fernandos, change la couleur.",
+        ] {
+            assert_eq!(
+                strip_word(heard, &b).as_deref(),
+                Some("Change la couleur."),
+                "{heard}"
+            );
+        }
         assert_eq!(strip_word("Bernard, ouvre Zed.", &b), None);
+        // An « F » is let in for Fernandos, not for any word in F.
+        assert_eq!(strip_word("Ferme la fenêtre.", &b), None);
+        assert_eq!(strip_word("Fenêtre suivante.", &b), None);
         assert_eq!(strip_word("Karénine, ouvre Zed.", &b), None);
 
         let e = word("exupery");

@@ -29,7 +29,7 @@ for s in I18n Theme DefaultApps; do
     cp "$root/tests/stubs/$s.qml" "$work/pure/"
     echo "singleton $s 1.0 $s.qml" >> "$work/pure/qmldir"
 done
-for t in StubSource AppSource FileSource SettingSource WallpaperSource; do
+for t in StubSource AppSource FileSource SettingSource WallpaperSource TaskSource; do
     cp "$root/tests/stubs/$t.qml" "$work/pure/"
     echo "$t 1.0 $t.qml" >> "$work/pure/qmldir"
 done

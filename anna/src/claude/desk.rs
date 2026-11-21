@@ -19,8 +19,25 @@ const OUTPUT_MAX: usize = 4000;
 
 /// The tabs of the shell's right panel (services/Widgets.qml), plus
 /// « tout ».
-const WIDGETS: [&str; 9] = [
-    "explorer", "stats", "agenda", "lecteur", "musique", "claude", "reglages", "son", "tout",
+/// The side panel's tabs, then the bottom bar's panels (Widgets.qml).
+const WIDGETS: [&str; 17] = [
+    "explorer",
+    "stats",
+    "agenda",
+    "lecteur",
+    "musique",
+    "claude",
+    "reglages",
+    "son",
+    "micro",
+    "wifi",
+    "bluetooth",
+    "telephone",
+    "notifications",
+    "energie",
+    "alimentation",
+    "taches",
+    "tout",
 ];
 
 /// The shell's command FIFO (shell.qml), where widgets are opened.
@@ -181,14 +198,15 @@ pub fn tools() -> Value {
                     "liste": s("id de sa liste (donné par `agenda`)") }),
             &["id", "liste"]),
         tool("widget",
-            "Ouvre, ferme ou bascule un onglet du panneau de droite de l'interface : « explorer » (les fichiers de ce PC \
-             ou d'un serveur du réseau Tailscale), « stats » (toute la flotte : processeur, mémoire, carte graphique, disques \
-             et services ComfyUI et Ollama de chaque machine, avec terminal, redémarrage, extinction et réveil), « agenda » \
-             (le calendrier Google et les tâches), « lecteur » et « musique » (le lecteur en cours, puis le métronome, \
-             l'accordeur et les prises), « claude » (les sessions Claude Code : celles qui attendent une réponse, celles qui \
-             travaillent, les récentes), « reglages » et « son » (l'écran, la langue, la voix, la webcam). Le téléphone, les \
-             notifications, le son et l'énergie sont dans la barre du bas, pas ici. « tout » avec « fermer » referme le \
-             panneau.",
+            "Ouvre, ferme ou bascule une partie de l'interface. Les onglets du panneau de droite : « explorer » (les \
+             fichiers de ce PC ou d'un serveur du réseau Tailscale), « stats » (toute la flotte : processeur, mémoire, \
+             carte graphique, disques et services ComfyUI et Ollama de chaque machine), « agenda » (le calendrier Google \
+             et les tâches), « lecteur » et « musique » (le lecteur en cours, puis le métronome, l'accordeur et les \
+             prises), « claude » (les sessions Claude Code), « reglages » (thème, accent, écran, langue, voix, modèle de \
+             l'assistant, webcam). Les volets de la barre du bas : « son » (volume et sortie), « micro » (entrée), \
+             « wifi », « bluetooth », « telephone », « notifications », « energie » (batterie et luminosité), \
+             « alimentation » (verrouiller, veille, redémarrer, éteindre), « taches ». « tout » avec « fermer » referme \
+             le panneau. Pour changer un réglage, `reglage` le fait directement, sans rien ouvrir.",
             json!({ "nom": json!({ "type": "string", "enum": WIDGETS }),
                     "action": json!({ "type": "string", "enum": ["ouvrir", "fermer", "basculer"],
                                       "description": "défaut : ouvrir" }) }),
@@ -200,8 +218,25 @@ pub fn tools() -> Value {
                     "bpm": i("tempo, 20 à 300 battements par minute"),
                     "temps": i("temps par mesure, 1 à 16 (4 pour du 4/4, 3 pour une valse)") }),
             &["action"]),
-        tool("couleur_accent", "Change la couleur d'accent de tout le bureau.",
-            json!({ "couleur": s("#rrggbb") }), &["couleur"]),
+        tool("couleur_accent",
+            "Change la couleur d'accent de tout le bureau. Donne un nom de la palette, \
+             accordée au thème : cuivre (par défaut), sable, ambre, terre cuite, rose, \
+             prune, bleu, ardoise, vert-de-gris, sauge, taupe. « rouge », « vert », \
+             « violet »… y mènent aussi. Un #rrggbb n'est à donner que si on le demande \
+             précisément : il est adouci pour rester dans le ton.",
+            json!({ "couleur": s("nom de la palette, ou #rrggbb") }), &["couleur"]),
+        tool("reglage",
+            "Change un réglage, comme dans les volets ou l'onglet Réglages. `nom` et sa `valeur` : \
+             « theme » sombre ou clair ; « mot_activation » oui ou non (l'écoute du mot d'activation) ; « langue » \
+             fr ou en (l'interface) ; « langue_voix » interface, auto, fr ou en ; « micro » muet ou actif ; \
+             « sortie_son » et « entree_son » : le nom de l'appareil (casque, haut-parleurs, UR242…) ; « wifi » oui, \
+             non, ou le nom d'un réseau connu à rejoindre ; « bluetooth » oui ou non ; « bluetooth_connecter » et \
+             « bluetooth_deconnecter » : le nom de l'appareil ; « bluetooth_profil » musique ou appel ; \
+             « alimentation » verrouiller, veille, redemarrer ou eteindre (ces deux derniers ouvrent le volet, à \
+             confirmer d'un clic). La couleur d'accent a son outil, `couleur_accent` ; le volume, `volume`.",
+            json!({ "nom": json!({ "type": "string", "enum": super::reglages::NAMES }),
+                    "valeur": s("la valeur, voir la description") }),
+            &["nom", "valeur"]),
         tool("presse_papiers", "Lit le texte du presse-papiers.", json!({}), &[]),
         tool("commande",
             "Exécute une commande shell et renvoie sa sortie (30 s maximum). \
@@ -948,6 +983,7 @@ pub fn run_tool(tool: &str, args: &Value) -> Result<String, String> {
             launch(&["grimblast", "--notify", "copysave", target, &path])?;
             Ok("capture lancée".into())
         }
+        "reglage" => super::reglages::apply(&s("nom"), &s("valeur"), shell_send),
         "widget" => {
             let (name, action) = (s("nom"), s("action"));
             shell_send(&widget_line(&name, &action)?)?;

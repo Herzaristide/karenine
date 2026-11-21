@@ -1,8 +1,8 @@
 //! The devices of the tailnet, and their stats, for the « Système » tab.
 //!
 //! The list is Tailscale's (`tailscale status --json`): every other device of
-//! the tailnet, phones included, re-read on every sample — a device that
-//! joins shows up on the next tick. Only the Linux ones are asked for stats;
+//! the tailnet, phones included, re-read every 5 s (`LIST_EVERY`) — a device
+//! that joins shows up within that. Only the Linux ones are asked for stats;
 //! the others show their state, system and address.
 //!
 //! Stats: node_exporter on the device's Tailscale address, read over HTTP
@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 mod metrics;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Serialize, Clone, Debug, PartialEq, Default)]
 pub struct Server {
@@ -156,9 +156,26 @@ struct StatusPeer {
     ips: Vec<String>,
 }
 
+/// How long the tailnet's list is reused: `tailscale status --json` costs
+/// ~20 ms of processor, and the samples come every second.
+const LIST_EVERY: Duration = Duration::from_secs(5);
+
 /// The other devices of the tailnet; none when Tailscale is missing or down.
-/// The `tailscale` CLI comes from the system PATH, to match its daemon.
+/// Re-read at most every `LIST_EVERY`, shared by every caller.
 pub async fn load() -> Vec<Server> {
+    static LIST: std::sync::Mutex<Option<(Instant, Vec<Server>)>> = std::sync::Mutex::new(None);
+    if let Some((at, list)) = LIST.lock().unwrap().as_ref() {
+        if at.elapsed() < LIST_EVERY {
+            return list.clone();
+        }
+    }
+    let list = fetch().await;
+    *LIST.lock().unwrap() = Some((Instant::now(), list.clone()));
+    list
+}
+
+/// The `tailscale` CLI comes from the system PATH, to match its daemon.
+async fn fetch() -> Vec<Server> {
     let child = tokio::process::Command::new("tailscale")
         .args(["status", "--json"])
         .stdin(std::process::Stdio::null())

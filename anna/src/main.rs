@@ -67,6 +67,7 @@ mod msi;
 mod notes;
 mod paths;
 mod phone;
+mod previews;
 mod prompts;
 mod protocol;
 mod recorder;
@@ -142,6 +143,10 @@ async fn main() {
         }
         Some("tasks") => {
             google::tasks::run(&args);
+        }
+        // The Explorer's previews: a worker fed on stdin (previews.rs).
+        Some("previews") => {
+            previews::run(&args);
         }
         // MCP server of the desk tools, for an MCP client.
         Some("mcp") => {
@@ -456,15 +461,31 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
             // A slow server delays the next round rather than stacking them.
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            // This machine's disks and services ride along (Tailscale lists
+            // only the others), for the views that show them — not the one
+            // following a single device — every 5 s: six processes a round.
+            let mut local: Option<(std::time::Instant, servers::Local)> = None;
             loop {
                 interval.tick().await;
-                // This machine's disks and services ride along: Tailscale
-                // lists only the others.
-                let (stats, local) = tokio::join!(
+                let stale = name.is_none()
+                    && local
+                        .as_ref()
+                        .is_none_or(|(at, _)| at.elapsed() >= Duration::from_secs(5));
+                let (stats, fresh) = tokio::join!(
                     servers::sample_all(&mut memory, name.as_deref()),
-                    servers::sample_local()
+                    async {
+                        if stale {
+                            Some(servers::sample_local().await)
+                        } else {
+                            None
+                        }
+                    }
                 );
-                let json = serde_json::json!({ "servers": stats, "local": local }).to_string();
+                if let Some(l) = fresh {
+                    local = Some((std::time::Instant::now(), l));
+                }
+                let shown = local.as_ref().map(|(_, l)| l);
+                let json = serde_json::json!({ "servers": stats, "local": shown }).to_string();
                 if write_line(&mut writer, &json).await.is_err() {
                     break; // socket closed
                 }
@@ -846,7 +867,14 @@ async fn run_desk(ctx: &Arc<Ctx>, tool: &str, args: &serde_json::Value) -> Resul
 
     match tool {
         "couleur_accent" => {
-            let color = s("couleur");
+            // A name of the palette, or a hex brought into the theme's tone:
+            // never a raw web color (color.rs `accent_for`).
+            let asked = s("couleur");
+            let Some(chosen) = crate::color::accent_for(&asked) else {
+                let names: Vec<&str> = crate::color::ACCENTS.iter().map(|a| a.0).collect();
+                return Err(format!("« {asked} » : choisis parmi {}", names.join(", ")));
+            };
+            let color = chosen.to_hex();
             let result = ctx
                 .change_theme(|state| state.set_accent(&color))
                 .await
@@ -856,6 +884,28 @@ async fn run_desk(ctx: &Arc<Ctx>, tool: &str, args: &serde_json::Value) -> Resul
                     let _ = ctx.tx.send(event);
                 });
             result.map(|()| format!("accent {color}"))
+        }
+        // The settings the daemon holds itself; the others, claude/reglages.rs.
+        "reglage" if s("nom") == "theme" => {
+            let mode = match s("valeur").to_lowercase().as_str() {
+                "sombre" | "dark" | "nuit" => "dark",
+                "clair" | "light" | "jour" => "light",
+                v => return Err(format!("thème « {v} » : sombre ou clair")),
+            };
+            let snapshot = ctx.change_theme(|state| state.set_mode(mode)).await?;
+            let event = serde_json::to_string(&Response::changed(snapshot)).unwrap_or_default();
+            let _ = ctx.tx.send(event);
+            Ok(format!("thème {}", if mode == "dark" { "sombre" } else { "clair" }))
+        }
+        "reglage" if s("nom") == "mot_activation" => {
+            let v = s("valeur").to_lowercase();
+            let on = match v.as_str() {
+                "oui" | "on" | "activer" | "active" | "true" => true,
+                "non" | "off" | "desactiver" | "désactiver" | "false" => false,
+                _ => return Err(format!("mot d'activation « {v} » : oui ou non")),
+            };
+            ctx.voice.set_wake(on);
+            Ok(if on { "mot d'activation écouté" } else { "mot d'activation coupé" }.into())
         }
         // The recordings belong to the daemon (recorder.rs).
         "enregistrer" => {

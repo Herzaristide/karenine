@@ -75,6 +75,21 @@ pub fn tr_args(key: &str, args: &[(&str, &str)]) -> String {
     translate(&dir(), &lang(), key, args)
 }
 
+/// The languages the shell has a file for (`fr`, `en`…).
+pub fn available() -> Vec<String> {
+    let mut out: Vec<String> = std::fs::read_dir(dir())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            name.strip_suffix(".json").map(str::to_string)
+        })
+        .collect();
+    out.sort();
+    out
+}
+
 fn dir() -> PathBuf {
     std::env::var("KARENINE_I18N")
         .ok()

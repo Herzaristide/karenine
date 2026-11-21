@@ -14,7 +14,9 @@ import Quickshell.Io
 //
 // Les tâches, toutes listes confondues, se lisent d'un coup ; Google ne
 // garde que leur jour d'échéance (`due`, "" sans échéance). Cocher une tâche
-// la coche ici tout de suite, puis chez Google (`anna tasks done`).
+// la coche ici tout de suite, puis chez Google (`anna tasks done`). Elles se
+// relisent toutes les cinq minutes tant que le compte est connecté : le
+// bouton des tâches de la barre compte celles du jour et en retard.
 //
 // Créer, modifier (déplacer, c'est modifier le début ou l'échéance) et
 // supprimer passent par `anna agenda create|update|delete` et `anna tasks
@@ -31,6 +33,30 @@ Singleton {
     property var lists: []
     property var tasks: []
     property string tasksError: ""
+    // La liste où vont les tâches créées d'un mot (TaskList) ; vide : la
+    // première, celle par défaut chez Google.
+    property string quickList: ""
+
+    // Aujourd'hui, "AAAA-MM-JJ" : relu toutes les minutes (passer minuit).
+    property string todayKey: agenda.dayKey(new Date())
+    // À faire, dues aujourd'hui ou avant.
+    readonly property int dueCount: agenda.tasks.filter(t => !t.done && t.due !== "" && t.due <= agenda.todayKey).length
+    // Toutes celles qui restent à faire : la pastille du bouton de la barre.
+    readonly property int pendingCount: agenda.tasks.filter(t => !t.done).length
+
+    Timer {
+        interval: 60000
+        repeat: true
+        running: true
+        onTriggered: agenda.todayKey = agenda.dayKey(new Date())
+    }
+    Timer {
+        interval: 5 * 60 * 1000
+        repeat: true
+        running: Google.connected
+        onTriggered: agenda.loadTasks()
+    }
+    Component.onCompleted: if (Google.connected) agenda.loadTasks()
 
     // Les calendriers ({ id, name, color }) et les événements (avec
     // `startDate`, `endDate`) du dernier mois lu.
@@ -112,6 +138,10 @@ Singleton {
             agenda.tasks = [];
             agenda.reloadAll();
         }
+        function onConnectedChanged() {
+            if (Google.connected)
+                agenda.loadTasks();
+        }
     }
 
     // Les événements d'un jour local, du plus tôt au plus tard (les journées
@@ -168,8 +198,12 @@ Singleton {
 
     // ── Les tâches ───────────────────────────────────────────────
 
+    // Une lecture déjà en cours est relancée à sa fin : elle a pu partir
+    // avant ce qu'on vient d'écrire.
     function loadTasks() {
-        if (!taskProc.running)
+        if (taskProc.running)
+            taskProc.again = true;
+        else
             taskProc.running = true;
     }
 
@@ -194,6 +228,25 @@ Singleton {
         doneProc.next();
     }
 
+    // Une tâche confiée à Claude Code : un terminal s'ouvre sur une session
+    // dont la première demande est son titre (et ses notes). Le dossier :
+    // celui de ~/code qui porte le nom de sa liste (« karenine » →
+    // ~/code/karenine, la casse ignorée), sinon le dossier personnel. Le
+    // texte passe en argument, jamais dans le script.
+    function openInClaude(task) {
+        var prompt = (task.title || "").trim();
+        if ((task.notes || "").trim() !== "")
+            prompt += "\n\n" + task.notes.trim();
+        if (prompt === "")
+            return;
+        var script = "d=\"$HOME\"; " +
+            "for c in \"$HOME/code\"/*/; do " +
+            "  n=$(basename \"$c\"); " +
+            "  [ \"$(printf %s \"$n\" | tr '[:upper:]' '[:lower:]')\" = \"$(printf %s \"$2\" | tr '[:upper:]' '[:lower:]')\" ] && { d=\"$c\"; break; }; " +
+            "done; cd \"$d\" && exec claude \"$1\"";
+        DefaultApps.runInTerminal("", ["sh", "-c", script, "sh", prompt, agenda.listTitle(task.list)]);
+    }
+
     function _mark(task, done) {
         agenda.tasks = agenda.tasks.map(t => t.list === task.list && t.id === task.id
                                              ? Object.assign({}, t, { done: done }) : t);
@@ -201,11 +254,17 @@ Singleton {
 
     Process {
         id: taskProc
+        property bool again: false
         command: [agenda.anna, "tasks"]
         stdout: StdioCollector { id: taskOut }
         onRunningChanged: {
             if (running)
                 return;
+            if (taskProc.again) {
+                taskProc.again = false;
+                taskProc.running = true;
+                return;
+            }
             try {
                 var r = JSON.parse(taskOut.text);
                 if (!r.ok) {
@@ -305,9 +364,16 @@ Singleton {
         agenda._write([agenda.anna, "agenda", "delete", ev.calendar, ev.uid], "events");
     }
 
-    // input : { title, notes, due: "AAAA-MM-JJ" ou "" }.
+    // input : { title, notes, due: "AAAA-MM-JJ" ou "" }. Elle s'affiche
+    // tout de suite (`pending`, sans id de Google), et la relecture qui suit
+    // l'écriture la remplace par la vraie.
     function createTask(list, input) {
-        agenda._write([agenda.anna, "tasks", "create", list || "", JSON.stringify(input)], "tasks");
+        var l = list || (agenda.lists.length > 0 ? agenda.lists[0].id : "");
+        agenda.tasks = agenda.tasks.concat([{
+            list: l, id: "pending:" + Date.now(), title: input.title || "", notes: input.notes || "",
+            due: input.due || "", done: false, parent: "", position: "~", pending: true
+        }]);
+        agenda._write([agenda.anna, "tasks", "create", l, JSON.stringify(input)], "tasks");
     }
 
     function updateTask(task, input) {

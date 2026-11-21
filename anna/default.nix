@@ -96,6 +96,11 @@ pkgs.rustPlatform.buildRustPackage {
     #       (gesture/camera.rs). gpu-screen-recorder is left to the ambient
     #       PATH: it needs its gsr-kms-server wrapper, given a capability by
     #       the NixOS configuration (programs.gpu-screen-recorder).
+    #   pdftoppm (poppler-utils), unzip, bwrap (bubblewrap); ffmpeg again
+    #     → the Explorer's previews (src/previews.rs): a PDF's first page, an
+    #       EPUB's cover, LilyPond sandboxed. lilypond, musicxml2ly and f3d
+    #       are left to the ambient PATH: large, and installed by whoever
+    #       writes scores or looks at models.
     #   secret-tool (libsecret)
     #     → the Google account's refresh token, kept in the Secret
     #       Service (google/mod.rs); xdg-open opens its consent page, date
@@ -146,6 +151,9 @@ pkgs.rustPlatform.buildRustPackage {
             openssh
             systemd
             libsecret
+            poppler-utils
+            unzip
+            bubblewrap
           ]
         )
       }

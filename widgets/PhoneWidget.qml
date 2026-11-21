@@ -1,8 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
-import Quickshell
-import Quickshell.Io
 import "../services"
 
 // Le téléphone appairé avec KDE Connect, en bas de l'onglet « Système »
@@ -22,127 +20,12 @@ import "../services"
 Item {
     id: root
 
-    // Le dernier relevé d'anna : { running, phones: [Phone…] }.
-    property var snapshot: ({ running: true, phones: [] })
-    // Reçu au moins une fois : avant, rien ne veut rien dire.
-    property bool loaded: false
-    // L'appareil montré, par son identifiant (gardé quand la liste change).
-    property string selectedId: ""
-    // Le retour de la dernière action (une erreur, ou « Envoyé »), effacé seul.
-    property string feedback: ""
-
-    readonly property var phones: root.snapshot.phones || []
-    readonly property var phone: {
-        for (var i = 0; i < root.phones.length; i++)
-            if (root.phones[i].id === root.selectedId)
-                return root.phones[i];
-        return root.phones.length > 0 ? root.phones[0] : null;
-    }
-    readonly property bool connected: root.phone !== null && root.phone.paired && root.phone.reachable
-
-    // ── Le relevé, en continu ────────────────────────────────────
-    Socket {
-        id: watchSock
-        path: Anna.socketPath
-        parser: SplitParser {
-            onRead: (line) => {
-                try {
-                    var msg = JSON.parse(line);
-                    if (msg.phone !== undefined) {
-                        root.snapshot = msg.phone;
-                        root.loaded = true;
-                    }
-                } catch (e) { /* ligne partielle */ }
-            }
-        }
-        onConnectedChanged: {
-            if (connected)
-                write('{"cmd":"phone_watch"}\n');
-        }
-    }
-
-    // Se connecte tant qu'il est affiché ; réessaie si anna n'est pas là.
-    Timer {
-        interval: 2000
-        running: root.visible
-        repeat: true
-        triggeredOnStart: true
-        onTriggered: if (!watchSock.connected) watchSock.connected = true
-    }
-    onVisibleChanged: if (!visible) watchSock.connected = false
-
-    // ── Les actions ──────────────────────────────────────────────
-    // Une à la fois, par le client d'anna ; les suivantes attendent.
-    property var queue: []
-
-    function act(action, arg, done) {
-        if (!root.phone)
-            return;
-        var q = root.queue.slice();
-        // L'écran se demande par le nom : scrcpy passe par adb, pas par KDE Connect.
-        var target = action === "screen" ? root.phone.name : root.phone.id;
-        q.push({ args: ["anna", "phone", action, target].concat(arg ? [arg] : []), done: done || "" });
-        root.queue = q;
-        root.next();
-    }
-
-    function next() {
-        if (actionProc.running || root.queue.length === 0)
-            return;
-        var job = root.queue[0];
-        root.queue = root.queue.slice(1);
-        actionProc.done = job.done;
-        actionProc.command = job.args;
-        actionProc.running = true;
-    }
-
-    Process {
-        id: actionProc
-        property string done: ""
-        stdout: StdioCollector { id: actionOut }
-        onRunningChanged: {
-            if (running)
-                return;
-            try {
-                var r = JSON.parse(actionOut.text);
-                // L'écran : anna dit quoi lancer, le shell ouvre la fenêtre.
-                if (r.ok && r.command)
-                    Quickshell.execDetached(r.command);
-                root.say(r.ok ? actionProc.done : (r.error || I18n.tr("common.failedSentence")));
-            } catch (e) {
-                root.say(I18n.tr("anna.noAnswer"));
-            }
-            root.next();
-        }
-    }
-
-    function say(text) {
-        root.feedback = text;
-        if (text)
-            feedbackTimer.restart();
-    }
-
-    Timer {
-        id: feedbackTimer
-        interval: 3500
-        onTriggered: root.feedback = ""
-    }
-
-    // Au suivant, en boucle.
-    function cycle() {
-        if (root.phones.length < 2)
-            return;
-        var i = root.phones.indexOf(root.phone);
-        root.selectedId = root.phones[(i + 1) % root.phones.length].id;
-    }
+    // L'état et les actions : services/Phone.qml, partagé avec la barre.
+    readonly property var phone: Phone.phone
+    readonly property var phones: Phone.phones
+    readonly property bool connected: Phone.connected
 
     // ── Petits éléments ──────────────────────────────────────────
-    function stateText(p) {
-        if (!p.paired)
-            return I18n.tr("phone.pairRequest");
-        return p.reachable ? I18n.tr("phone.connected") : I18n.tr("phone.outOfReach");
-    }
-
     // 0 à 4 barres, comme sur le téléphone.
     component SignalBars: Row {
         id: bars
@@ -205,11 +88,11 @@ Item {
                         anchors.fill: parent
                         enabled: root.phones.length > 1
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: root.cycle()
+                        onClicked: Phone.cycle()
                     }
                 }
                 Text {
-                    text: root.phone ? root.stateText(root.phone) : ""
+                    text: root.phone ? Phone.stateText(root.phone) : ""
                     font.family: "Inter"
                     font.pixelSize: 11
                     color: Theme.textDim
@@ -234,14 +117,14 @@ Item {
                     fontSize: 11
                     accent: true
                     text: I18n.tr("phone.accept")
-                    onClicked: root.act("accept", "", I18n.tr("phone.paired"))
+                    onClicked: Phone.act("accept", "", I18n.tr("phone.paired"))
                 }
                 GlassButton {
                     visible: root.phone !== null && !root.phone.paired
                     implicitHeight: 28
                     fontSize: 11
                     text: I18n.tr("phone.reject")
-                    onClicked: root.act("reject", "", "")
+                    onClicked: Phone.act("reject", "", "")
                 }
 
                 GlassButton {
@@ -250,21 +133,21 @@ Item {
                     fontSize: 11
                     accent: true
                     text: I18n.tr("phone.screen")
-                    onClicked: root.act("screen", "", I18n.tr("phone.openingScreen"))
+                    onClicked: Phone.act("screen", "", I18n.tr("phone.openingScreen"))
                 }
                 GlassButton {
                     visible: root.connected
                     implicitHeight: 28
                     fontSize: 11
                     text: I18n.tr("phone.ring")
-                    onClicked: root.act("ring", "", I18n.tr("phone.ringing"))
+                    onClicked: Phone.act("ring", "", I18n.tr("phone.ringing"))
                 }
                 GlassButton {
                     visible: root.connected
                     implicitHeight: 28
                     fontSize: 11
                     text: I18n.tr("phone.clipboard")
-                    onClicked: root.act("clipboard", "", I18n.tr("phone.clipboardSent"))
+                    onClicked: Phone.act("clipboard", "", I18n.tr("phone.clipboardSent"))
                 }
             }
 
@@ -275,7 +158,7 @@ Item {
 
                 Text {
                     Layout.fillWidth: true
-                    text: root.feedback !== "" ? root.feedback
+                    text: Phone.feedback !== "" ? Phone.feedback
                         : root.phone !== null && !root.phone.paired
                           ? (root.phone.verification_key
                              ? I18n.tr("phone.checkKey", { key: root.phone.verification_key })
@@ -285,7 +168,7 @@ Item {
                         : ""
                     font.family: "Inter"
                     font.pixelSize: 10
-                    color: root.feedback !== "" ? Theme.textSecondary : Theme.textDim
+                    color: Phone.feedback !== "" ? Theme.textSecondary : Theme.textDim
                     elide: Text.ElideRight
                 }
 
@@ -331,10 +214,10 @@ Item {
     Text {
         anchors.centerIn: parent
         width: Math.min(parent.width - 40, 520)
-        visible: root.loaded && root.phone === null
+        visible: Phone.loaded && root.phone === null
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.Wrap
-        text: !root.snapshot.running
+        text: !Phone.snapshot.running
               ? I18n.tr("phone.noDaemon")
               : I18n.tr("phone.nonePaired")
         font.family: "Inter"
