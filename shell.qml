@@ -36,6 +36,9 @@ ShellRoot {
     //   echo "metronome:ACTION[:BPM[:TEMPS]]" > /tmp/qs-panel.fifo → lance, arrête ou
     //        bascule le métronome (services/Tempo.qml), onglet ouvert ou non
     //        ACTION : lancer, arreter, basculer ; BPM 20–300 ; TEMPS par mesure
+    //   echo "explorer:dossier:/chemin" > /tmp/qs-panel.fifo → ouvre l'Explorer sur ce dossier
+    //   echo "explorer:fichier:/chemin" > /tmp/qs-panel.fifo → … dans son dossier, lui sélectionné
+    //        (c'est ce qu'écrit karenine-open, l'application XDG de inode/directory)
     Process {
         id: ipcListener
         command: [
@@ -54,6 +57,15 @@ ShellRoot {
                     if (/^[0-9]+$/.test(name))
                         name = root.legacyWidgets[parseInt(name)] || "";
                     Widgets.apply(name, parts[1] || "basculer");
+                } else if (msg.startsWith("explorer:")) {
+                    // explorer:dossier:<chemin> ou explorer:fichier:<chemin> ;
+                    // le chemin, absolu, peut lui-même contenir des « : ».
+                    var rest = msg.substring(9);
+                    var sep = rest.indexOf(":");
+                    var kind = sep > 0 ? rest.substring(0, sep) : "";
+                    var target = rest.substring(sep + 1);
+                    if ((kind === "dossier" || kind === "fichier") && target.startsWith("/"))
+                        Widgets.explorerShow(target, kind === "dossier");
                 } else if (msg.startsWith("metronome")) {
                     var m = msg.split(":");
                     Tempo.apply(m[1] || "basculer", m[2], m[3]);

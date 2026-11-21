@@ -87,4 +87,21 @@ Singleton {
     function closeAll() {
         widgets.panelOpen = false;
     }
+
+    // Un chemin que l'Explorer doit montrer, venu d'ailleurs (la FIFO :
+    // « explorer:dossier:<chemin> » ou « explorer:fichier:<chemin> »,
+    // qu'écrit karenine-open, l'application XDG des dossiers) : un dossier,
+    // on y va ; un fichier, on va dans le sien et on l'y sélectionne.
+    // { path, isDir, tick } ; FileExplorer la prend et la remet à null, à
+    // son chargement si l'onglet n'existait pas encore. Le tick fait
+    // repartir la même demande deux fois de suite.
+    property var explorerRequest: null
+    function explorerShow(path, isDir) {
+        // Le chemin est local : l'Explorer quitte le serveur monté (la
+        // machine choisie est la même pour l'onglet Système).
+        if (widgets.machine !== null)
+            widgets.machine = null;
+        widgets.explorerRequest = { path: path, isDir: isDir, tick: Date.now() };
+        widgets.show("files");
+    }
 }

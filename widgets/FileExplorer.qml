@@ -1327,8 +1327,25 @@ Item {
     Connections {
         target: Widgets
         function onMachineChanged() { root.follow(); }
+        function onExplorerRequestChanged() { root.takeRequest(); }
     }
-    Component.onCompleted: root.follow()
+    Component.onCompleted: {
+        root.follow();
+        root.takeRequest();
+    }
+
+    // Ce qu'on demande de montrer de l'extérieur (Widgets.explorerShow) :
+    // toujours un chemin local, gardé tant qu'un serveur est encore monté.
+    function takeRequest() {
+        var r = Widgets.explorerRequest;
+        if (!r || root.remote)
+            return;
+        Widgets.explorerRequest = null;
+        if (r.isDir)
+            root.go(r.path);
+        else
+            root.reveal(r.path);
+    }
 
     function connect(srv) {
         root.error = "";

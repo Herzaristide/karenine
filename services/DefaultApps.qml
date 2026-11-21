@@ -142,7 +142,9 @@ QtObject {
             var v = f[1].trim();
             switch (f[0]) {
             case "editorRef":        root.editorRef = v; break;
-            case "explorerRef":      root.explorerRef = v; break;
+            // L'Explorer lui-même déclaré gestionnaire de dossiers : « Ouvrir
+            // dans » mènerait à lui-même ; on garde le premier autre trouvé.
+            case "explorerRef":      root.explorerRef = v === "karenine-explorer.desktop" ? "" : v; break;
             case "terminalRef":      root.terminalRef = v; break;
             case "browserRef":       root.browserRef = v; break;
             case "explorerFallback": root.explorerFallback = v; break;
