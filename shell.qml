@@ -39,6 +39,8 @@ ShellRoot {
     //   echo "explorer:dossier:/chemin" > /tmp/qs-panel.fifo → ouvre l'Explorer sur ce dossier
     //   echo "explorer:fichier:/chemin" > /tmp/qs-panel.fifo → … dans son dossier, lui sélectionné
     //        (c'est ce qu'écrit karenine-open, l'application XDG de inode/directory)
+    //   echo 'explorer:choisir:{"mode":"open","multiple":false,"path":"/…","reply":"/…"}' > /tmp/qs-panel.fifo
+    //        → l'Explorer en sélecteur de fichiers (karenine-pick, cf. Widgets.explorerPickStart)
     Process {
         id: ipcListener
         command: [
@@ -64,8 +66,15 @@ ShellRoot {
                     var sep = rest.indexOf(":");
                     var kind = sep > 0 ? rest.substring(0, sep) : "";
                     var target = rest.substring(sep + 1);
-                    if ((kind === "dossier" || kind === "fichier") && target.startsWith("/"))
+                    if ((kind === "dossier" || kind === "fichier") && target.startsWith("/")) {
                         Widgets.explorerShow(target, kind === "dossier");
+                    } else if (kind === "choisir") {
+                        try {
+                            Widgets.explorerPickStart(JSON.parse(target));
+                        } catch (e) {
+                            console.warn("explorer:choisir : JSON illisible", e);
+                        }
+                    }
                 } else if (msg.startsWith("metronome")) {
                     var m = msg.split(":");
                     Tempo.apply(m[1] || "basculer", m[2], m[3]);

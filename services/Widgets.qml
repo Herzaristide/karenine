@@ -104,4 +104,56 @@ Singleton {
         widgets.explorerRequest = { path: path, isDir: isDir, tick: Date.now() };
         widgets.show("files");
     }
+
+    // ── Le sélecteur de fichiers des applications ───────────────
+    // Le portail FileChooser (xdg-desktop-portal-termfilechooser) lance
+    // karenine-pick, qui écrit « explorer:choisir:<json> » sur la FIFO :
+    //   { mode: "open" | "dir" | "save", multiple, path, reply }
+    // `path` : le dossier de départ (open, dir) ou le fichier proposé
+    // (save : son dossier, et son nom dans le champ). `reply` : une FIFO où
+    // karenine-pick attend les chemins choisis, un par ligne ; rien du tout
+    // vaut annulation. L'Explorer passe en mode choix tant que
+    // `explorerPick` n'est pas null ; fermer le panneau, ou changer
+    // d'onglet, annule.
+    property var explorerPick: null
+    // Le panneau était fermé quand le choix l'a ouvert : il se referme après.
+    property bool pickOpenedPanel: false
+
+    function explorerPickStart(req) {
+        if (!req || !req.reply || ["open", "dir", "save"].indexOf(req.mode) < 0)
+            return;
+        // Une demande encore en cours : annulée, la nouvelle passe devant.
+        if (widgets.explorerPick)
+            widgets.explorerPickFinish([]);
+        var start = req.path || "";
+        var name = "";
+        if (req.mode === "save" && start !== "") {
+            var slash = start.lastIndexOf("/");
+            name = start.substring(slash + 1);
+            start = slash > 0 ? start.substring(0, slash) : "/";
+        }
+        widgets.pickOpenedPanel = !widgets.panelOpen;
+        widgets.explorerPick = { mode: req.mode, multiple: req.multiple === true,
+                                 reply: req.reply, name: name };
+        if (start.startsWith("/"))
+            widgets.explorerShow(start, true);
+        else
+            widgets.show("files");
+    }
+
+    // Rend les chemins choisis (aucun : annulé) à karenine-pick.
+    function explorerPickFinish(paths) {
+        var pick = widgets.explorerPick;
+        if (!pick)
+            return;
+        widgets.explorerPick = null;
+        var text = paths.filter(p => p.indexOf("\n") < 0).map(p => p + "\n").join("");
+        Quickshell.execDetached(["sh", "-c", "printf '%s' \"$1\" > \"$2\"", "--", text, pick.reply]);
+        if (widgets.pickOpenedPanel)
+            widgets.panelOpen = false;
+        widgets.pickOpenedPanel = false;
+    }
+
+    onPanelOpenChanged: if (!widgets.panelOpen) widgets.explorerPickFinish([])
+    onPanelTabChanged: if (widgets.panelTab !== "files") widgets.explorerPickFinish([])
 }

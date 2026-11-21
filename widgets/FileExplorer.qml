@@ -917,6 +917,11 @@ Item {
 
     // Entrée sur plusieurs éléments : chacun dans son application.
     function openSelection() {
+        if (root.picking) {
+            if (root.pick.mode !== "save")
+                root.confirmPick();
+            return;
+        }
         for (var i = 0; i < root.selectedPaths.length; i++)
             Quickshell.execDetached(["xdg-open", root.selectedPaths[i]]);
         root.clearSelection();
@@ -1043,6 +1048,15 @@ Item {
             // Au clavier, la sélection reprend en haut du nouveau dossier.
             if (grid.activeFocus)
                 grid.currentIndex = 0;
+            return;
+        }
+        if (root.picking) {
+            // Un fichier, en mode choix : ouvrir le prend, enregistrer
+            // reprend son nom (le bouton dit alors « Remplacer »).
+            if (root.pick.mode === "open")
+                Widgets.explorerPickFinish([p]);
+            else if (root.pick.mode === "save")
+                pickName.text = root.entries[index].name;
             return;
         }
         Quickshell.execDetached(["xdg-open", p]);
@@ -1332,6 +1346,7 @@ Item {
     Component.onCompleted: {
         root.follow();
         root.takeRequest();
+        root.pickSetup();
     }
 
     // Ce qu'on demande de montrer de l'extérieur (Widgets.explorerShow) :
@@ -1345,6 +1360,55 @@ Item {
             root.go(r.path);
         else
             root.reveal(r.path);
+    }
+
+    // ── Le mode choix (le sélecteur de fichiers des applications) ─
+    // Widgets.explorerPick, posé par karenine-pick : le pied laisse place à
+    // la barre de choix (cf. pickBar). Ouvrir (open) rend les fichiers
+    // sélectionnés, ou celui qu'on double-clique ; un dossier (dir), le
+    // dossier sélectionné, sinon celui qu'on montre ; enregistrer (save), le
+    // nom tapé dans le dossier montré.
+    readonly property var pick: Widgets.explorerPick
+    readonly property bool picking: root.pick !== null
+    onPickChanged: root.pickSetup()
+    function pickSetup() {
+        if (root.pick && root.pick.mode === "save") {
+            pickName.text = root.pick.name;
+            pickName.forceActiveFocus();
+            pickName.selectAll();
+        }
+    }
+    function entryOf(p) {
+        for (var i = 0; i < root.entries.length; i++)
+            if (root.entries[i].path === p)
+                return root.entries[i];
+        return null;
+    }
+    readonly property string pickNameText: pickName.text.trim()
+    readonly property var pickPaths: {
+        var k = root.pick;
+        if (!k)
+            return [];
+        if (k.mode === "save") {
+            var n = root.pickNameText;
+            if (n === "" || n === "." || n === ".." || n.indexOf("/") >= 0)
+                return [];
+            return [(root.path === "/" ? "" : root.path) + "/" + n];
+        }
+        var sel = root.selectedPaths.filter(p => {
+            var e = root.entryOf(p);
+            return e !== null && e.isDir === (k.mode === "dir");
+        });
+        if (k.mode === "dir")
+            return [sel.length === 1 ? sel[0] : root.path];
+        return k.multiple ? sel : sel.slice(0, 1);
+    }
+    // Enregistrer par-dessus un fichier qui existe : le bouton le dit.
+    readonly property bool pickReplaces: root.picking && root.pick.mode === "save"
+        && root.entries.some(e => e.name === root.pickNameText)
+    function confirmPick() {
+        if (root.pickPaths.length > 0)
+            Widgets.explorerPickFinish(root.pickPaths);
     }
 
     function connect(srv) {
@@ -2860,6 +2924,8 @@ Item {
         y: (root.split ? splitPane.y + splitPane.height : content.y + content.height) + 2
         width: root.width - x
         height: root.footerH
+        // En mode choix, la barre de choix prend sa place.
+        visible: !root.picking
 
         Row {
             id: footerLeft
@@ -2925,6 +2991,107 @@ Item {
                 implicitHeight: 24
                 icon: Widgets.explorerListView ? "../assets/icons/view-grid.svg" : "../assets/icons/view-list.svg"
                 onClicked: Widgets.explorerListView = !Widgets.explorerListView
+            }
+        }
+    }
+
+    // ── La barre de choix (le mode choix, cf. pick) ──────────────
+    //   Choisir un fichier : rapport.pdf               (Annuler) (Choisir)
+    //   Enregistrer sous ( notes.txt            )   (Annuler) (Enregistrer)
+    Item {
+        id: pickBar
+        x: footer.x
+        y: footer.y
+        width: footer.width
+        height: root.footerH
+        visible: root.picking
+
+        Row {
+            id: pickButtons
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 4
+
+            GlassButton {
+                implicitHeight: 24
+                text: I18n.tr("explorer.pickCancel")
+                fontSize: 11
+                onClicked: Widgets.explorerPickFinish([])
+            }
+            GlassButton {
+                implicitHeight: 24
+                accent: true
+                danger: root.pickReplaces
+                fontSize: 11
+                enabled: root.pickPaths.length > 0
+                opacity: enabled ? 1 : 0.4
+                text: !root.picking ? ""
+                      : root.pick.mode === "save"
+                        ? (root.pickReplaces ? I18n.tr("explorer.pickReplace") : I18n.tr("explorer.pickSave"))
+                        : I18n.tr("explorer.pickConfirm")
+                onClicked: root.confirmPick()
+            }
+        }
+
+        Text {
+            id: pickLabel
+            anchors.left: parent.left
+            anchors.leftMargin: 4
+            anchors.verticalCenter: parent.verticalCenter
+            text: !root.picking ? ""
+                  : root.pick.mode === "save" ? I18n.tr("explorer.pickSaveAs")
+                  : root.pick.mode === "dir" ? I18n.tr("explorer.pickDir")
+                  : root.pick.multiple ? I18n.tr("explorer.pickFiles")
+                  : I18n.tr("explorer.pickFile")
+            font.family: "Inter"
+            font.pixelSize: 11
+            font.weight: Font.DemiBold
+            color: Theme.accentColor
+        }
+
+        // Ce qui sera rendu (ouvrir, dossier), ou le nom à donner (enregistrer).
+        Text {
+            anchors.left: pickLabel.right
+            anchors.leftMargin: 8
+            anchors.right: pickButtons.left
+            anchors.rightMargin: 8
+            anchors.verticalCenter: parent.verticalCenter
+            visible: root.picking && root.pick.mode !== "save"
+            elide: Text.ElideMiddle
+            text: root.pickPaths.map(p => p.substring(p.lastIndexOf("/") + 1) || "/").join(", ")
+            font.family: "Inter"
+            font.pixelSize: 11
+            color: Theme.textSecondary
+        }
+        Rectangle {
+            anchors.left: pickLabel.right
+            anchors.leftMargin: 8
+            anchors.right: pickButtons.left
+            anchors.rightMargin: 8
+            anchors.verticalCenter: parent.verticalCenter
+            height: 24
+            visible: root.picking && root.pick.mode === "save"
+            radius: 12
+            color: Qt.alpha(Theme.textPrimary, 0.05)
+            border.width: 1
+            border.color: pickName.activeFocus ? Qt.alpha(Theme.accentColor, 0.6) : Theme.dividerColor
+
+            TextInput {
+                id: pickName
+                anchors.fill: parent
+                anchors.leftMargin: 10
+                anchors.rightMargin: 10
+                verticalAlignment: TextInput.AlignVCenter
+                clip: true
+                selectByMouse: true
+                font.family: "Inter"
+                font.pixelSize: 11
+                color: Theme.textPrimary
+                selectionColor: Qt.alpha(Theme.accentColor, 0.45)
+                selectedTextColor: Theme.textPrimary
+                Keys.onReturnPressed: root.confirmPick()
+                Keys.onEnterPressed: root.confirmPick()
+                Keys.onEscapePressed: Widgets.explorerPickFinish([])
             }
         }
     }
