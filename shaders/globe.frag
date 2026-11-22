@@ -125,7 +125,7 @@ void main() {
 
     vec4 c = front + back * (1.0 - front.a);
     // En haut et en bas, la carte ne s'arrête pas sur une ligne : elle
-    // s'efface sur le dernier sixième de la hauteur.
-    float caps = smoothstep(1.0, 0.82, abs(ny));
+    // s'efface sur le dernier huitième de la hauteur.
+    float caps = smoothstep(1.0, 0.88, abs(ny));
     fragColor = c * inside * caps * qt_Opacity;
 }

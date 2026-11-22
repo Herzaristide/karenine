@@ -31,22 +31,29 @@ Item {
                                   && globe.workspace.toplevels.values.length === 0
 
     // ── La forme ─────────────────────────────────────────────────
-    // La carte s'arrête à 58° S (l'Antarctique, démesuré en Mercator, reste
-    // hors champ) et à 84° N ; les deux bouts s'effacent en fondu.
+    // Les latitudes montrées, en degrés. En Mercator, les hautes latitudes
+    // mangent vite la hauteur : chaque degré gagné vers les pôles en ôte aux
+    // pays (avec stretch, il faudrait alors les aplatir pour garder la même
+    // taille). 56° S laisse l'Antarctique hors champ, 76° N garde toute la
+    // Scandinavie ; les deux bouts s'effacent en fondu.
+    readonly property real latMin: -56
+    readonly property real latMax: 76
     function merc(deg) {
         var phi = deg * Math.PI / 180;
         return Math.log(Math.tan(Math.PI / 4 + phi / 2));
     }
-    readonly property real vMin: globe.merc(-58)
-    readonly property real vMax: globe.merc(84)
+    readonly property real vMin: globe.merc(globe.latMin)
+    readonly property real vMax: globe.merc(globe.latMax)
 
     // La forme : à 1 une sphère ; moins, les calottes restent larges au
     // lieu de se refermer (0,8 : la ligne du pôle garde près de la moitié
     // de la largeur de l'équateur).
     readonly property real polar: 0.8
     // L'allongement, au centre : un radian de longitude prend `stretch` fois
-    // plus de place qu'une unité de Mercator en hauteur.
-    readonly property real stretch: 1.8
+    // plus de place qu'une unité de Mercator en hauteur. À 1, les pays
+    // garderaient leurs vraies proportions à l'équateur ; plus, ils
+    // s'aplatissent.
+    readonly property real stretch: 1.4
     // La courbure des bords : à 1, chaque ligne s'enroule comme sur une
     // sphère (les bords très tassés) ; moins, les bords se tassent moins et
     // le géoïde s'élargit, sans rien changer au centre (les proportions des
@@ -237,8 +244,9 @@ Item {
         property real yaw: globe.yaw
         property real unitX: globe.unitX
         property real unitY: globe.unitY
-        // L'écart de la trame de points, au centre.
-        property real dotPx: 8
+        // L'écart de la trame de points, au centre : assez fin pour qu'on
+        // lise le profil des petits pays (à 8, la France n'était qu'un pavé).
+        property real dotPx: 5
         // La face cachée, vue à travers les mers : dans l'ombre.
         property real shadow: 0.28
         property real hoverId: globe.hoverId
