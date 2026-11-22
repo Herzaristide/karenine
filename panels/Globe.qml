@@ -3,18 +3,19 @@ import Quickshell.Io
 import Quickshell.Hyprland
 import "../services"
 
-// Le géoïde du bureau vide : les pays seuls, chacun d'une nuance de
-// l'accent et bordé de sa frontière, sur une sphère aux pôles élargis qui
-// tourne autour de son axe (shaders/globe.frag). La hauteur suit Mercator :
-// les hautes latitudes s'agrandissent. La face cachée se voit à travers les
-// mers, dans l'ombre. Le pays sous la souris s'éclaire et se nomme, un clic le
-// garde choisi.
+// Le géoïde du bureau vide : les pays en trames de points, dans l'accent,
+// sur une sphère aux pôles élargis qui tourne autour de son axe
+// (shaders/globe.frag). La hauteur suit Mercator : les hautes latitudes
+// s'agrandissent. La face cachée se voit à travers les mers, dans l'ombre.
+// Les frontières ne sont pas tracées mais restent connues : chaque point
+// sait à quel pays il appartient.
 //
-// Ils n'apparaissent que quand le workspace actif de leur écran n'a aucune
-// fenêtre, et s'effacent dès qu'une s'ouvre. Ils tournent seuls, lentement ;
-// on les saisit pour les faire tourner (horizontalement seulement), ils
-// gardent l'élan au lâcher puis reprennent leur dérive. Rien n'est calculé
-// quand ils sont cachés.
+// Il n'apparaît que quand le workspace actif de son écran n'a aucune
+// fenêtre, et s'efface dès qu'une s'ouvre. Il tourne seul, lentement ; on
+// le saisit pour le faire tourner (horizontalement seulement), il garde
+// l'élan au lâcher puis reprend sa dérive. Le pays sous la souris s'avive
+// et se nomme ; un clic le choisit : ses points se remplissent, le globe
+// s'arrête et l'amène au milieu. Rien n'est calculé quand il est caché.
 //
 // Les cartes viennent de Natural Earth (domaine public) :
 // assets/globe/generate.py les refait.
@@ -31,21 +32,30 @@ Item {
 
     // ── La forme ─────────────────────────────────────────────────
     // La carte s'arrête à 58° S (l'Antarctique, démesuré en Mercator, reste
-    // hors champ) et à 80° N.
+    // hors champ) et à 84° N ; les deux bouts s'effacent en fondu.
     function merc(deg) {
         var phi = deg * Math.PI / 180;
         return Math.log(Math.tan(Math.PI / 4 + phi / 2));
     }
     readonly property real vMin: globe.merc(-58)
-    readonly property real vMax: globe.merc(80)
+    readonly property real vMax: globe.merc(84)
 
     // La forme : à 1 une sphère ; moins, les calottes restent larges au
-    // lieu de se refermer (0,55 : la ligne du pôle garde les deux tiers de
-    // la largeur de l'équateur).
-    readonly property real polar: 0.55
+    // lieu de se refermer (0,8 : la ligne du pôle garde près de la moitié
+    // de la largeur de l'équateur).
+    readonly property real polar: 0.8
     // L'allongement, au centre : un radian de longitude prend `stretch` fois
     // plus de place qu'une unité de Mercator en hauteur.
-    readonly property real stretch: 2.8
+    readonly property real stretch: 1.8
+    // La courbure des bords : à 1, chaque ligne s'enroule comme sur une
+    // sphère (les bords très tassés) ; moins, les bords se tassent moins et
+    // le géoïde s'élargit, sans rien changer au centre (les proportions des
+    // pays y restent celles que donne stretch). À 0, une carte plate.
+    readonly property real curve: 0.7
+    // La largeur de la forme pour un radian d'échelle au centre :
+    // sin(curve·π/2)/curve (1 pour une sphère, π/2 pour une carte plate).
+    readonly property real widen: Math.sin(Math.max(globe.curve, 1e-3) * Math.PI / 2)
+                                  / Math.max(globe.curve, 1e-3)
 
     // La place, celle des fenêtres (cf. GlobeLayer). Quand le panneau
     // s'ouvre, Hyprland la rétrécit d'un coup ; le géoïde, lui, suit en
@@ -68,15 +78,16 @@ Item {
     readonly property real centerX: globe.areaW / 2
     readonly property real centerY: globe.areaH / 2
 
-    // La forme tient dans 80 % de la hauteur (le nom du pays dessous) et
+    // La forme tient dans 88 % de la hauteur (le nom du pays dessous) et
     // 92 % de la largeur, à l'échelle : ses proportions ne changent pas.
-    readonly property real halfH: Math.min(globe.areaH * 0.40,
-                                           globe.areaW * 0.46 * ((globe.vMax - globe.vMin) / 2) / globe.stretch)
-    // Pixels par unité de Mercator, et par radian de longitude au centre
-    // (la demi-largeur de l'équateur couvre 90° : sin a ≈ a au centre).
+    readonly property real halfH: Math.min(globe.areaH * 0.44,
+                                           globe.areaW * 0.46 * ((globe.vMax - globe.vMin) / 2)
+                                           / (globe.stretch * globe.widen))
+    // Pixels par unité de Mercator, et par radian de longitude au centre ;
+    // la demi-largeur de l'équateur, qui couvre 90°, en découle.
     readonly property real unitY: globe.halfH / ((globe.vMax - globe.vMin) / 2)
-    readonly property real halfW: globe.stretch * globe.unitY
-    readonly property real unitX: globe.halfW
+    readonly property real unitX: globe.stretch * globe.unitY
+    readonly property real halfW: globe.unitX * globe.widen
 
     // La rotation autour de l'axe vertical, seule libre.
     property real yaw: 0.3
@@ -130,7 +141,8 @@ Item {
         var nx = (x - globe.centerX) / (globe.halfW * row);
         if (Math.abs(nx) > 1)
             return 0;
-        var lon = Math.asin(nx) - globe.yaw;
+        var k = Math.max(globe.curve, 1e-3);
+        var lon = Math.asin(nx * Math.sin(k * Math.PI / 2)) / k - globe.yaw;
         var v = globe.vMin + (globe.vMax - globe.vMin) * (0.5 + 0.5 * ny);
         var lat = Math.atan(Math.sinh(v));
         var u = lon / (2 * Math.PI) + 0.5;
@@ -156,17 +168,52 @@ Item {
     }
     onVisibleChanged: if (!visible) globe.hoverId = 0
 
+    // Il tourne seul tant qu'aucun pays n'est choisi : un pays choisi
+    // arrête la dérive et l'élan, le temps qu'on le regarde.
     FrameAnimation {
-        running: globe.visible && !hand.pressed
+        running: globe.visible && !hand.pressed && globe.selectId === 0 && !focusAnim.running
         onTriggered: {
             var dt = Math.min(frameTime, 0.1);
             // L'élan s'amortit, la dérive reprend la main.
             globe.spin *= Math.exp(-dt * 2.2);
             globe.yaw += (globe.drift + globe.spin) * dt;
-            // La carte défile sous une souris immobile : le pays survolé suit.
-            if (hand.containsMouse)
-                globe.hoverId = globe.countryAt(hand.mouseX, hand.mouseY);
         }
+    }
+
+    // La carte défile sous une souris immobile : le pays survolé suit.
+    onYawChanged: if (hand.containsMouse) globe.hoverId = globe.countryAt(hand.mouseX, hand.mouseY)
+
+    // Le pays choisi vient au milieu : on tourne jusqu'à son centre
+    // (countries.json), par le plus court chemin.
+    NumberAnimation {
+        id: focusAnim
+        target: globe
+        property: "yaw"
+        duration: 900
+        easing.type: Easing.InOutCubic
+    }
+
+    function focusOn(id) {
+        if (id <= 0 || !globe._map || !globe._map.centers)
+            return;
+        var lon = globe._map.centers[id - 1][0] * Math.PI / 180;
+        // Au milieu de l'écran, l'angle vaut 0 : lon + yaw = 0.
+        var d = -lon - globe.yaw;
+        d -= 2 * Math.PI * Math.round(d / (2 * Math.PI));
+        focusAnim.stop();
+        focusAnim.from = globe.yaw;
+        focusAnim.to = globe.yaw + d;
+        focusAnim.start();
+    }
+
+    function select(id) {
+        globe.spin = 0;
+        if (id === 0 || id === globe.selectId) {
+            globe.selectId = 0;
+            return;
+        }
+        globe.selectId = id;
+        globe.focusOn(id);
     }
 
     ShaderEffect {
@@ -184,9 +231,14 @@ Item {
         property real halfW: globe.halfW
         property real halfH: globe.halfH
         property real polar: globe.polar
+        property real curve: globe.curve
         property real vMin: globe.vMin
         property real vMax: globe.vMax
         property real yaw: globe.yaw
+        property real unitX: globe.unitX
+        property real unitY: globe.unitY
+        // L'écart de la trame de points, au centre.
+        property real dotPx: 8
         // La face cachée, vue à travers les mers : dans l'ombre.
         property real shadow: 0.28
         property real hoverId: globe.hoverId
@@ -219,8 +271,9 @@ Item {
 
     // La main : glisser fait tourner (un pixel vaut un pixel de carte, au
     // centre), relâcher laisse l'élan du dernier geste ; le mouvement
-    // vertical est ignoré. Un clic sans glisser choisit le pays (ou le
-    // relâche), un clic dans le vide efface le choix.
+    // vertical est ignoré. Un clic sans glisser choisit le pays : il se
+    // s'allume, le globe s'arrête et l'amène au milieu. Un second
+    // clic sur lui, ou un clic dans le vide, le relâche et la dérive reprend.
     MouseArea {
         id: hand
         anchors.fill: parent
@@ -243,6 +296,7 @@ Item {
             velocity = 0;
             moved = false;
             globe.spin = 0;
+            focusAnim.stop();
         }
         onPositionChanged: (mouse) => {
             if (!pressed) {
@@ -263,12 +317,12 @@ Item {
         }
         onReleased: (mouse) => {
             if (!moved) {
-                var id = globe.countryAt(mouse.x, mouse.y);
-                globe.selectId = id === globe.selectId ? 0 : id;
+                globe.select(globe.countryAt(mouse.x, mouse.y));
                 return;
             }
-            // Un geste arrêté avant de lâcher ne lance rien.
-            var still = Date.now() - lastT > 80;
+            // Un pays choisi tient le globe : pas d'élan, il reste où on
+            // l'a laissé. Sinon, un geste arrêté avant de lâcher ne lance rien.
+            var still = globe.selectId !== 0 || Date.now() - lastT > 80;
             globe.spin = still ? 0 : Math.max(-6, Math.min(6, velocity - globe.drift));
         }
     }

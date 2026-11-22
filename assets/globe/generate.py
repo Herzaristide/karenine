@@ -3,8 +3,9 @@
 # (domaine public), ne_50m_admin_0_countries.geojson :
 #   countries.png  : 4096×2048 équirectangulaire, le numéro du pays par
 #                    pixel (0 : la mer), sans antialiasing ;
-#   countries.json : les noms (fr, en), les codes ISO, et la même carte en
-#                    2048×1024, ligne par ligne en plages, pour le survol.
+#   countries.json : les noms (fr, en), les codes ISO, le centre de chaque
+#                    pays, et la même carte en 2048×1024, ligne par ligne en
+#                    plages, pour le survol.
 #
 # Usage : python3 generate.py ne_50m_admin_0_countries.geojson countries.png countries.json
 # (Pillow requis.)
@@ -48,6 +49,23 @@ for y in range(1024):
         if v == cur: n += 1
         else: row += [cur, n]; cur, n = v, 1
     row += [cur, n]; rows.append(row)
-json.dump({"w": 2048, "h": 1024, "fr": names_fr, "en": names_en, "codes": codes, "rows": rows},
+# Le centre de chaque pays, en degrés : le centroïde de son plus grand
+# morceau (la France se centre sur la métropole, pas entre elle et la Guyane).
+def centroid(ring):
+    a = cx = cy = 0.0
+    for (x0, y0), (x1, y1) in zip(ring, ring[1:] + ring[:1]):
+        k = x0 * y1 - x1 * y0
+        a += k; cx += (x0 + x1) * k; cy += (y0 + y1) * k
+    if abs(a) < 1e-12:
+        return abs(a), ring[0][0], ring[0][1]
+    return abs(a) / 2, cx / (3 * a), cy / (3 * a)
+centers = []
+for f in feats:
+    g = f["geometry"]
+    polys = g["coordinates"] if g["type"] == "MultiPolygon" else [g["coordinates"]]
+    best = max((centroid([tuple(c[:2]) for c in poly[0]]) for poly in polys), key=lambda t: t[0])
+    centers.append([round(best[1], 2), round(best[2], 2)])
+json.dump({"w": 2048, "h": 1024, "fr": names_fr, "en": names_en, "codes": codes,
+           "centers": centers, "rows": rows},
           open(js, "w"), ensure_ascii=False, separators=(",", ":"))
 print(len(feats), "pays")
