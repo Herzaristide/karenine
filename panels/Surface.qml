@@ -8,6 +8,9 @@ import "../services"
 // panneau de droite sont de la même encre : entre les fenêtres, autour
 // d'elles, sous la barre, c'est une seule matière, et les fenêtres
 // arrondies y sont posées.
+//
+// Le géoïde des bureaux vides n'y est pas : il a sa propre couche, à la
+// place des fenêtres (GlobeLayer).
 PanelWindow { // qmllint disable uncreatable-type
     WlrLayershell.layer: WlrLayer.Background
     WlrLayershell.namespace: "quickshell-surface"

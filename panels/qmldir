@@ -6,3 +6,5 @@ PromptHost 1.0 PromptHost.qml
 PromptCard 1.0 PromptCard.qml
 PromptButton 1.0 PromptButton.qml
 ChoiceTiles 1.0 ChoiceTiles.qml
+Globe 1.0 Globe.qml
+GlobeLayer 1.0 GlobeLayer.qml

@@ -134,6 +134,17 @@ ShellRoot {
         }
     }
 
+    // Le géoïde des bureaux vides, à la place des fenêtres : il suit la
+    // barre et le panneau comme elles (sa zone, 0, n'en réserve aucune).
+    Variants {
+        model: root.primaryScreens
+
+        GlobeLayer {
+            property var modelData
+            screen: modelData
+        }
+    }
+
     // La barre du bas et le panneau de droite, ensemble : Hyprland range les
     // zones exclusives dans l'ordre de création des surfaces, et la barre ne
     // garde toute la largeur que si elle est créée avant le panneau. Deux
