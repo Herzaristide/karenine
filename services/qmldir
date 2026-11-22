@@ -27,3 +27,4 @@ singleton ClaudeSessions 1.0 ClaudeSessions.qml
 singleton Prompts 1.0 Prompts.qml
 singleton Phone 1.0 Phone.qml
 singleton Previews 1.0 Previews.qml
+singleton World 1.0 World.qml

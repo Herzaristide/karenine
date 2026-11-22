@@ -2704,10 +2704,10 @@ Item {
             anchors.topMargin: root.listView ? 3 : 5
 
             model: root.entries
-            readonly property int columns: root.listView ? 1 : Math.max(1, Math.floor(width / 104))
+            readonly property int columns: root.listView ? 1 : Math.max(1, Math.floor(width / 120))
             cellWidth: width / columns
             // L'arborescence, plus serrée : les guides s'enchaînent d'une ligne à l'autre.
-            cellHeight: root.treeView ? 26 : root.listView ? 34 : 104
+            cellHeight: root.treeView ? 26 : root.listView ? 34 : 148
             clip: true
             boundsBehavior: Flickable.StopAtBounds
             currentIndex: -1
@@ -2863,14 +2863,13 @@ Item {
                 height: grid.cellHeight
 
                 // Sélectionnée : teintée franchement ; retenue au clavier :
-                // liserée ; survolée : à peine marquée.
+                // liserée. Le survol ne marque rien.
                 Rectangle {
                     anchors.fill: parent
                     anchors.margins: root.listView ? 1 : 3
                     radius: Theme.radiusSmall
                     color: tileDrop.containsDrag ? Qt.alpha(Theme.accentColor, 0.3)
-                         : tile.selected ? Qt.alpha(Theme.accentColor, 0.2)
-                         : tileMa.containsMouse ? Qt.alpha(Theme.textPrimary, 0.06) : "transparent"
+                         : tile.selected ? Qt.alpha(Theme.accentColor, 0.2) : "transparent"
                     border.width: tile.current && grid.activeFocus ? 1 : 0
                     border.color: Qt.alpha(Theme.accentColor, 0.7)
                     Behavior on color { ColorAnimation { duration: 110 } }
@@ -2916,11 +2915,15 @@ Item {
 
                 // La miniature d'une image, ou l'icône du thème (un glyphe à
                 // défaut : les dossiers à l'accent, les fichiers en retrait).
+                // En tuiles, l'aperçu prend toute la carte au-dessus du nom.
+                readonly property bool hasVisual: tile.thumb || tile.preview !== ""
                 Item {
                     id: tileImage
                     x: root.treeView ? tile.treeX + 16 : root.listView ? 10 : (parent.width - width) / 2
-                    y: root.listView ? (parent.height - height) / 2 : 14
-                    width: root.treeView ? 16 : root.listView ? 20 : 46
+                    // En tuiles : centrée dans ce que le nom (deux lignes) laisse.
+                    y: root.listView ? (parent.height - height) / 2 : 6 + (parent.height - 44 - height) / 2
+                    width: root.treeView ? 16 : root.listView ? 20
+                         : tile.hasVisual ? Math.min(parent.width - 16, parent.height - 50) : 56
                     height: width
                     // Un fichier caché, un peu effacé.
                     opacity: tile.hidden ? 0.55 : 1
@@ -2939,8 +2942,8 @@ Item {
                         anchors.fill: parent
                         visible: tile.thumb || tile.previewImage
                         source: tile.previewImage ? tile.preview : tile.thumb ? tile.icon : ""
-                        sourceSize.width: 96
-                        sourceSize.height: 96
+                        sourceSize.width: root.listView ? 48 : 192
+                        sourceSize.height: root.listView ? 48 : 192
                         // Une photo, une image de vidéo ou une pochette se rognent
                         // au carré ; une page, une partition, un modèle tiennent entiers.
                         fillMode: tile.previewImage && tile.previewKind !== "video" && tile.previewKind !== "audio"
@@ -2967,7 +2970,7 @@ Item {
                 Text {
                     id: tileName
                     x: root.listView ? tileImage.x + tileImage.width + 10 : 6
-                    y: root.listView ? (parent.height - height) / 2 : tileImage.y + tileImage.height + 8
+                    y: root.listView ? (parent.height - height) / 2 : parent.height - 38
                     width: root.listView
                            ? parent.width - x - (root.details ? root.sizeW + root.dateW + 30 : 10)
                            : parent.width - 12

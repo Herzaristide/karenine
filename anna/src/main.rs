@@ -37,6 +37,8 @@
 //!                        its calendars' events (google/calendar.rs)
 //!   anna tasks [list] | done <list> <id> [no]
 //!                        its tasks (google/tasks.rs)
+//!   anna world trends|music <CC> [name] | lastfm [<key>|clear]
+//!                        what the desktop globe tells about a country (world.rs)
 //!
 //! Services exposed over `$XDG_RUNTIME_DIR/anna.sock`:
 //!   - theme    : accent/palette (set/mode/palette-color/get/watch)
@@ -59,6 +61,7 @@ mod client;
 mod color;
 mod gesture;
 mod google;
+mod world;
 mod hwstats;
 mod i18n;
 mod icons;
@@ -144,6 +147,11 @@ async fn main() {
         Some("tasks") => {
             google::tasks::run(&args);
         }
+        // What the desktop globe tells about a country: Wikipedia trends,
+        // Last.fm charts (world.rs). No daemon needed.
+        Some("world") => {
+            world::run(&args);
+        }
         // The Explorer's previews: a worker fed on stdin (previews.rs).
         Some("previews") => {
             previews::run(&args);
@@ -177,7 +185,7 @@ async fn main() {
         Some(other) => {
             eprintln!("anna: unknown command '{other}'");
             eprintln!(
-                "Usage: anna [daemon|init|set|mode|palette-color|reset|get|watch|gesture|record|askpass|share-picker|mcp|notes|google|agenda|tasks|msi-rgb-watch]"
+                "Usage: anna [daemon|init|set|mode|palette-color|reset|get|watch|gesture|record|askpass|share-picker|mcp|notes|google|agenda|tasks|world|msi-rgb-watch]"
             );
             std::process::exit(2);
         }

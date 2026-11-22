@@ -63,9 +63,10 @@ Item {
                 Layout.fillWidth: true
                 text: surface.sessionName.toUpperCase()
                 color: Theme.textDim
-                font.family: "JetBrains Mono"
+                font.family: "Inter"
                 font.pixelSize: 10
-                font.letterSpacing: 1.5
+                font.weight: Font.DemiBold
+                font.letterSpacing: 1.2
                 elide: Text.ElideRight
             }
 
@@ -106,10 +107,8 @@ Item {
 
         implicitWidth: caption.implicitWidth + 22
         implicitHeight: 28
-        radius: 8
-        color: button.lit ? Qt.alpha(button.tone, 0.18) : "transparent"
-        border.width: 1
-        border.color: button.lit ? Qt.alpha(button.tone, 0.6) : Theme.dividerColor
+        radius: Theme.radiusSmall
+        color: button.lit ? Qt.alpha(button.tone, 0.16) : Theme.hoverOverlay
 
         Behavior on color { ColorAnimation { duration: 120 } }
 
@@ -126,8 +125,9 @@ Item {
             anchors.centerIn: parent
             text: button.label
             color: button.lit ? button.tone : Theme.textSecondary
-            font.family: "JetBrains Mono"
-            font.pixelSize: 11
+            font.family: "Inter"
+            font.pixelSize: 12
+            font.weight: Font.Medium
         }
 
         MouseArea {

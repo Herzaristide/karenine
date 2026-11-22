@@ -38,11 +38,12 @@ Rectangle {
             field.submitted(input.text);
     }
 
-    implicitHeight: 48
+    // Creusé dans la carte (bgElevated) : le fond de l'écran, un ton dessous.
+    implicitHeight: 46
     radius: Theme.radiusSmall
-    color: Theme.bgInput
+    color: Theme.bgDeep
     border.width: 1
-    border.color: field.error ? Theme.colorDanger : (input.activeFocus ? Theme.accentColor : Theme.dividerColor)
+    border.color: field.error ? Qt.alpha(Theme.colorDanger, 0.7) : (input.activeFocus ? Qt.alpha(Theme.accentColor, 0.6) : "transparent")
 
     Behavior on border.color {
         ColorAnimation { duration: 150 }
@@ -77,8 +78,10 @@ Rectangle {
         color: Theme.textPrimary
         selectionColor: Theme.accentColor
         selectedTextColor: Theme.selectedTextColor
-        font.family: "JetBrains Mono"
-        font.pixelSize: 15
+        font.family: "Inter"
+        font.pixelSize: 14
+        // Les puces du mot de passe, un peu aérées.
+        font.letterSpacing: input.echoMode === TextInput.Password && input.text.length > 0 ? 2 : 0
 
         onAccepted: field.submit()
         Keys.onBacktabPressed: {
@@ -92,7 +95,8 @@ Rectangle {
             text: field.placeholder
             elide: Text.ElideRight
             color: Theme.placeholderColor
-            font: input.font
+            font.family: input.font.family
+            font.pixelSize: input.font.pixelSize
             visible: input.text.length === 0 && !field.busy
         }
     }
@@ -106,7 +110,7 @@ Rectangle {
         anchors.verticalCenter: parent.verticalCenter
         width: 32
         height: 32
-        radius: 8
+        radius: Theme.radiusSmall - 2
 
         readonly property bool armed: input.text.length > 0 && !field.busy
 

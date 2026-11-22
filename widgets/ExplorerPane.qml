@@ -347,8 +347,7 @@ Rectangle {
                 anchors.margins: 1
                 radius: Theme.radiusSmall
                 color: rowDrop.containsDrag ? Qt.alpha(Theme.accentColor, 0.3)
-                     : row.selected ? Qt.alpha(Theme.accentColor, 0.2)
-                     : rowMa.containsMouse ? Qt.alpha(Theme.textPrimary, 0.06) : "transparent"
+                     : row.selected ? Qt.alpha(Theme.accentColor, 0.2) : "transparent"
                 Behavior on color { ColorAnimation { duration: 110 } }
             }
 

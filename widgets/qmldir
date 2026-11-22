@@ -6,6 +6,7 @@ TakeView 1.0 TakeView.qml
 MusicPlayerWidget 1.0 MusicPlayerWidget.qml
 Harmony 1.0 Harmony.qml
 MiniGraph 1.0 MiniGraph.qml
+StatTile 1.0 StatTile.qml
 Settings 1.0 Settings.qml
 NixIcon 1.0 NixIcon.qml
 GlassButton 1.0 GlassButton.qml

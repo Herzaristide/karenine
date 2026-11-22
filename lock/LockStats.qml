@@ -1,62 +1,77 @@
 pragma ComponentBehavior: Bound
 import QtQuick
-import QtQuick.Layouts
-import Quickshell
 import Quickshell.Io
 import "../services"
-import "../widgets"
 
-// Stats matérielles compactes pour le lockscreen.
+// Les stats de la machine pour le lockscreen, sans visuel : la surface les
+// affiche en relevés dans le pied de sa carte.
 //
-// S'abonne au même flux que widgets/HardwareStats (un snapshot JSON par
-// seconde sur le socket du daemon anna), mais n'en garde que CPU / RAM / GPU
-// et une sparkline par série — le panneau complet (disques, températures,
-// noms de composants) n'a pas sa place sur un écran verrouillé.
-RowLayout {
-    id: statsRoot
+// Même flux que widgets/HardwareStats (un snapshot JSON par seconde sur le
+// socket du daemon anna, `hwstats_watch`), mais toujours cette machine-ci :
+// ni choix d'un serveur, ni actions d'alimentation, rien à manipuler session
+// fermée.
+Item {
+    id: stats
 
-    spacing: 20
+    // Abonné tant que c'est vrai.
+    property bool active: false
 
-    readonly property int histLen: 40
+    readonly property int historySize: 40
 
-    property int cpuUsage: 0
-    property int ramUsage: 0
-    property int gpuUsage: 0
-    property bool gpuPresent: false
-
+    property int cpu: -1
+    property string cpuTemp: ""
     property list<int> cpuHistory: []
+
+    property int ram: -1
+    property real ramUsed: 0
+    property real ramTotal: 0
     property list<int> ramHistory: []
+
+    property bool gpuPresent: false
+    property int gpu: -1
+    property string gpuTemp: ""
     property list<int> gpuHistory: []
 
-    function pushHistory(arr: list<int>, value: int): list<int> {
-        const out = arr.slice(arr.length >= statsRoot.histLen ? 1 : 0);
-        out.push(value);
+    function pushHistory(arr: list<int>, value: real): list<int> {
+        const out = arr.slice(arr.length >= stats.historySize ? 1 : 0);
+        out.push(Math.max(0, Math.min(100, Math.round(value))));
         return out;
     }
 
-    function applyStats(s: var) {
-        statsRoot.cpuUsage = s.cpu_usage;
-        statsRoot.cpuHistory = statsRoot.pushHistory(statsRoot.cpuHistory, s.cpu_usage);
+    function formatGiB(bytes: real): string {
+        const gib = bytes / (1024 * 1024 * 1024);
+        return gib.toLocaleString(I18n.locale, "f", 1);
+    }
 
+    function apply(s: var): void {
+        stats.cpu = s.cpu_usage;
+        stats.cpuHistory = stats.pushHistory(stats.cpuHistory, s.cpu_usage);
+        stats.cpuTemp = s.cpu_temp > 0 ? s.cpu_temp + "°" : "";
+
+        stats.ramUsed = s.ram_used;
+        stats.ramTotal = s.ram_total;
         if (s.ram_total > 0) {
-            statsRoot.ramUsage = Math.round((s.ram_used / s.ram_total) * 100);
-            statsRoot.ramHistory = statsRoot.pushHistory(statsRoot.ramHistory, statsRoot.ramUsage);
+            stats.ram = Math.round(s.ram_used / s.ram_total * 100);
+            stats.ramHistory = stats.pushHistory(stats.ramHistory, stats.ram);
         }
 
-        statsRoot.gpuPresent = s.gpu_present === true;
-        if (statsRoot.gpuPresent) {
-            statsRoot.gpuUsage = s.gpu_usage;
-            statsRoot.gpuHistory = statsRoot.pushHistory(statsRoot.gpuHistory, s.gpu_usage);
+        stats.gpuPresent = s.gpu_present === true;
+        stats.gpuTemp = s.gpu_temp > 0 ? s.gpu_temp + "°" : "";
+        if (stats.gpuPresent) {
+            stats.gpu = s.gpu_usage;
+            stats.gpuHistory = stats.pushHistory(stats.gpuHistory, s.gpu_usage);
+        } else {
+            stats.gpu = -1;
         }
     }
 
     Socket {
-        id: statsSock
+        id: sock
         path: Anna.socketPath
         parser: SplitParser {
             onRead: (line) => {
                 try {
-                    statsRoot.applyStats(JSON.parse(line));
+                    stats.apply(JSON.parse(line));
                 } catch (e) {
                     // ligne partielle / malformée — on ignore
                 }
@@ -69,80 +84,18 @@ RowLayout {
     }
 
     // Le daemon peut ne pas être joignable au moment du verrouillage (ou être
-    // redémarré pendant) : on retente tant que la surface est visible.
+    // redémarré pendant) : on retente tant que c'est actif.
     Timer {
         interval: 2000
-        running: statsRoot.visible
+        running: stats.active
         repeat: true
         triggeredOnStart: true
-        onTriggered: if (!statsSock.connected)
-            statsSock.connected = true
+        onTriggered: if (!sock.connected)
+            sock.connected = true
     }
 
-    onVisibleChanged: {
-        if (!visible)
-            statsSock.connected = false;
-    }
-
-    component Stat: ColumnLayout {
-        id: stat
-
-        required property string label
-        required property int value
-        required property color seriesColor
-        required property list<int> history
-
-        Layout.fillWidth: true
-        spacing: 4
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 8
-
-            Text {
-                text: stat.label
-                color: Theme.textDim
-                font.family: "JetBrains Mono"
-                font.pixelSize: 11
-            }
-
-            Text {
-                Layout.fillWidth: true
-                horizontalAlignment: Text.AlignRight
-                text: stat.value + "%"
-                color: stat.seriesColor
-                font.family: "JetBrains Mono"
-                font.pixelSize: 11
-            }
-        }
-
-        MiniGraph {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 28
-            values: stat.history
-            lineColor: stat.seriesColor
-        }
-    }
-
-    Stat {
-        label: "CPU"
-        value: statsRoot.cpuUsage
-        seriesColor: Theme.accentColor
-        history: statsRoot.cpuHistory
-    }
-
-    Stat {
-        label: "RAM"
-        value: statsRoot.ramUsage
-        seriesColor: Theme.colorRam
-        history: statsRoot.ramHistory
-    }
-
-    Stat {
-        visible: statsRoot.gpuPresent
-        label: "GPU"
-        value: statsRoot.gpuUsage
-        seriesColor: Theme.colorGpu
-        history: statsRoot.gpuHistory
+    onActiveChanged: {
+        if (!active)
+            sock.connected = false;
     }
 }

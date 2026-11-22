@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell.Io
 import Quickshell.Hyprland
@@ -69,18 +70,34 @@ Item {
     // douceur, comme les fenêtres qui glissent. Le bord gauche ne bouge pas
     // (le panneau est à droite, la barre en bas) : le centre est compté
     // depuis le coin haut-gauche, et il glisse avec la largeur.
-    property real areaW: globe.width
-    property real areaH: globe.height
-    // Pas d'animation pour la première taille : la couche naît à zéro.
-    property bool _sized: false
-    onWidthChanged: if (!globe._sized && globe.width > 0) Qt.callLater(() => globe._sized = true)
-    Behavior on areaW {
-        enabled: globe._sized && globe.visible
-        NumberAnimation { duration: 380; easing.type: Easing.OutCubic }
+    //
+    // La couche peut renaître à zéro puis prendre sa taille : une taille
+    // nulle est ignorée, et tant qu'il apparaît (ou n'a jamais eu de place)
+    // la nouvelle est prise d'un coup. Seul un géoïde déjà là glisse.
+    property real areaW: 0
+    property real areaH: 0
+    onWidthChanged: globe._resize()
+    onHeightChanged: globe._resize()
+    function _resize() {
+        if (globe.width <= 0 || globe.height <= 0)
+            return;
+        if (globe.appear < 1 || globe.areaW <= 0 || globe.areaH <= 0) {
+            slide.stop();
+            globe.areaW = globe.width;
+            globe.areaH = globe.height;
+            return;
+        }
+        slide.stop();
+        slideW.from = globe.areaW;
+        slideW.to = globe.width;
+        slideH.from = globe.areaH;
+        slideH.to = globe.height;
+        slide.start();
     }
-    Behavior on areaH {
-        enabled: globe._sized && globe.visible
-        NumberAnimation { duration: 380; easing.type: Easing.OutCubic }
+    ParallelAnimation {
+        id: slide
+        NumberAnimation { id: slideW; target: globe; property: "areaW"; duration: 380; easing.type: Easing.OutCubic }
+        NumberAnimation { id: slideH; target: globe; property: "areaH"; duration: 380; easing.type: Easing.OutCubic }
     }
     readonly property real centerX: globe.areaW / 2
     readonly property real centerY: globe.areaH / 2
@@ -165,13 +182,24 @@ Item {
         return 0;
     }
 
-    opacity: globe.empty ? 1 : 0
+    // L'apparition, de 0 à 1 : un fondu, et le géoïde qui grandit un peu
+    // depuis son centre (de 92 % à sa taille) ; l'inverse quand il s'en va.
+    property real appear: globe.empty ? 1 : 0
+    Behavior on appear {
+        NumberAnimation { duration: 460; easing.type: Easing.OutCubic }
+    }
+    // À la fin de l'apparition, la place a pu changer entre-temps.
+    onAppearChanged: if (globe.appear >= 1) globe._resize()
+    opacity: globe.appear
     visible: opacity > 0
     // Pour la couche qui le porte : là dès qu'il doit paraître, jusqu'à la
     // fin de son fondu.
-    readonly property bool shown: globe.empty || globe.opacity > 0
-    Behavior on opacity {
-        NumberAnimation { duration: 420; easing.type: Easing.OutCubic }
+    readonly property bool shown: globe.empty || globe.appear > 0
+    transform: Scale {
+        origin.x: globe.centerX
+        origin.y: globe.centerY
+        xScale: 0.92 + 0.08 * globe.appear
+        yScale: 0.92 + 0.08 * globe.appear
     }
     onVisibleChanged: if (!visible) globe.hoverId = 0
 
@@ -263,18 +291,151 @@ Item {
         fragmentShader: Qt.resolvedUrl("../shaders/globe.frag.qsb")
     }
 
-    // Le nom du pays survolé, ou à défaut du pays choisi, sous la carte.
-    Text {
-        x: globe.centerX - width / 2
-        y: globe.centerY + globe.halfH + 24
-        text: globe.shownName
-        color: Theme.accentColor
-        opacity: globe.hoverId && globe.hoverId !== globe.selectId ? 0.75 : 1
+    // ── Le cartouche ─────────────────────────────────────────────
+    // En bas à gauche de la place : le nom du pays survolé, ou à défaut du
+    // pays choisi ; pour le pays choisi, ce qu'on lit et ce qu'on écoute
+    // chez lui (services/World.qml). Les lignes s'ouvrent au clic.
+    readonly property var trendsEntry: globe.selectedCode ? World.trends[globe.selectedCode] : undefined
+    readonly property var musicEntry: globe.selectedCode ? World.music[globe.selectedCode] : undefined
+    readonly property bool showDetails: globe.selectId > 0
+                                        && (globe.hoverId === 0 || globe.hoverId === globe.selectId)
+
+    onSelectIdChanged: {
+        if (globe.selectId > 0 && globe._map)
+            World.fetch(globe.selectedCode, globe._map.en[globe.selectId - 1] || "");
+    }
+
+    component Heading: Text {
+        color: Theme.textSecondary
         font.family: "Inter"
-        font.pixelSize: 15
+        font.pixelSize: 11
         font.weight: Font.Medium
-        font.letterSpacing: 2
+        font.letterSpacing: 1.5
         font.capitalization: Font.AllUppercase
+    }
+
+    component Note: Text {
+        width: card.width
+        color: Theme.textDim
+        font.family: "Inter"
+        font.pixelSize: 12
+        wrapMode: Text.WordWrap
+    }
+
+    // Une ligne : un titre, ce qui le précise en plus pâle, un lien.
+    component Line: Item {
+        id: line
+        property string main
+        property string aside
+        property string url
+        width: card.width
+        height: lineText.implicitHeight + 4
+
+        Text {
+            id: lineText
+            width: parent.width
+            textFormat: Text.StyledText
+            text: line.main.replace(/&/g, "&amp;").replace(/</g, "&lt;")
+                  + (line.aside ? "  <font color=\"" + Theme.textDim + "\">"
+                     + line.aside.replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</font>" : "")
+            color: lineMouse.containsMouse ? Theme.accentColor : Theme.textPrimary
+            font.family: "Inter"
+            font.pixelSize: 13
+            elide: Text.ElideRight
+        }
+        MouseArea {
+            id: lineMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            enabled: line.url !== ""
+            cursorShape: Qt.PointingHandCursor
+            onClicked: Qt.openUrlExternally(line.url)
+        }
+    }
+
+    Column {
+        id: card
+        z: 2
+        x: 0
+        anchors.bottom: parent.bottom
+        width: Math.min(340, globe.width * 0.3)
+        spacing: 6
+        visible: globe.shownId > 0
+
+        Text {
+            width: card.width
+            text: globe.shownName
+            color: Theme.accentColor
+            opacity: globe.hoverId && globe.hoverId !== globe.selectId ? 0.75 : 1
+            font.family: "Inter"
+            font.pixelSize: 18
+            font.weight: Font.Medium
+            font.letterSpacing: 2
+            font.capitalization: Font.AllUppercase
+            wrapMode: Text.WordWrap
+        }
+
+        Note {
+            visible: !globe.showDetails
+            text: I18n.tr("globe.hint")
+        }
+
+        Item { width: 1; height: 6; visible: globe.showDetails }
+
+        // Les tendances
+        Heading {
+            visible: globe.showDetails
+            text: I18n.tr("globe.trends")
+        }
+        Note {
+            visible: globe.showDetails && (!globe.trendsEntry || globe.trendsEntry.state !== "ok"
+                                           || globe.trendsEntry.data.articles.length === 0)
+            text: !globe.trendsEntry || globe.trendsEntry.state === "loading" ? I18n.tr("globe.loading")
+                  : globe.trendsEntry.state === "error" ? globe.trendsEntry.data.error
+                  : I18n.tr("globe.nothing")
+        }
+        Repeater {
+            model: globe.showDetails && globe.trendsEntry && globe.trendsEntry.state === "ok"
+                   ? globe.trendsEntry.data.articles : []
+            delegate: Line {
+                required property var modelData
+                main: modelData.title
+                aside: modelData.lang
+                url: modelData.url
+            }
+        }
+
+        Item { width: 1; height: 6; visible: globe.showDetails }
+
+        // La musique
+        Heading {
+            visible: globe.showDetails
+            text: I18n.tr("globe.music")
+        }
+        Note {
+            visible: globe.showDetails && (!globe.musicEntry || globe.musicEntry.state !== "ok"
+                                           || globe.musicEntry.data.tracks.length === 0)
+            text: {
+                var e = globe.musicEntry;
+                if (!e || e.state === "loading")
+                    return I18n.tr("globe.loading");
+                if (e.state === "error")
+                    return e.data.error === "no-key" ? I18n.tr("globe.noKey")
+                         : e.data.error === "bad-key" ? I18n.tr("globe.badKey")
+                         : e.data.error;
+                return I18n.tr("globe.nothing");
+            }
+        }
+        Repeater {
+            model: globe.showDetails && globe.musicEntry && globe.musicEntry.state === "ok"
+                   ? globe.musicEntry.data.tracks : []
+            delegate: Line {
+                required property var modelData
+                main: modelData.title
+                aside: modelData.artist
+                url: modelData.url
+            }
+        }
     }
 
     // La main : glisser fait tourner (un pixel vaut un pixel de carte, au
