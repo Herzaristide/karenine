@@ -37,7 +37,7 @@
 //!                        its calendars' events (google/calendar.rs)
 //!   anna tasks [list] | done <list> <id> [no]
 //!                        its tasks (google/tasks.rs)
-//!   anna world trends|music <CC> [name] | lastfm [<key>|clear]
+//!   anna world apple <CC> | item <CC> <id> | prefetch [items]
 //!                        what the desktop globe tells about a country (world.rs)
 //!
 //! Services exposed over `$XDG_RUNTIME_DIR/anna.sock`:
@@ -147,8 +147,8 @@ async fn main() {
         Some("tasks") => {
             google::tasks::run(&args);
         }
-        // What the desktop globe tells about a country: Wikipedia trends,
-        // Last.fm charts (world.rs). No daemon needed.
+        // What the desktop globe tells about a country: Apple's charts
+        // (world.rs). No daemon needed.
         Some("world") => {
             world::run(&args);
         }

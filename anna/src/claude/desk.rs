@@ -99,7 +99,17 @@ pub fn tools() -> Value {
             "Lit une page web (http ou https) et en rend le texte, sans la mise en page : pour \
              répondre sur une page dont on a l'adresse.",
             json!({ "url": s("URL complète (https://…)") }), &["url"]),
-        tool("ouvrir_projet", "Ouvre un projet de ~/ciph3r dans Zed ou dans un terminal.",
+        tool("montrer_dossier",
+            "Montre un dossier (ou un fichier, sélectionné dans son dossier) dans l'Explorer du panneau de \
+             droite. C'est l'outil de « montre-moi », « ouvre », « va dans », « cherche-moi » un dossier : \
+             « mes téléchargements », « le projet karenine », « ~/code », « mes images ». Le dossier \
+             s'affiche dans l'interface, aucune application ne s'ouvre.",
+            json!({ "chemin": s("chemin absolu ou en ~/… ; ou un dossier connu : maison, telechargements, \
+                                documents, images, musique, videos, bureau ; ou le nom d'un projet \
+                                (ex. karenine) ; ou un chemin relatif au dossier personnel (ex. code/lab)") }),
+            &["chemin"]),
+        tool("ouvrir_projet", "Ouvre un projet de ~/code dans Zed ou dans un terminal (pour seulement le \
+             montrer, `montrer_dossier`).",
             json!({ "projet": s("nom du projet, ex. karenine"),
                     "outil": json!({ "type": "string", "enum": ["zed", "terminal"] }) }),
             &["projet", "outil"]),
@@ -259,6 +269,97 @@ fn widget_line(name: &str, action: &str) -> Result<String, String> {
         return Err("« tout » ne fait que se fermer".into());
     }
     Ok(format!("widget:{name}:{action}\n"))
+}
+
+/// The folders `montrer_dossier` knows by name: what is said (without
+/// accents), then the `XDG_<key>_DIR` and its fallback under ~.
+const KNOWN_DIRS: [(&[&str], &str, &str); 7] = [
+    (&["maison", "home", "dossier personnel", "perso", "accueil"], "", ""),
+    (&["telechargements", "telechargement", "downloads", "download"], "DOWNLOAD", "Downloads"),
+    (&["documents", "document", "docs"], "DOCUMENTS", "Documents"),
+    (&["images", "image", "photos", "pictures"], "PICTURES", "Pictures"),
+    (&["musique", "musiques", "music"], "MUSIC", "Music"),
+    (&["videos", "video"], "VIDEOS", "Videos"),
+    (&["bureau", "desktop"], "DESKTOP", "Desktop"),
+];
+
+/// Lowercase, without accents, without « mon », « le dossier »… : how a
+/// spoken folder name is matched.
+fn folder_words(text: &str) -> String {
+    let folded: String = text
+        .to_lowercase()
+        .chars()
+        .map(|c| match c {
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'à' | 'â' | 'ä' => 'a',
+            'î' | 'ï' => 'i',
+            'ô' | 'ö' => 'o',
+            'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            '\'' | '’' => ' ',
+            c => c,
+        })
+        .collect();
+    const FILLER: [&str; 12] = [
+        "mon", "ma", "mes", "le", "la", "les", "l", "de", "du", "des", "dossier", "projet",
+    ];
+    folded
+        .split_whitespace()
+        .filter(|w| !FILLER.contains(w))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Where `montrer_dossier`'s `chemin` leads, which must exist: an absolute
+/// or ~ path, a known folder, a project, or a path under ~.
+fn resolve_folder(said: &str) -> Result<std::path::PathBuf, String> {
+    use std::path::PathBuf;
+    let home = crate::paths::home_dir();
+    let said = said.trim();
+    let said = match said.trim_end_matches('/') {
+        "" if said.starts_with('/') => "/",
+        "" => "~",
+        s => s,
+    };
+    let found: Option<PathBuf> = if said.starts_with('/') {
+        Some(PathBuf::from(said))
+    } else if said == "~" {
+        Some(home.clone())
+    } else if let Some(rest) = said.strip_prefix("~/") {
+        Some(home.join(rest))
+    } else {
+        let words = folder_words(said);
+        KNOWN_DIRS
+            .iter()
+            .find(|(names, _, _)| names.contains(&words.as_str()))
+            .map(|(_, key, fallback)| {
+                if key.is_empty() {
+                    home.clone()
+                } else {
+                    crate::paths::user_dir(key, fallback)
+                }
+            })
+            .or_else(|| project_dir(&words).ok().or_else(|| project_dir(said).ok()).map(PathBuf::from))
+            .or_else(|| Some(home.join(said)))
+    };
+    match found {
+        Some(p) if p.exists() => Ok(p),
+        _ => {
+            let names: Vec<String> = projects().into_iter().map(|p| p.name).collect();
+            Err(format!(
+                "« {said} » introuvable (dossiers connus : maison, telechargements, documents, images, \
+                 musique, videos, bureau ; projets : {})",
+                names.join(", ")
+            ))
+        }
+    }
+}
+
+/// The FIFO line that shows a path in the Explorer (shell.qml): a folder is
+/// opened, a file selected in its own.
+fn explorer_line(path: &std::path::Path) -> String {
+    let kind = if path.is_dir() { "dossier" } else { "fichier" };
+    format!("explorer:{kind}:{}\n", path.display())
 }
 
 /// The FIFO line that starts, stops or toggles the metronome
@@ -652,7 +753,8 @@ pub struct Project {
 }
 
 /// The projects `ouvrir_projet` knows: the vault (« recherche »), every git
-/// repository under ~/ciph3r, then the NixOS configuration.
+/// repository under ~/code (or the older ~/ciph3r), then the NixOS
+/// configuration.
 pub fn projects() -> Vec<Project> {
     let home = crate::paths::home_dir();
     let mut out = Vec::new();
@@ -663,8 +765,9 @@ pub fn projects() -> Vec<Project> {
             path: vault.to_string_lossy().into(),
         });
     }
-    let mut repos: Vec<Project> = std::fs::read_dir(home.join("ciph3r"))
-        .into_iter()
+    let mut repos: Vec<Project> = ["code", "ciph3r"]
+        .iter()
+        .filter_map(|d| std::fs::read_dir(home.join(d)).ok())
         .flatten()
         .flatten()
         .map(|e| e.path())
@@ -967,6 +1070,11 @@ pub fn run_tool(tool: &str, args: &Value) -> Result<String, String> {
             }
             Ok(format!("{dir} ouvert"))
         }
+        "montrer_dossier" => {
+            let path = resolve_folder(&s("chemin"))?;
+            shell_send(&explorer_line(&path))?;
+            Ok(format!("{} montré dans l'Explorer", path.display()))
+        }
         "capture_ecran" => {
             let target = match s("zone").as_str() {
                 "selection" => "area",
@@ -1179,6 +1287,7 @@ mod tests {
         assert!(names.contains(&"creer_note") && names.contains(&"lire_notes"));
         assert!(names.contains(&"agenda"));
         assert!(names.contains(&"enregistrer"));
+        assert!(names.contains(&"montrer_dossier"));
         assert!(!names.contains(&"lancer_session"), "the pilot only acts");
         for t in list.as_array().unwrap() {
             assert_eq!(t["inputSchema"]["type"], "object", "{}", t["name"]);
@@ -1205,6 +1314,30 @@ mod tests {
             "/home/u/v4ult/Recherche/G%C3%B6del.md"
         );
         assert_eq!(url_encode("a b"), "a%20b");
+    }
+
+    #[test]
+    fn folders_are_found_by_what_is_said() {
+        let home = crate::paths::home_dir();
+        assert_eq!(folder_words("mon dossier de Téléchargements"), "telechargements");
+        assert_eq!(folder_words("le projet karenine"), "karenine");
+        // In the Nix build sandbox HOME is /homeless-shelter, which does
+        // not exist: resolve_folder rightly refuses it there.
+        if home.exists() {
+            assert_eq!(resolve_folder("~").unwrap(), home);
+            assert_eq!(resolve_folder("ma maison").unwrap(), home);
+        }
+        assert_eq!(resolve_folder("/").unwrap(), std::path::PathBuf::from("/"));
+        assert!(resolve_folder("/nulle/part/ici").is_err());
+    }
+
+    #[test]
+    fn explorer_lines_match_the_shell() {
+        assert_eq!(explorer_line(std::path::Path::new("/")), "explorer:dossier:/\n");
+        assert_eq!(
+            explorer_line(std::path::Path::new("/nulle/part.txt")),
+            "explorer:fichier:/nulle/part.txt\n"
+        );
     }
 
     #[test]

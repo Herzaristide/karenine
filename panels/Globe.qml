@@ -124,11 +124,70 @@ Item {
     // Numéros de la carte (1…n), 0 : aucun.
     property int hoverId: 0
     property int selectId: 0
-    readonly property int shownId: globe.hoverId || globe.selectId
-    readonly property string shownName: globe.nameOf(globe.shownId)
     // Le code ISO du pays choisi, pour y accrocher des infos plus tard.
-    readonly property string selectedCode: globe.selectId > 0 && globe._map
-                                           ? globe._map.codes[globe.selectId - 1] : ""
+    // Le pays dont le cartouche montre les classements. Il suit le survol,
+    // après un court arrêt sur un pays : la souris qui traverse le monde
+    // pour gagner le cartouche ne le change pas en chemin. La mer le laisse
+    // tel quel ; quitter le globe ramène au pays choisi. Le cartouche sous
+    // la souris, ou une fiche ouverte, le figent. Sans pays choisi ni
+    // survolé, il s'efface après un instant, le temps de gagner le
+    // cartouche par la mer.
+    property int infoId: 0
+    readonly property string infoCode: globe.codeOf(globe.infoId)
+    readonly property bool frozen: hand.overCard || globe.sheetId !== ""
+
+    onHoverIdChanged: {
+        if (!globe.frozen && globe.hoverId)
+            hoverDwell.restart();
+        globe._settle();
+    }
+    onSelectIdChanged: {
+        if (!globe.frozen && globe.selectId)
+            globe.infoId = globe.selectId;
+        globe._settle();
+    }
+    onFrozenChanged: {
+        if (!globe.frozen && globe.hoverId)
+            hoverDwell.restart();
+        globe._settle();
+    }
+
+    function _settle() {
+        if (!globe.frozen && !globe.hoverId && !globe.selectId)
+            hideDwell.restart();
+        else
+            hideDwell.stop();
+    }
+    // Le code tiré de l'identifiant lui-même : `infoCode` n'est pas encore
+    // recalculé quand ce gestionnaire passe.
+    onInfoIdChanged: {
+        globe.sheetId = "";
+        var cc = globe.codeOf(globe.infoId);
+        if (cc)
+            World.fetch(cc);
+    }
+
+    function codeOf(id) {
+        return id > 0 && globe._map ? globe._map.codes[id - 1] : "";
+    }
+
+    Timer {
+        id: hoverDwell
+        interval: 200
+        onTriggered: {
+            if (!globe.frozen && globe.hoverId)
+                globe.infoId = globe.hoverId;
+        }
+    }
+
+    Timer {
+        id: hideDwell
+        interval: 400
+        onTriggered: {
+            if (!globe.frozen && !globe.hoverId && !globe.selectId)
+                globe.infoId = 0;
+        }
+    }
 
     property var _map: null
 
@@ -201,7 +260,12 @@ Item {
         xScale: 0.92 + 0.08 * globe.appear
         yScale: 0.92 + 0.08 * globe.appear
     }
-    onVisibleChanged: if (!visible) globe.hoverId = 0
+    onVisibleChanged: {
+        if (!visible) {
+            globe.hoverId = 0;
+            globe.stopPlaying();
+        }
+    }
 
     // Il tourne seul tant qu'aucun pays n'est choisi : un pays choisi
     // arrête la dérive et l'élan, le temps qu'on le regarde.
@@ -216,7 +280,7 @@ Item {
     }
 
     // La carte défile sous une souris immobile : le pays survolé suit.
-    onYawChanged: if (hand.containsMouse) globe.hoverId = globe.countryAt(hand.mouseX, hand.mouseY)
+    onYawChanged: if (hand.containsMouse && !hand.overCard) globe.hoverId = globe.countryAt(hand.mouseX, hand.mouseY)
 
     // Le pays choisi vient au milieu : on tourne jusqu'à son centre
     // (countries.json), par le plus court chemin.
@@ -292,17 +356,81 @@ Item {
     }
 
     // ── Le cartouche ─────────────────────────────────────────────
-    // En bas à gauche de la place : le nom du pays survolé, ou à défaut du
-    // pays choisi ; pour le pays choisi, ce qu'on lit et ce qu'on écoute
-    // chez lui (services/World.qml). Les lignes s'ouvrent au clic.
-    readonly property var trendsEntry: globe.selectedCode ? World.trends[globe.selectedCode] : undefined
-    readonly property var musicEntry: globe.selectedCode ? World.music[globe.selectedCode] : undefined
-    readonly property bool showDetails: globe.selectId > 0
-                                        && (globe.hoverId === 0 || globe.hoverId === globe.selectId)
+    // En bas à gauche de la place : le nom du pays et ses classements Apple
+    // l'un sous l'autre, chacun en rangée de vignettes (services/World.qml). Un livre ouvre sa fiche au milieu, devant
+    // tout ; un livre audio ou un titre de musique joue son extrait, 30 s
+    // qu'Apple sert (le ▶ de la vignette ; pour la musique, toute la ligne).
+    readonly property var appleEntry: globe.infoCode ? World.apple[globe.infoCode] : undefined
+    readonly property bool showDetails: globe.infoId > 0
+    // Les vignettes d'une rangée : trois, côte à côte.
+    readonly property real tileGap: 16
+    readonly property real tileW: (card.width - 2 * globe.tileGap) / 3
 
-    onSelectIdChanged: {
-        if (globe.selectId > 0 && globe._map)
-            World.fetch(globe.selectedCode, globe._map.en[globe.selectId - 1] || "");
+    // La fiche ouverte : l'identifiant Apple du livre, ou "".
+    property string sheetId: ""
+    readonly property var sheetEntry: globe.sheetId ? World.items[globe.infoCode + "/" + globe.sheetId] : undefined
+
+    function openSheet(id) {
+        globe.sheetId = id;
+        World.item(globe.infoCode, id);
+    }
+
+    // ── Les extraits ─────────────────────────────────────────────
+    // Celui qui joue, ou "" ; sa fiche dit où est l'extrait. Un second clic
+    // l'arrête, un autre extrait le remplace. Le shell n'a pas QtMultimedia :
+    // c'est mpv qui joue, le temps qu'il tourne.
+    property string playingId: ""
+    property string playingCode: ""
+    readonly property var playEntry: globe.playingId ? World.items[globe.playingCode + "/" + globe.playingId] : undefined
+    readonly property bool playing: player.running
+
+    function togglePlay(id) {
+        if (globe.playingId === id) {
+            globe.stopPlaying();
+            return;
+        }
+        player.running = false;
+        player.url = "";
+        globe.playingCode = globe.infoCode;
+        globe.playingId = id;
+        World.item(globe.infoCode, id);
+        globe._startPlaying();
+    }
+
+    function stopPlaying() {
+        player.running = false;
+        player.url = "";
+        globe.playingId = "";
+    }
+
+    function _startPlaying() {
+        var e = globe.playEntry;
+        if (!e || e.state === "loading")
+            return;
+        var url = e.state === "ok" ? e.data.item.preview : "";
+        if (!url) {
+            globe.playingId = "";
+            return;
+        }
+        if (player.url === url)
+            return;
+        player.url = url;
+        player.running = true;
+    }
+
+    onPlayEntryChanged: globe._startPlaying()
+
+    Process {
+        id: player
+        property string url
+        // Sans la config de l'utilisateur : ses scripts (sauvegarde de la
+        // position…) retiennent mpv à la sortie.
+        command: ["mpv", "--no-config", "--no-video", "--really-quiet", "--no-terminal", player.url]
+        // La fin de l'extrait, ou mpv qui ne l'a pas lu.
+        onExited: {
+            if (player.url)
+                globe.stopPlaying();
+        }
     }
 
     component Heading: Text {
@@ -322,51 +450,26 @@ Item {
         wrapMode: Text.WordWrap
     }
 
-    // Une ligne : un titre, ce qui le précise en plus pâle, un lien.
-    component Line: Item {
-        id: line
-        property string main
-        property string aside
-        property string url
-        width: card.width
-        height: lineText.implicitHeight + 4
-
-        Text {
-            id: lineText
-            width: parent.width
-            textFormat: Text.StyledText
-            text: line.main.replace(/&/g, "&amp;").replace(/</g, "&lt;")
-                  + (line.aside ? "  <font color=\"" + Theme.textDim + "\">"
-                     + line.aside.replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</font>" : "")
-            color: lineMouse.containsMouse ? Theme.accentColor : Theme.textPrimary
-            font.family: "Inter"
-            font.pixelSize: 13
-            elide: Text.ElideRight
-        }
-        MouseArea {
-            id: lineMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            enabled: line.url !== ""
-            cursorShape: Qt.PointingHandCursor
-            onClicked: Qt.openUrlExternally(line.url)
-        }
-    }
-
     Column {
         id: card
         z: 2
         x: 0
         anchors.bottom: parent.bottom
-        width: Math.min(340, globe.width * 0.3)
-        spacing: 6
-        visible: globe.shownId > 0
+        width: Math.min(480, globe.width * 0.4)
+        spacing: 16
+        visible: globe.infoId > 0
+
+        // La souris sur une entrée n'est plus vue par la main : le
+        // cartouche le dit lui-même.
+        HoverHandler {
+            onHoveredChanged: hand.overCard = hovered
+        }
 
         Text {
             width: card.width
-            text: globe.shownName
+            text: globe.nameOf(globe.infoId)
             color: Theme.accentColor
-            opacity: globe.hoverId && globe.hoverId !== globe.selectId ? 0.75 : 1
+            opacity: globe.selectId && globe.infoId !== globe.selectId ? 0.75 : 1
             font.family: "Inter"
             font.pixelSize: 18
             font.weight: Font.Medium
@@ -375,65 +478,311 @@ Item {
             wrapMode: Text.WordWrap
         }
 
-        Note {
-            visible: !globe.showDetails
-            text: I18n.tr("globe.hint")
-        }
+        // Les classements, l'un sous l'autre. Un classement vide, une fois
+        // reçu, s'efface : la boutique n'existe pas dans ce pays.
+        Column {
+            spacing: 16
 
-        Item { width: 1; height: 6; visible: globe.showDetails }
+            Repeater {
+                model: [
+                    { key: "paid", title: "globe.booksPaid", book: true, playable: false, square: false },
+                    { key: "free", title: "globe.booksFree", book: true, playable: false, square: false },
+                    { key: "audio", title: "globe.audiobooks", book: true, playable: true, square: true },
+                    { key: "music", title: "globe.music", book: false, playable: true, square: true },
+                ]
+                delegate: Column {
+                    id: rubric
+                    required property var modelData
+                    readonly property var entry: globe.appleEntry
+                    readonly property bool ready: !!rubric.entry && rubric.entry.state === "ok"
+                    readonly property var items: rubric.ready ? rubric.entry.data.charts[rubric.modelData.key] || [] : []
+                    width: card.width
+                    spacing: 8
+                    visible: !(rubric.ready && rubric.items.length === 0)
 
-        // Les tendances
-        Heading {
-            visible: globe.showDetails
-            text: I18n.tr("globe.trends")
+                    Heading { text: I18n.tr(rubric.modelData.title) }
+                    Note {
+                        visible: !rubric.ready || rubric.items.length === 0
+                        text: !rubric.entry || rubric.entry.state === "loading" ? I18n.tr("globe.loading")
+                              : rubric.entry.state === "error" ? rubric.entry.data.error
+                              : I18n.tr("globe.nothing")
+                    }
+                    Row {
+                        spacing: globe.tileGap
+
+                        Repeater {
+                            model: rubric.items
+                            // Une vignette : la couverture, puis le titre et
+                            // l'auteur. `book` ouvre la fiche au clic,
+                            // `playable` joue l'extrait (▶ sur la couverture) ;
+                            // la musique, qui n'a pas de fiche, le joue d'un
+                            // clic n'importe où.
+                            delegate: Item {
+                                id: entry
+                                required property var modelData
+                                readonly property var item: entry.modelData
+                                readonly property bool book: rubric.modelData.book
+                                readonly property bool playable: rubric.modelData.playable
+                                readonly property bool square: rubric.modelData.square
+                                readonly property bool current: globe.playingId !== "" && globe.playingId === entry.item.id
+                                width: globe.tileW
+                                height: art.height + 6 + words.implicitHeight
+
+                                Image {
+                                    id: art
+                                    width: entry.square ? 72 : 48
+                                    height: 72
+                                    source: entry.item.cover ? "file://" + entry.item.cover : (entry.item.artwork || "")
+                                    sourceSize: Qt.size(144, 144)
+                                    fillMode: Image.PreserveAspectCrop
+                                    asynchronous: true
+                                }
+                                Rectangle {
+                                    anchors.fill: art
+                                    visible: entry.playable && (artMouse.containsMouse
+                                                                || tileMouse.containsMouse && !entry.book
+                                                                || entry.current)
+                                    color: Qt.alpha("black", 0.5)
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: !entry.current ? "▶" : globe.playing ? "■" : "…"
+                                        color: "white"
+                                        font.pixelSize: 18
+                                    }
+                                }
+                                Column {
+                                    id: words
+                                    anchors.top: art.bottom
+                                    anchors.topMargin: 6
+                                    width: parent.width
+                                    spacing: 1
+                                    Text {
+                                        width: parent.width
+                                        text: entry.item.title || ""
+                                        color: tileMouse.containsMouse || entry.current ? Theme.accentColor : Theme.textPrimary
+                                        font.family: "Inter"
+                                        font.pixelSize: 12
+                                        elide: Text.ElideRight
+                                    }
+                                    Text {
+                                        width: parent.width
+                                        text: entry.item.artist || ""
+                                        color: Theme.textDim
+                                        font.family: "Inter"
+                                        font.pixelSize: 11
+                                        elide: Text.ElideRight
+                                    }
+                                }
+                                MouseArea {
+                                    id: tileMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: entry.book ? globe.openSheet(entry.item.id)
+                                               : entry.playable ? globe.togglePlay(entry.item.id)
+                                               : Qt.openUrlExternally(entry.item.url)
+                                }
+                                MouseArea {
+                                    id: artMouse
+                                    anchors.fill: art
+                                    enabled: entry.playable && entry.book
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: globe.togglePlay(entry.item.id)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
-        Note {
-            visible: globe.showDetails && (!globe.trendsEntry || globe.trendsEntry.state !== "ok"
-                                           || globe.trendsEntry.data.articles.length === 0)
-            text: !globe.trendsEntry || globe.trendsEntry.state === "loading" ? I18n.tr("globe.loading")
-                  : globe.trendsEntry.state === "error" ? globe.trendsEntry.data.error
-                  : I18n.tr("globe.nothing")
-        }
-        Repeater {
-            model: globe.showDetails && globe.trendsEntry && globe.trendsEntry.state === "ok"
-                   ? globe.trendsEntry.data.articles : []
-            delegate: Line {
-                required property var modelData
-                main: modelData.title
-                aside: modelData.lang
-                url: modelData.url
+    }
+
+    // ── La fiche ─────────────────────────────────────────────────
+    // Au milieu, devant tout : la couverture en grand, ce qui décrit le
+    // livre, son résumé qu'on fait défiler s'il est long ; l'extrait d'un
+    // livre audio. Un clic à côté, ou ×, la referme.
+    Item {
+        id: sheet
+        anchors.fill: parent
+        z: 10
+        visible: globe.sheetId !== ""
+        readonly property var entry: globe.sheetEntry
+        readonly property bool ready: !!sheet.entry && sheet.entry.state === "ok"
+        readonly property var it: sheet.ready ? sheet.entry.data.item : ({})
+        readonly property bool current: globe.playingId !== "" && globe.playingId === globe.sheetId
+
+        Rectangle {
+            anchors.fill: parent
+            color: Qt.alpha(Theme.bgDeep, 0.75)
+            MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: globe.sheetId = ""
             }
         }
 
-        Item { width: 1; height: 6; visible: globe.showDetails }
+        Rectangle {
+            id: panel
+            anchors.centerIn: parent
+            width: Math.min(860, sheet.width - 80)
+            height: Math.min(Math.max(bigCover.height, about.implicitHeight) + 72, sheet.height - 80)
+            radius: Theme.radius
+            color: Theme.bgElevated
+            border.color: Theme.dividerColor
 
-        // La musique
-        Heading {
-            visible: globe.showDetails
-            text: I18n.tr("globe.music")
-        }
-        Note {
-            visible: globe.showDetails && (!globe.musicEntry || globe.musicEntry.state !== "ok"
-                                           || globe.musicEntry.data.tracks.length === 0)
-            text: {
-                var e = globe.musicEntry;
-                if (!e || e.state === "loading")
-                    return I18n.tr("globe.loading");
-                if (e.state === "error")
-                    return e.data.error === "no-key" ? I18n.tr("globe.noKey")
-                         : e.data.error === "bad-key" ? I18n.tr("globe.badKey")
-                         : e.data.error;
-                return I18n.tr("globe.nothing");
+            // Les clics sur la fiche ne la referment pas.
+            MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
             }
-        }
-        Repeater {
-            model: globe.showDetails && globe.musicEntry && globe.musicEntry.state === "ok"
-                   ? globe.musicEntry.data.tracks : []
-            delegate: Line {
-                required property var modelData
-                main: modelData.title
-                aside: modelData.artist
-                url: modelData.url
+
+            Text {
+                anchors.top: parent.top
+                anchors.right: parent.right
+                anchors.margins: 16
+                text: "×"
+                color: closeMouse.containsMouse ? Theme.accentColor : Theme.textSecondary
+                font.pixelSize: 22
+                MouseArea {
+                    id: closeMouse
+                    anchors.fill: parent
+                    anchors.margins: -8
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: globe.sheetId = ""
+                }
+            }
+
+            Text {
+                visible: !sheet.ready
+                anchors.centerIn: parent
+                text: !sheet.entry || sheet.entry.state === "loading" ? I18n.tr("globe.loading")
+                      : sheet.entry.data.error
+                color: Theme.textDim
+                font.family: "Inter"
+                font.pixelSize: 14
+            }
+
+            Image {
+                id: bigCover
+                visible: sheet.ready
+                x: 36
+                y: 36
+                width: 220
+                height: sheet.it.kind === "audiobook" ? 220 : 330
+                source: sheet.it.cover ? "file://" + sheet.it.cover : (sheet.it.artwork || "")
+                sourceSize: Qt.size(440, 660)
+                fillMode: Image.PreserveAspectFit
+                verticalAlignment: Image.AlignTop
+                asynchronous: true
+            }
+
+            Column {
+                id: about
+                visible: sheet.ready
+                anchors.left: bigCover.right
+                anchors.leftMargin: 32
+                anchors.right: parent.right
+                anchors.rightMargin: 48
+                y: 36
+                spacing: 8
+
+                Text {
+                    width: parent.width
+                    text: sheet.it.title || ""
+                    color: Theme.textPrimary
+                    font.family: "Inter"
+                    font.pixelSize: 26
+                    font.weight: Font.Medium
+                    wrapMode: Text.WordWrap
+                }
+                Text {
+                    width: parent.width
+                    text: sheet.it.author || ""
+                    color: Theme.accentColor
+                    font.family: "Inter"
+                    font.pixelSize: 16
+                    wrapMode: Text.WordWrap
+                }
+                Text {
+                    width: parent.width
+                    color: Theme.textSecondary
+                    font.family: "Inter"
+                    font.pixelSize: 13
+                    wrapMode: Text.WordWrap
+                    text: [sheet.it.price || "",
+                           sheet.it.ratings > 0
+                           ? "★ " + Number(sheet.it.rating).toLocaleString(Qt.locale(), "f", 1)
+                             + "  " + I18n.tr("globe.ratings", { n: sheet.it.ratings })
+                           : "",
+                           (sheet.it.genres || []).join(", "),
+                           sheet.it.kind === "audiobook" ? I18n.tr("globe.audiobook") : "",
+                           sheet.it.date ? sheet.it.date.split("-").reverse().join("/") : "",
+                           sheet.it.publisher || ""].filter(function (x) { return x; }).join("   ·   ")
+                }
+
+                Item { width: 1; height: 6 }
+
+                Flickable {
+                    id: summary
+                    visible: !!sheet.it.description
+                    width: parent.width
+                    height: Math.min(summaryText.implicitHeight, 460,
+                                     sheet.height - 80 - 72 - summary.y)
+                    contentHeight: summaryText.implicitHeight
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+
+                    Text {
+                        id: summaryText
+                        width: summary.width
+                        text: sheet.it.description || ""
+                        color: Theme.textPrimary
+                        font.family: "Inter"
+                        font.pixelSize: 15
+                        lineHeight: 1.35
+                        wrapMode: Text.WordWrap
+                    }
+                }
+
+                Item { width: 1; height: 6 }
+
+                Row {
+                    spacing: 24
+
+                    Text {
+                        visible: !!sheet.it.preview
+                        text: !sheet.current ? "▶  " + I18n.tr("globe.listen")
+                              : globe.playing ? "■  " + I18n.tr("globe.stop") : "…"
+                        color: listenMouse.containsMouse || sheet.current ? Theme.accentColor : Theme.textSecondary
+                        font.family: "Inter"
+                        font.pixelSize: 13
+                        MouseArea {
+                            id: listenMouse
+                            anchors.fill: parent
+                            anchors.margins: -6
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: globe.togglePlay(globe.sheetId)
+                        }
+                    }
+                    Text {
+                        visible: !!sheet.it.url
+                        text: I18n.tr("globe.openStore") + "  ↗"
+                        color: storeMouse.containsMouse ? Theme.accentColor : Theme.textSecondary
+                        font.family: "Inter"
+                        font.pixelSize: 13
+                        MouseArea {
+                            id: storeMouse
+                            anchors.fill: parent
+                            anchors.margins: -6
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: Qt.openUrlExternally(sheet.it.url)
+                        }
+                    }
+                }
             }
         }
     }
@@ -457,7 +806,15 @@ Item {
         property real velocity: 0
         property bool moved: false
 
-        onExited: globe.hoverId = 0
+        // Sur le cartouche, qui couvre le bas de la place : le pays affiché ne
+        // bouge plus.
+        property bool overCard: false
+
+        onExited: {
+            globe.hoverId = 0;
+            if (!globe.frozen && globe.selectId)
+                globe.infoId = globe.selectId;
+        }
         onPressed: (mouse) => {
             pressX = mouse.x;
             lastX = mouse.x;
@@ -469,7 +826,9 @@ Item {
         }
         onPositionChanged: (mouse) => {
             if (!pressed) {
-                globe.hoverId = globe.countryAt(mouse.x, mouse.y);
+                var p = hand.mapToItem(card, mouse.x, mouse.y);
+                hand.overCard = card.visible && card.contains(p);
+                globe.hoverId = hand.overCard ? 0 : globe.countryAt(mouse.x, mouse.y);
                 return;
             }
             if (Math.abs(mouse.x - pressX) > 4)
