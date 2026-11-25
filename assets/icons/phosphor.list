@@ -19,6 +19,7 @@ code          regular  code
 copy          regular  copy
 eye           regular  eye
 folder        regular  folder
+folder-new    regular  folder-plus
 split         regular  rows
 lock          regular  lock
 logout        regular  sign-out
@@ -27,6 +28,7 @@ music         regular  music-notes
 notes         regular  note
 phone         regular  device-mobile
 pin           regular  push-pin
+pin-fill      fill     push-pin
 power         regular  power
 reboot        regular  arrow-clockwise
 screenshot    regular  selection

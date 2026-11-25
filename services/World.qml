@@ -9,13 +9,13 @@ import Quickshell.Io
 // garde les réponses en cache :
 //
 //   apple <CC>    les classements d'Apple dans le pays : ebooks payants et
-//                 gratuits, livres audio (Apple Books), titres les plus
-//                 écoutés (Apple Music) ; une liste vide là où la boutique
+//                 gratuits (Apple Books), titres les plus écoutés
+//                 (Apple Music) ; une liste vide là où la boutique
 //                 n'existe pas ; un livre y porte `cover`, sa couverture
 //                 sur le disque
 //   item <CC> <id>  la fiche d'une entrée de ces classements : pour un
-//                 livre, résumé, prix, note des lecteurs ; pour un livre
-//                 audio ou un titre, l'adresse de son extrait (`preview`)
+//                 livre, résumé, prix, note des lecteurs ; pour un
+//                 titre de musique, l'adresse de son extrait (`preview`)
 //
 // Les réponses sont tenues par code de pays : { state, data }, où state
 // vaut "loading", "ok" ou "error" (data.error dit pourquoi). Une demande

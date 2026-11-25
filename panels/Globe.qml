@@ -357,14 +357,15 @@ Item {
 
     // ── Le cartouche ─────────────────────────────────────────────
     // En bas à gauche de la place : le nom du pays et ses classements Apple
-    // l'un sous l'autre, chacun en rangée de vignettes (services/World.qml). Un livre ouvre sa fiche au milieu, devant
-    // tout ; un livre audio ou un titre de musique joue son extrait, 30 s
-    // qu'Apple sert (le ▶ de la vignette ; pour la musique, toute la ligne).
+    // l'un sous l'autre, chacun en rangée de vignettes (services/World.qml)
+    // qu'on fait défiler. Un livre ouvre sa fiche au milieu, devant tout ; un
+    // titre de musique joue son extrait, 30 s qu'Apple sert.
     readonly property var appleEntry: globe.infoCode ? World.apple[globe.infoCode] : undefined
     readonly property bool showDetails: globe.infoId > 0
-    // Les vignettes d'une rangée : trois, côte à côte.
+    // Les vignettes d'une rangée : trois et le début de la suivante, qui
+    // dit que la rangée défile.
     readonly property real tileGap: 16
-    readonly property real tileW: (card.width - 2 * globe.tileGap) / 3
+    readonly property real tileW: (card.width - 3 * globe.tileGap) / 3.4
 
     // La fiche ouverte : l'identifiant Apple du livre, ou "".
     property string sheetId: ""
@@ -485,10 +486,9 @@ Item {
 
             Repeater {
                 model: [
-                    { key: "paid", title: "globe.booksPaid", book: true, playable: false, square: false },
-                    { key: "free", title: "globe.booksFree", book: true, playable: false, square: false },
-                    { key: "audio", title: "globe.audiobooks", book: true, playable: true, square: true },
-                    { key: "music", title: "globe.music", book: false, playable: true, square: true },
+                    { key: "paid", title: "globe.booksPaid", book: true },
+                    { key: "free", title: "globe.booksFree", book: true },
+                    { key: "music", title: "globe.music", book: false },
                 ]
                 delegate: Column {
                     id: rubric
@@ -507,88 +507,101 @@ Item {
                               : rubric.entry.state === "error" ? rubric.entry.data.error
                               : I18n.tr("globe.nothing")
                     }
-                    Row {
-                        spacing: globe.tileGap
+                    Flickable {
+                        id: strip
+                        width: card.width
+                        height: tiles.implicitHeight
+                        contentWidth: tiles.implicitWidth
+                        contentHeight: height
+                        flickableDirection: Flickable.HorizontalFlick
+                        boundsBehavior: Flickable.StopAtBounds
+                        clip: true
 
-                        Repeater {
-                            model: rubric.items
-                            // Une vignette : la couverture, puis le titre et
-                            // l'auteur. `book` ouvre la fiche au clic,
-                            // `playable` joue l'extrait (▶ sur la couverture) ;
-                            // la musique, qui n'a pas de fiche, le joue d'un
-                            // clic n'importe où.
-                            delegate: Item {
-                                id: entry
-                                required property var modelData
-                                readonly property var item: entry.modelData
-                                readonly property bool book: rubric.modelData.book
-                                readonly property bool playable: rubric.modelData.playable
-                                readonly property bool square: rubric.modelData.square
-                                readonly property bool current: globe.playingId !== "" && globe.playingId === entry.item.id
-                                width: globe.tileW
-                                height: art.height + 6 + words.implicitHeight
+                        // Un autre pays : la rangée repart du premier.
+                        Connections {
+                            target: rubric
+                            function onItemsChanged() { strip.contentX = 0; }
+                        }
 
-                                Image {
-                                    id: art
-                                    width: entry.square ? 72 : 48
-                                    height: 72
-                                    source: entry.item.cover ? "file://" + entry.item.cover : (entry.item.artwork || "")
-                                    sourceSize: Qt.size(144, 144)
-                                    fillMode: Image.PreserveAspectCrop
-                                    asynchronous: true
-                                }
-                                Rectangle {
-                                    anchors.fill: art
-                                    visible: entry.playable && (artMouse.containsMouse
-                                                                || tileMouse.containsMouse && !entry.book
-                                                                || entry.current)
-                                    color: Qt.alpha("black", 0.5)
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: !entry.current ? "▶" : globe.playing ? "■" : "…"
-                                        color: "white"
-                                        font.pixelSize: 18
+                        // La molette verticale fait défiler la rangée.
+                        WheelHandler {
+                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                            onWheel: (event) => {
+                                var step = event.angleDelta.y !== 0 ? event.angleDelta.y : event.angleDelta.x;
+                                strip.contentX = Math.max(0, Math.min(Math.max(0, strip.contentWidth - strip.width),
+                                                                     strip.contentX - step / 120 * (globe.tileW + globe.tileGap)));
+                            }
+                        }
+
+                        Row {
+                            id: tiles
+                            spacing: globe.tileGap
+
+                            Repeater {
+                                model: rubric.items
+                                // Une vignette : la couverture, puis le titre et
+                                // l'auteur. Un clic ouvre la fiche d'un livre
+                                // (`book`), joue l'extrait d'un titre de musique.
+                                delegate: Item {
+                                    id: entry
+                                    required property var modelData
+                                    readonly property var item: entry.modelData
+                                    readonly property bool book: rubric.modelData.book
+                                    readonly property bool current: globe.playingId !== "" && globe.playingId === entry.item.id
+                                    width: globe.tileW
+                                    height: art.height + 6 + words.implicitHeight
+
+                                    Image {
+                                        id: art
+                                        width: entry.book ? 48 : 72
+                                        height: 72
+                                        source: entry.item.cover ? "file://" + entry.item.cover : (entry.item.artwork || "")
+                                        sourceSize: Qt.size(144, 144)
+                                        fillMode: Image.PreserveAspectCrop
+                                        asynchronous: true
                                     }
-                                }
-                                Column {
-                                    id: words
-                                    anchors.top: art.bottom
-                                    anchors.topMargin: 6
-                                    width: parent.width
-                                    spacing: 1
-                                    Text {
+                                    Rectangle {
+                                        anchors.fill: art
+                                        visible: !entry.book && (tileMouse.containsMouse || entry.current)
+                                        color: Qt.alpha("black", 0.5)
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: !entry.current ? "▶" : globe.playing ? "■" : "…"
+                                            color: "white"
+                                            font.pixelSize: 18
+                                        }
+                                    }
+                                    Column {
+                                        id: words
+                                        anchors.top: art.bottom
+                                        anchors.topMargin: 6
                                         width: parent.width
-                                        text: entry.item.title || ""
-                                        color: tileMouse.containsMouse || entry.current ? Theme.accentColor : Theme.textPrimary
-                                        font.family: "Inter"
-                                        font.pixelSize: 12
-                                        elide: Text.ElideRight
+                                        spacing: 1
+                                        Text {
+                                            width: parent.width
+                                            text: entry.item.title || ""
+                                            color: tileMouse.containsMouse || entry.current ? Theme.accentColor : Theme.textPrimary
+                                            font.family: "Inter"
+                                            font.pixelSize: 12
+                                            elide: Text.ElideRight
+                                        }
+                                        Text {
+                                            width: parent.width
+                                            text: entry.item.artist || ""
+                                            color: Theme.textDim
+                                            font.family: "Inter"
+                                            font.pixelSize: 11
+                                            elide: Text.ElideRight
+                                        }
                                     }
-                                    Text {
-                                        width: parent.width
-                                        text: entry.item.artist || ""
-                                        color: Theme.textDim
-                                        font.family: "Inter"
-                                        font.pixelSize: 11
-                                        elide: Text.ElideRight
+                                    MouseArea {
+                                        id: tileMouse
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: entry.book ? globe.openSheet(entry.item.id)
+                                                              : globe.togglePlay(entry.item.id)
                                     }
-                                }
-                                MouseArea {
-                                    id: tileMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: entry.book ? globe.openSheet(entry.item.id)
-                                               : entry.playable ? globe.togglePlay(entry.item.id)
-                                               : Qt.openUrlExternally(entry.item.url)
-                                }
-                                MouseArea {
-                                    id: artMouse
-                                    anchors.fill: art
-                                    enabled: entry.playable && entry.book
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: globe.togglePlay(entry.item.id)
                                 }
                             }
                         }
@@ -600,8 +613,8 @@ Item {
 
     // ── La fiche ─────────────────────────────────────────────────
     // Au milieu, devant tout : la couverture en grand, ce qui décrit le
-    // livre, son résumé qu'on fait défiler s'il est long ; l'extrait d'un
-    // livre audio. Un clic à côté, ou ×, la referme.
+    // livre, son résumé qu'on fait défiler s'il est long.
+    // Un clic à côté, ou ×, la referme.
     Item {
         id: sheet
         anchors.fill: parent
@@ -610,7 +623,6 @@ Item {
         readonly property var entry: globe.sheetEntry
         readonly property bool ready: !!sheet.entry && sheet.entry.state === "ok"
         readonly property var it: sheet.ready ? sheet.entry.data.item : ({})
-        readonly property bool current: globe.playingId !== "" && globe.playingId === globe.sheetId
 
         Rectangle {
             anchors.fill: parent
@@ -670,7 +682,7 @@ Item {
                 x: 36
                 y: 36
                 width: 220
-                height: sheet.it.kind === "audiobook" ? 220 : 330
+                height: 330
                 source: sheet.it.cover ? "file://" + sheet.it.cover : (sheet.it.artwork || "")
                 sourceSize: Qt.size(440, 660)
                 fillMode: Image.PreserveAspectFit
@@ -717,7 +729,6 @@ Item {
                              + "  " + I18n.tr("globe.ratings", { n: sheet.it.ratings })
                            : "",
                            (sheet.it.genres || []).join(", "),
-                           sheet.it.kind === "audiobook" ? I18n.tr("globe.audiobook") : "",
                            sheet.it.date ? sheet.it.date.split("-").reverse().join("/") : "",
                            sheet.it.publisher || ""].filter(function (x) { return x; }).join("   ·   ")
                 }
@@ -751,22 +762,6 @@ Item {
                 Row {
                     spacing: 24
 
-                    Text {
-                        visible: !!sheet.it.preview
-                        text: !sheet.current ? "▶  " + I18n.tr("globe.listen")
-                              : globe.playing ? "■  " + I18n.tr("globe.stop") : "…"
-                        color: listenMouse.containsMouse || sheet.current ? Theme.accentColor : Theme.textSecondary
-                        font.family: "Inter"
-                        font.pixelSize: 13
-                        MouseArea {
-                            id: listenMouse
-                            anchors.fill: parent
-                            anchors.margins: -6
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: globe.togglePlay(globe.sheetId)
-                        }
-                    }
                     Text {
                         visible: !!sheet.it.url
                         text: I18n.tr("globe.openStore") + "  ↗"

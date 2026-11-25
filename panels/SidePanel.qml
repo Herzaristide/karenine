@@ -65,6 +65,15 @@ PanelWindow { // qmllint disable uncreatable-type
     readonly property int panelW: Math.max(panel.minW, Math.min(panel.maxW, Widgets.panelWidth))
     readonly property int lipR: Theme.radius
 
+    // Le bord gauche qu'on tire : la largeur suit le pointeur (`dragW`),
+    // mais ni la fenêtre ni la zone réservée ne bougent avant qu'on lâche.
+    // Redimensionner la surface à chaque mouvement la faisait courir après
+    // le pointeur (ses coordonnées glissent avec elle), et Hyprland
+    // rejouait l'animation de toutes les fenêtres à chaque pixel.
+    property bool resizing: false
+    property int dragW: panel.panelW
+    readonly property int shownW: panel.resizing ? panel.dragW : panel.panelW
+
     // Le génie. À l'ouverture, il jaillit (le début n'est qu'un filet
     // au-dessus du bouton : il ne doit pas s'y attarder) puis se pose en
     // douceur ; à la fermeture, il part aussitôt, plus vite encore, et
@@ -123,7 +132,11 @@ PanelWindow { // qmllint disable uncreatable-type
         right: true
         bottom: true
     }
-    implicitWidth: panel.panelW + panel.lipR
+    // Toujours la largeur permise : la surface n'est jamais redimensionnée
+    // (Hyprland la replace de façon asynchrone, et le panneau sautait). Le
+    // panneau se tient contre le bord droit ; à sa gauche, rien de dessiné
+    // et rien qui prenne la souris (mask).
+    implicitWidth: panel.maxW + panel.lipR
     // Les fenêtres se poussent dès l'ouverture, et reviennent à la fin de la
     // fermeture.
     // À l'ouverture, aussitôt ; à la fermeture, la place reste réservée
@@ -161,15 +174,15 @@ PanelWindow { // qmllint disable uncreatable-type
         visible: panel.live
 
         Lip {
-            x: panel.lipR
-            width: panel.panelW
+            x: parent.width - panel.shownW
+            width: panel.shownW
             height: parent.height
         }
 
         Item {
             id: panelArea
-            x: panel.lipR
-            width: panel.panelW
+            x: parent.width - panel.shownW
+            width: panel.shownW
             height: parent.height
 
             Item {
@@ -405,9 +418,13 @@ PanelWindow { // qmllint disable uncreatable-type
     // ── Le génie ─────────────────────────────────────────────────
     // L'image du panneau ouvert, sur une grille fine en hauteur (les flancs
     // s'incurvent) : shaders/genie.vert la tire vers le bouton.
+    // Seulement sur le panneau et son coin creusé, pas sur le vide à gauche.
     ShaderEffect {
         id: genie
-        anchors.fill: parent
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        anchors.right: parent.right
+        width: panel.panelW + panel.lipR
         visible: panel.reveal > 0 && !panel.settled
 
         property real t: 1 - panel.reveal
@@ -417,6 +434,7 @@ PanelWindow { // qmllint disable uncreatable-type
         property real buttonR: genie.width - panel.buttonInset
         property var source: ShaderEffectSource {
             sourceItem: sheet
+            sourceRect: Qt.rect(sheet.width - genie.width, 0, genie.width, sheet.height)
             hideSource: genie.visible
             live: true
         }
@@ -430,7 +448,8 @@ PanelWindow { // qmllint disable uncreatable-type
     // Rien ne le montre : le curseur change au survol. La fenêtre garde son
     // bord droit collé à l'écran ; tirer vers la gauche l'élargit.
     MouseArea {
-        x: panel.lipR
+        id: grip
+        x: panelArea.x
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         width: 8
@@ -439,15 +458,31 @@ PanelWindow { // qmllint disable uncreatable-type
         cursorShape: Qt.SizeHorCursor
         preventStealing: true
 
-        property real pressX: 0
-        onPressed: (mouse) => pressX = mouse.x
-        // La fenêtre suit, et le bord revient sous le curseur : chaque
-        // mouvement ne compte que l'écart depuis le précédent.
-        onPositionChanged: (mouse) => {
-            if (!pressed)
-                return;
-            Widgets.panelWidth = Math.round(Math.max(panel.minW, Math.min(panel.maxW,
-                                                     panel.panelW - (mouse.x - pressX))));
+        // Où, dans la poignée, on l'a prise : le bord garde cet écart au
+        // pointeur. Tout se compte depuis le bord droit de la fenêtre, collé
+        // à l'écran, qui ne bouge pas.
+        property real grab: 0
+        function edgeAt(mouse) {
+            return grip.mapToItem(null, mouse.x, 0).x;
         }
+        onPressed: (mouse) => {
+            grip.grab = grip.edgeAt(mouse) - panelArea.x;
+            panel.dragW = panel.panelW;
+            panel.resizing = true;
+        }
+        onPositionChanged: (mouse) => {
+            if (!panel.resizing)
+                return;
+            var w = panel.width - (grip.edgeAt(mouse) - grip.grab);
+            panel.dragW = Math.round(Math.max(panel.minW, Math.min(panel.maxW, w)));
+        }
+        function commit() {
+            if (!panel.resizing)
+                return;
+            Widgets.panelWidth = panel.dragW;
+            panel.resizing = false;
+        }
+        onReleased: grip.commit()
+        onCanceled: grip.commit()
     }
 }

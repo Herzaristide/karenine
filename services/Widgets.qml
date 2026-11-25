@@ -18,7 +18,8 @@ Singleton {
     id: widgets
 
     readonly property var names: ["explorer", "stats", "agenda", "lecteur", "musique", "claude", "reglages",
-        "son", "micro", "wifi", "bluetooth", "telephone", "notifications", "energie", "alimentation", "taches"]
+        "son", "micro", "wifi", "bluetooth", "telephone", "notifications", "energie", "alimentation", "taches",
+        "applications"]
 
     // Le nom donné par le pilote → l'onglet du panneau. Les anciens noms
     // (« metronome », « network »…) mènent à l'onglet qui les contient
@@ -32,7 +33,8 @@ Singleton {
     // Le nom donné par le pilote → le volet de la barre (Bar.qml `pop`).
     readonly property var pops: ({
         son: "sound", micro: "mic", wifi: "wifi", bluetooth: "bluetooth", telephone: "phone",
-        notifications: "notifications", energie: "energy", alimentation: "power", taches: "tasks"
+        notifications: "notifications", energie: "energy", alimentation: "power", taches: "tasks",
+        applications: "apps"
     })
     // action : "ouvrir", "fermer" ou "basculer" ; la barre l'applique.
     signal popRequested(string pop, string action)
@@ -155,7 +157,8 @@ Singleton {
     property bool pickOpenedPanel: false
 
     function explorerPickStart(req) {
-        if (!req || !req.reply || ["open", "dir", "save"].indexOf(req.mode) < 0)
+        // `done` : une fonction du shell (ClaudeChat), au lieu d'une FIFO.
+        if (!req || !(req.reply || req.done) || ["open", "dir", "save"].indexOf(req.mode) < 0)
             return;
         // Une demande encore en cours : annulée, la nouvelle passe devant.
         if (widgets.explorerPick)
@@ -169,7 +172,7 @@ Singleton {
         }
         widgets.pickOpenedPanel = !widgets.panelOpen;
         widgets.explorerPick = { mode: req.mode, multiple: req.multiple === true,
-                                 reply: req.reply, name: name };
+                                 reply: req.reply || "", done: req.done || null, name: name };
         if (start.startsWith("/"))
             widgets.explorerShow(start, true);
         else
@@ -182,6 +185,11 @@ Singleton {
         if (!pick)
             return;
         widgets.explorerPick = null;
+        if (pick.done) {
+            widgets.pickOpenedPanel = false;
+            pick.done(paths);
+            return;
+        }
         var text = paths.filter(p => p.indexOf("\n") < 0).map(p => p + "\n").join("");
         Quickshell.execDetached(["sh", "-c", "printf '%s' \"$1\" > \"$2\"", "--", text, pick.reply]);
         if (widgets.pickOpenedPanel)

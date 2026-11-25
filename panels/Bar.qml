@@ -6,6 +6,7 @@ import Quickshell
 import Quickshell.Wayland
 import Quickshell.Hyprland
 import Quickshell.Bluetooth
+import Quickshell.Io
 import "../services"
 import "../widgets"
 
@@ -20,9 +21,11 @@ import "../widgets"
 //                                                                                   notif.
 //
 // Les workspaces 1-5 de l'écran montrent les icônes de leurs fenêtres ; un
-// clic y va. Le flocon parle au pilote : un clic ouvre le micro, la phrase
-// s'écrit dans le champ pendant qu'on parle (anna la transcrit en local),
-// puis part au pilote ; le mot d'éveil fait la même chose. Ce qu'on tape
+// clic y va. Le flocon ouvre son volet : les outils de karenine et les
+// applications (widgets/AppsPop.qml). Le micro, au bout du champ, parle au
+// pilote : la phrase s'écrit dans le champ pendant qu'on parle (anna la
+// transcrit en local), puis part au pilote ; le mot d'éveil fait la même
+// chose. Ce qu'on tape
 // cherche (applications, fichiers, réglages, web — le service Search) et
 // part au pilote avec Entrée.
 //
@@ -52,7 +55,11 @@ PanelWindow { // qmllint disable uncreatable-type
     // sinon. Pas pendant un glisser depuis l'explorateur : Hyprland ne
     // donnerait plus le pointeur aux fenêtres, qui ne verraient jamais le
     // fichier arriver.
-    WlrLayershell.keyboardFocus: bar.focusRequested && !DragState.active
+    // Le clavier rendu, un instant à personne : Hyprland le redonne aussitôt
+    // à la fenêtre d'avant (en OnDemand, la barre le garderait jusqu'au
+    // prochain clic ailleurs, et les frappes s'y perdraient).
+    WlrLayershell.keyboardFocus: bar.dropKeyboard ? WlrKeyboardFocus.None
+                                 : bar.focusRequested && !DragState.active
                                  ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand
 
     anchors { // qmllint disable unqualified unresolved-type
@@ -87,15 +94,101 @@ PanelWindow { // qmllint disable uncreatable-type
     }
 
     function release() {
+        var had = bar.focusRequested;
         input.text = "";
         answer.hide();
         bar.selected = -1;
         bar.focusRequested = false;
         input.focus = false;
+        if (had)
+            bar.dropFocus();
+    }
+
+    // Le champ appelé par Super rend le clavier au moindre geste : la souris
+    // qui s'en va, un autre bureau, une fenêtre qui s'ouvre. Vide, il repart
+    // comme d'un Échap ; ce qu'on y avait tapé reste, un clic le reprend.
+    function loseFocus() {
+        if (!bar.focusRequested)
+            return;
+        if (input.text.length === 0) {
+            bar.release();
+            return;
+        }
+        bar.focusRequested = false;
+        input.focus = false;
+        bar.dropFocus();
+    }
+
+    property bool dropKeyboard: false
+    function dropFocus() {
+        bar.dropKeyboard = true;
+        dropTimer.restart();
+    }
+    Timer {
+        id: dropTimer
+        interval: 120
+        onTriggered: bar.dropKeyboard = false
+    }
+
+    // La souris sur la barre, ses suggestions ou sa réponse : on s'en sert.
+    readonly property bool pointerInside: stripHover.hovered || answerHover.hovered || resultsHover.hovered
+
+    // Le pointeur, suivi tant que le champ tient le clavier (Hyprland ne dit
+    // pas quand il bouge ailleurs, et une surface n'en voit que ce qui passe
+    // sur elle). Il bouge hors de la barre : le champ rend le clavier.
+    property point cursorOrigin: Qt.point(0, 0)
+    property bool cursorKnown: false
+    Timer {
+        interval: 80
+        repeat: true
+        triggeredOnStart: true
+        running: bar.focusRequested
+        onRunningChanged: bar.cursorKnown = false
+        onTriggered: if (!cursorProc.running) cursorProc.running = true
+    }
+    Process {
+        id: cursorProc
+        command: ["hyprctl", "cursorpos"]
+        stdout: StdioCollector { id: cursorOut }
+        onRunningChanged: if (!running) bar.cursorAt(cursorOut.text)
+    }
+    function cursorAt(text) {
+        if (!bar.focusRequested)
+            return;
+        var m = /(-?\d+)\s*,\s*(-?\d+)/.exec(text);
+        if (!m)
+            return;
+        var p = Qt.point(Number(m[1]), Number(m[2]));
+        if (!bar.cursorKnown || bar.pointerInside) {
+            bar.cursorOrigin = p;
+            bar.cursorKnown = true;
+            return;
+        }
+        if (Math.abs(p.x - bar.cursorOrigin.x) + Math.abs(p.y - bar.cursorOrigin.y) > 10)
+            bar.loseFocus();
+    }
+
+    // Un autre bureau, un autre écran, une fenêtre qui s'ouvre (un raccourci
+    // tapé par-dessus) : le geste est ailleurs.
+    Connections {
+        target: Hyprland
+        function onRawEvent(event) {
+            if (!bar.focusRequested)
+                return;
+            switch (event.name) {
+            case "workspacev2":
+            case "focusedmonv2":
+            case "activespecialv2":
+            case "openwindow":
+                bar.loseFocus();
+            }
+        }
     }
 
     onFocusRequestedChanged: {
         if (focusRequested) {
+            dropTimer.stop();
+            bar.dropKeyboard = false;
             bar.pop = "";
             input.forceActiveFocus();
         } else if (input.text.length === 0) {
@@ -157,7 +250,7 @@ PanelWindow { // qmllint disable uncreatable-type
         function onPopRequested(name, action) {
             var buttons = {
                 sound: soundBtn, mic: micBtn, wifi: wifiBtn, bluetooth: btBtn, phone: phoneBtn,
-                notifications: notifBtn, tasks: tasksBtn, power: powerBtn,
+                notifications: notifBtn, tasks: tasksBtn, power: powerBtn, apps: logo,
                 energy: batteryBtn.visible ? batteryBtn : clockBtn
             };
             var on = action === "ouvrir" ? true
@@ -212,7 +305,7 @@ PanelWindow { // qmllint disable uncreatable-type
     // La largeur du contenu de chaque volet.
     readonly property var popWidths: ({
         "wifi": 320, "bluetooth": 320, "sound": 300, "mic": 300,
-        "notifications": 380, "energy": 300, "tasks": 380
+        "notifications": 380, "energy": 300, "tasks": 380, "apps": 400
     })
 
     // ── La recherche ─────────────────────────────────────────────
@@ -712,6 +805,7 @@ PanelWindow { // qmllint disable uncreatable-type
             NotificationCenter {}
         }
         Component { id: energyPop; EnergyCard {} }
+        Component { id: appsPop; AppsPop { onLaunched: bar.pop = "" } }
         Component {
             id: tasksPop
             TaskList {
@@ -854,7 +948,7 @@ PanelWindow { // qmllint disable uncreatable-type
                 anchors.leftMargin: 14
             }
 
-            // ── Le flocon : parler au pilote ──
+            // ── Le flocon : les outils et les applications ──
             Item {
                 id: logo
                 anchors.left: wsSep.right
@@ -870,7 +964,7 @@ PanelWindow { // qmllint disable uncreatable-type
                     height: width
                     radius: width / 2
                     color: Theme.selectedFill
-                    opacity: bar.voiceOn ? 1 : logoMa.containsMouse ? 0.6 : 0
+                    opacity: bar.voiceOn || bar.pop === "apps" ? 1 : logoMa.containsMouse ? 0.6 : 0
                     Behavior on opacity { NumberAnimation { duration: 200 } }
                 }
 
@@ -926,8 +1020,7 @@ PanelWindow { // qmllint disable uncreatable-type
                     anchors.margins: -6
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    // Parler au pilote, ou couper l'écoute en cours.
-                    onClicked: Pilot.voiceToggle(true)
+                    onClicked: bar.togglePop("apps", logo)
                 }
             }
 
@@ -945,7 +1038,7 @@ PanelWindow { // qmllint disable uncreatable-type
                 TextInput {
                     id: input
                     anchors.left: parent.left
-                    anchors.right: sendBtn.left
+                    anchors.right: voiceBtn.left
                     anchors.rightMargin: 8
                     anchors.top: parent.top
                     anchors.bottom: parent.bottom
@@ -998,7 +1091,7 @@ PanelWindow { // qmllint disable uncreatable-type
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.left: parent.left
-                    anchors.right: sendBtn.left
+                    anchors.right: voiceBtn.left
                     readonly property bool on: !bar.voiceOn && input.text.length === 0
                     opacity: on ? 1 : 0
                     anchors.leftMargin: on ? 0 : 10
@@ -1018,7 +1111,7 @@ PanelWindow { // qmllint disable uncreatable-type
                 Row {
                     id: listening
                     anchors.left: parent.left
-                    anchors.right: sendBtn.left
+                    anchors.right: voiceBtn.left
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 12
                     opacity: bar.voiceOn ? 1 : 0
@@ -1078,6 +1171,34 @@ PanelWindow { // qmllint disable uncreatable-type
                         font.family: bar.uiFont
                         font.pixelSize: 12
                         color: Theme.textDim
+                    }
+                }
+
+                // Le micro : parler au pilote, ou finir l'écoute en cours.
+                Rectangle {
+                    id: voiceBtn
+                    anchors.right: sendBtn.left
+                    anchors.rightMargin: sendBtn.on ? 6 : 0
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 32
+                    height: 32
+                    radius: Theme.radiusSmall
+                    color: bar.voiceOn ? Qt.alpha(Theme.accentColor, 0.2 + 0.5 * bar.level)
+                         : voiceMa.containsMouse ? Theme.hoverOverlay : "transparent"
+                    Behavior on color { ColorAnimation { duration: 120 } }
+                    NixIcon {
+                        anchors.centerIn: parent
+                        iconSize: 16
+                        source: "../assets/ui/mic.svg"
+                        color: bar.voiceOn ? Theme.accentColor
+                             : voiceMa.containsMouse ? Theme.textPrimary : Theme.iconColor
+                    }
+                    MouseArea {
+                        id: voiceMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: Pilot.voiceToggle(true)
                     }
                 }
 
@@ -1719,7 +1840,12 @@ PanelWindow { // qmllint disable uncreatable-type
             readonly property int rowH: 40
             readonly property int maxRows: 8
             readonly property int pad: 8
+            // Seulement quand le champ a le clavier : le texte gardé après
+            // un geste ailleurs reste dans le champ, sans sa liste. Le pointeur
+            // dessus la retient, le temps d'un clic sur une suggestion (cliquer
+            // ici peut donner le clavier à cette autre surface).
             readonly property bool on: bar.searching && bar.pop === "" && Search.results.length > 0
+                                       && (input.activeFocus || resultsHover.hovered)
 
             anchors.bottom: parent.bottom
             anchors.bottomMargin: bar.barH
@@ -1734,6 +1860,8 @@ PanelWindow { // qmllint disable uncreatable-type
             property real drop: results.on ? 0 : 10
             Behavior on drop { NumberAnimation { duration: 420; easing.type: Easing.OutQuint } }
             transform: Translate { y: results.drop }
+
+            HoverHandler { id: resultsHover }
 
             Lip {
                 anchors.fill: parent
@@ -2080,7 +2208,7 @@ PanelWindow { // qmllint disable uncreatable-type
                     sourceComponent: ({
                         "wifi": wifiPop, "bluetooth": btPop, "sound": soundPop,
                         "mic": micPop, "notifications": notifPop,
-                        "energy": energyPop, "tasks": tasksPop
+                        "energy": energyPop, "tasks": tasksPop, "apps": appsPop
                     })[popHost.shown] || null
                 }
             }

@@ -225,9 +225,11 @@ Item {
         root.menuTarget = { path: path, isDir: isDir, below: below,
                             paths: paths && paths.length > 0 ? paths : [path], isVoid: isVoid === true };
         contextMenu.x = Math.max(4, Math.min(x, root.width - contextMenu.width - 4));
-        // Sa hauteur à venir (le Repeater n'a pas encore suivi).
+        // Sa hauteur à venir (le Repeater n'a pas encore suivi) ; les
+        // propriétés au plus long (la date de création peut manquer).
         var h = root.menuActions.reduce((s, a) => s + (a.divider ? 10 : 31), 11)
-              + (root.menuInline.length > 0 ? 35 : 0);
+              + (root.menuInline.length > 0 ? 35 : 0)
+              + 14 + root.propRowH * (root.menuTarget.paths.length > 1 ? 3 : 6);
         contextMenu.y = Math.max(4, Math.min(y, root.height - h - 4));
         contextMenu.forceActiveFocus();
     }
@@ -241,6 +243,11 @@ Item {
             out.push({ glyph: t.isDir ? "../assets/icons/folder.svg" : "../assets/icons/file.svg",
                        label: I18n.tr("explorer.open"), run: () => root.openPath(t.path, t.isDir, t.below),
                        leaves: !t.isDir });
+        // Dans le dossier montré, qu'on ait cliqué le vide ou un élément
+        // (une liste pleine n'a plus de vide).
+        var into = t.isVoid ? t.path : root.parentOf(t.path);
+        out.push({ glyph: "../assets/icons/folder-new.svg", label: I18n.tr("explorer.newFolder"),
+                   run: () => root.startCreate(into), leaves: false });
         if (!t.isVoid) {
             if (t.paths.length === 1)
                 out.push({ glyph: "../assets/icons/pencil.svg", label: I18n.tr("explorer.rename"),
@@ -301,6 +308,114 @@ Item {
         return e ? e.isDir : splitPane.isDir(p);
     }
 
+    // ── Les propriétés, en pied du menu ──────────────────────────
+    // Un élément : chemin, type, taille, dates, droits ; une sélection : son
+    // dossier, combien, la taille totale. Lues par stat (et du pour un
+    // dossier : au plus 3 s, jamais sur un serveur monté) dès que le menu
+    // s'ouvre ; « … » en attendant. Un clic sur le chemin le copie.
+    property var props: ({})
+    readonly property int propRowH: 19
+    readonly property string propsScript:
+        "heavy=\"$1\"; shift; " +
+        "if [ $# -eq 1 ]; then " +
+        "  f='size\\t%s\\nmtime\\t%Y\\nbirth\\t%W\\nmode\\t%A\\nowner\\t%U:%G\\n'; " +
+        "  stat -L --printf \"$f\" -- \"$1\" 2>/dev/null || stat --printf \"$f\" -- \"$1\"; " +
+        "  [ -L \"$1\" ] && printf 'link\\t%s\\n' \"$(readlink -- \"$1\")\"; " +
+        "  if [ -d \"$1\" ]; then printf 'count\\t%s\\n' \"$(ls -A -- \"$1\" 2>/dev/null | wc -l)\"; " +
+        "  else command -v file >/dev/null && printf 'mime\\t%s\\n' \"$(file -bL --mime-type -- \"$1\")\"; exit 0; fi; " +
+        "fi; " +
+        "[ \"$heavy\" = 1 ] && s=$(timeout 3 du -sbc -- \"$@\" 2>/dev/null | tail -n1 | cut -f1) " +
+        "  && [ -n \"$s\" ] && printf 'total\\t%s\\n' \"$s\"; true"
+    onMenuTargetChanged: {
+        root.props = {};
+        var t = root.menuTarget;
+        if (!t) {
+            propsProc.wanted = null;
+            propsProc.running = false;
+            return;
+        }
+        var heavy = t.paths.every(p => root.mountOf(p) === "") ? "1" : "0";
+        propsProc.wanted = ["sh", "-c", root.propsScript, "--", heavy].concat(t.paths);
+        // Un ancien encore en cours : arrêté, onExited lance le nouveau.
+        if (propsProc.running)
+            propsProc.running = false;
+        else
+            propsProc.launch();
+    }
+    Process {
+        id: propsProc
+        property var wanted: null
+        property var current: null
+        function launch() {
+            propsProc.current = propsProc.wanted;
+            propsProc.command = propsProc.wanted;
+            propsProc.running = true;
+        }
+        stdout: StdioCollector { id: propsOut }
+        onExited: {
+            if (propsProc.current !== propsProc.wanted) {
+                if (propsProc.wanted)
+                    Qt.callLater(propsProc.launch);
+                return;
+            }
+            var out = { done: true };
+            propsOut.text.split("\n").forEach(l => {
+                var tab = l.indexOf("\t");
+                if (tab > 0)
+                    out[l.substring(0, tab)] = l.substring(tab + 1);
+            });
+            root.props = out;
+        }
+    }
+    function tildePath(p) {
+        var h = root.localHome;
+        return p === h ? "~" : p.indexOf(h + "/") === 0 ? "~" + p.substring(h.length) : p;
+    }
+    function longDate(sec) {
+        var n = Number(sec);
+        if (!(n > 86400))
+            return "—";
+        return new Date(n * 1000).toLocaleString(I18n.locale, "d MMM yyyy, HH:mm");
+    }
+    // [{ label, value, copy (le texte qu'un clic copie) }]
+    readonly property var menuProps: {
+        var t = root.menuTarget;
+        if (!t)
+            return [];
+        var p = root.props;
+        var wait = "…";
+        var rows = [];
+        if (t.paths.length > 1) {
+            var parents = t.paths.map(x => root.parentOf(x));
+            var same = parents.every(x => x === parents[0]);
+            rows.push({ label: I18n.tr("explorer.prop.folder"), value: same ? root.tildePath(parents[0]) : "—",
+                        copy: same ? parents[0] : "" });
+            var dirs = t.paths.filter(x => root.isDirPath(x, t)).length;
+            rows.push({ label: I18n.tr("explorer.prop.content"),
+                        value: I18n.trn("explorer.items", t.paths.length)
+                               + (dirs > 0 ? " · " + I18n.trn("explorer.prop.folders", dirs) : "") });
+            rows.push({ label: I18n.tr("explorer.prop.size"),
+                        value: p.total ? root.humanSize(p.total) : p.done ? "—" : wait });
+            return rows;
+        }
+        rows.push({ label: I18n.tr("explorer.prop.path"), value: root.tildePath(t.path), copy: t.path });
+        var type = t.isDir
+            ? I18n.tr("explorer.prop.folderKind") + (p.count !== undefined ? " · " + I18n.trn("explorer.items", Number(p.count)) : "")
+            : (p.mime || (p.done ? "—" : wait));
+        if (p.link)
+            type += "  →  " + p.link;
+        rows.push({ label: I18n.tr("explorer.prop.type"), value: type });
+        rows.push({ label: I18n.tr("explorer.prop.size"),
+                    value: t.isDir ? (p.total ? root.humanSize(p.total) : p.done ? "—" : wait)
+                                   : (p.size !== undefined ? root.humanSize(p.size) : p.done ? "—" : wait) });
+        rows.push({ label: I18n.tr("explorer.prop.modified"), value: p.done ? root.longDate(p.mtime) : wait });
+        if (Number(p.birth) > 86400 && p.birth !== p.mtime)
+            rows.push({ label: I18n.tr("explorer.prop.created"), value: root.longDate(p.birth) });
+        rows.push({ label: I18n.tr("explorer.prop.access"),
+                    value: p.mode ? p.mode + "  " + p.owner : p.done ? "—" : wait });
+        return rows;
+    }
+
     function runMenu(action) {
         if (action.confirm && !root.menuArmed) {
             root.menuArmed = true;
@@ -335,7 +450,33 @@ Item {
         renameInput.select(0, dot > 0 ? dot : name.length);
         renameInput.forceActiveFocus();
     }
+    // Nouveau dossier : le même champ, un nom proposé ; rien
+    // n'est créé avant Entrée. `creatingIn` : le dossier qui le recevra.
+    property string creatingIn: ""
+    readonly property bool naming: root.renaming !== "" || root.creatingIn !== ""
+    function startCreate(dir) {
+        root.creatingIn = dir;
+        renameInput.text = I18n.tr("explorer.newFolder");
+        renameInput.selectAll();
+        renameInput.forceActiveFocus();
+    }
+    function finishCreate(accept) {
+        var dir = root.creatingIn;
+        root.creatingIn = "";
+        root.focusGrid();
+        var name = renameInput.text.trim();
+        if (!accept || name === "" || name === "." || name === ".." || name.indexOf("/") >= 0)
+            return;
+        var p = (dir === "/" ? "" : dir) + "/" + name;
+        if (root.fileOp(["sh", "-c", "[ -e \"$1\" ] || [ -L \"$1\" ] && echo exists || { mkdir -- \"$1\" && echo done || echo failed; }",
+                         "--", p], "create"))
+            fileOpProc.target = p;
+    }
     function finishRename(accept) {
+        if (root.creatingIn !== "") {
+            root.finishCreate(accept);
+            return;
+        }
         var p = root.renaming;
         root.renaming = "";
         var name = renameInput.text.trim();
@@ -376,15 +517,18 @@ Item {
     function fileOp(command, kind) {
         if (fileOpProc.running) {
             root.say(I18n.tr("explorer.busy"));
-            return;
+            return false;
         }
         fileOpProc.kind = kind;
         fileOpProc.command = command;
         fileOpProc.running = true;
+        return true;
     }
     Process {
         id: fileOpProc
         property string kind: ""
+        // Le dossier que « create » crée.
+        property string target: ""
         stdout: StdioCollector { id: fileOpOut }
         stderr: StdioCollector { id: fileOpErr }
         onExited: {
@@ -393,7 +537,7 @@ Item {
             var done = count("done"), exists = count("exists"), failed = count("failed");
             var k = fileOpProc.kind;
             var says = [];
-            if (k === "rename") {
+            if (k === "rename" || k === "create") {
                 if (exists > 0)
                     says.push(I18n.tr("explorer.nameTaken"));
             } else if (done > 0) {
@@ -406,6 +550,15 @@ Item {
             root.clearSelection();
             splitPane.selection = {};
             root.reloadTick++;
+            // Le dossier créé, sélectionné dès qu'il apparaît (un nom caché
+            // peut ne pas se montrer), si on est encore là où il est.
+            var p = fileOpProc.target;
+            if (k === "create" && done > 0 && root.parentOf(p) === root.path
+                    && (root.showHidden || p.charAt(p.lastIndexOf("/") + 1) !== ".")) {
+                if (root.filtering)
+                    root.closeFilter();
+                root.reveal(p);
+            }
         }
     }
 
@@ -3509,6 +3662,9 @@ Item {
     //   │ ▤ Ouvrir                 │
     //   │ ✎ Renommer               │
     //   │ 🗑 Supprimer              │
+    //   │ ──────────────────────── │
+    //   │ Chemin   ~/Documents/a.md│
+    //   │ Taille   1,5 Ko          │
     //   ╰──────────────────────────╯
     // Un clic ailleurs, ou Échap, le referme.
     MouseArea {
@@ -3522,7 +3678,7 @@ Item {
         id: contextMenu
         z: 20
         visible: root.menuTarget !== null
-        width: 220
+        width: 250
         height: menuColumn.implicitHeight + 12
         radius: Theme.radius
         color: Theme.bgElevated
@@ -3641,6 +3797,73 @@ Item {
                     }
                 }
             }
+
+            // ── Les propriétés (cf. menuProps) ──
+            Item {
+                width: menuColumn.width
+                height: 9
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    x: 6
+                    width: parent.width - 12
+                    height: 1
+                    color: Theme.dividerColor
+                }
+            }
+            Repeater {
+                model: root.menuProps
+
+                Rectangle {
+                    id: propRow
+                    required property var modelData
+                    readonly property bool copies: (propRow.modelData.copy || "") !== ""
+                    width: menuColumn.width
+                    height: root.propRowH
+                    radius: Theme.radiusSmall
+                    color: Qt.alpha(Theme.textPrimary, propRow.copies && propMa.containsMouse ? 0.08 : 0)
+                    Behavior on color { ColorAnimation { duration: 120 } }
+
+                    Text {
+                        id: propLabel
+                        anchors.left: parent.left
+                        anchors.leftMargin: 9
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 58
+                        text: propRow.modelData.label
+                        elide: Text.ElideRight
+                        font.family: "Inter"
+                        font.pixelSize: 10
+                        color: Theme.textDim
+                    }
+                    Text {
+                        anchors.left: propLabel.right
+                        anchors.leftMargin: 6
+                        anchors.right: parent.right
+                        anchors.rightMargin: 9
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: propRow.modelData.value
+                        // Un chemin garde son début et son nom.
+                        elide: propRow.copies ? Text.ElideMiddle : Text.ElideRight
+                        font.family: "Inter"
+                        font.pixelSize: 11
+                        color: propRow.copies && propMa.containsMouse ? Theme.accentColor : Theme.textSecondary
+                    }
+                    Accessible.role: propRow.copies ? Accessible.Button : Accessible.StaticText
+                    Accessible.name: propRow.modelData.label + " " + propRow.modelData.value
+                    MouseArea {
+                        id: propMa
+                        anchors.fill: parent
+                        enabled: propRow.copies
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            Quickshell.clipboardText = propRow.modelData.copy;
+                            root.menuTarget = null;
+                            root.say(I18n.tr("explorer.prop.copied"));
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -3649,14 +3872,14 @@ Item {
     MouseArea {
         anchors.fill: parent
         z: 19
-        visible: root.renaming !== ""
+        visible: root.naming
         acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
         onPressed: root.finishRename(false)
     }
     Rectangle {
         id: renameBox
         z: 20
-        visible: root.renaming !== ""
+        visible: root.naming
         x: Math.min(contextMenu.x, root.width - width - 4)
         y: contextMenu.y
         width: 260

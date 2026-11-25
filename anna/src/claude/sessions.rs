@@ -15,6 +15,9 @@
 //!
 //! None of these formats is documented: every field is read leniently, and a
 //! session missing one still shows, with less detail.
+//!
+//! A session anna drives itself (drive.rs) is listed like the others, marked
+//! `driven`: the tab opens its conversation instead of a terminal.
 
 use serde::Serialize;
 use serde_json::Value;
@@ -44,8 +47,12 @@ pub struct Session {
     pub activity: String,
     /// What it asks while waiting (« Claude needs your permission… »).
     pub ask: String,
+    /// What it asks, to answer from the list (driven sessions only).
+    pub asks: Vec<super::drive::Ask>,
     /// The Claude Code process, 0 once ended.
     pub pid: u32,
+    /// Run by anna (drive.rs), not in a terminal.
+    pub driven: bool,
     /// Milliseconds since the epoch.
     pub updated: i64,
 }
@@ -139,7 +146,17 @@ pub fn record(event: &Value) {
 fn activity(event: &Value) -> String {
     let tool = s(event, "tool_name");
     let input = event.get("tool_input").cloned().unwrap_or(Value::Null);
-    let cwd = s(event, "cwd");
+    let target = target(&input, &s(event, "cwd"));
+    if target.is_empty() {
+        tool
+    } else {
+        format!("{tool} {target}")
+    }
+}
+
+/// What a tool call works on, short: its file (relative to `cwd`), else its
+/// command, pattern, address… on one line of 80 characters at most.
+pub fn target(input: &Value, cwd: &str) -> String {
     let target = ["file_path", "notebook_path", "path"]
         .iter()
         .find_map(|k| input.get(*k).and_then(Value::as_str))
@@ -158,18 +175,13 @@ fn activity(event: &Value) -> String {
             .map(str::to_string)
         })
         .unwrap_or_default();
-    let target: String = target
+    target
         .lines()
         .next()
         .unwrap_or_default()
         .chars()
         .take(80)
-        .collect();
-    if target.is_empty() {
-        tool
-    } else {
-        format!("{tool} {target}")
-    }
+        .collect()
 }
 
 /// `anna claude-event`, run by a Claude Code hook: hands what it reads on
@@ -329,7 +341,7 @@ fn title_of(t: &Transcript) -> String {
 }
 
 /// The transcript of session `id`, in whichever project folder it is.
-fn transcript_of(id: &str) -> Option<PathBuf> {
+pub fn transcript_of(id: &str) -> Option<PathBuf> {
     let name = format!("{id}.jsonl");
     std::fs::read_dir(claude_dir().join("projects"))
         .ok()?
@@ -338,7 +350,25 @@ fn transcript_of(id: &str) -> Option<PathBuf> {
         .find(|p| p.exists())
 }
 
-fn alive(pid: u32) -> bool {
+/// The folder session `id` started in, from its transcript.
+pub fn cwd_of(id: &str) -> Option<String> {
+    let t = transcript(&transcript_of(id)?);
+    (!t.cwd.is_empty()).then_some(t.cwd)
+}
+
+/// The Claude Code process running session `id` now, if any.
+pub fn running(id: &str) -> Option<u32> {
+    let dir = std::fs::read_dir(claude_dir().join("sessions")).ok()?;
+    dir.flatten()
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+        .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+        .filter_map(|t| serde_json::from_str::<Value>(&t).ok())
+        .filter(|v| s(v, "sessionId") == id)
+        .filter_map(|v| v.get("pid").and_then(Value::as_u64).map(|p| p as u32))
+        .find(|p| alive(*p))
+}
+
+pub fn alive(pid: u32) -> bool {
     pid > 0 && Path::new(&format!("/proc/{pid}")).exists()
 }
 
@@ -370,7 +400,15 @@ fn live() -> Vec<Session> {
         let t = transcript_of(&id)
             .map(|p| transcript(&p))
             .unwrap_or_default();
-        let h = heard.get(&id).cloned().unwrap_or_default();
+        let mut h = heard.get(&id).cloned().unwrap_or_default();
+        // A driven session waits on its requests in the tab.
+        let asks = super::drive::asks(&id);
+        if !asks.is_empty() {
+            h.waiting = true;
+            if h.ask.is_empty() {
+                h.ask = crate::i18n::tr("claude.waiting_panel");
+            }
+        }
         let state = if h.waiting {
             "waiting".to_string()
         } else {
@@ -392,8 +430,10 @@ fn live() -> Vec<Session> {
                 String::new()
             },
             ask: h.ask,
+            asks,
             state,
             pid,
+            driven: super::drive::is_ours(pid),
             updated: v
                 .get("statusUpdatedAt")
                 .or_else(|| v.get("updatedAt"))

@@ -44,7 +44,9 @@
 //!   - theme    : accent/palette (set/mode/palette-color/get/watch)
 //!   - hwstats  : hardware stats (hwstats_get / hwstats_watch)
 //!   - servers  : tailnet devices, stats from node_exporter (servers_watch / servers_list)
-//!   - claude   : Claude Code sessions (claude_watch / claude_event / claude_focus)
+//!   - claude   : Claude Code sessions (claude_watch / claude_event / claude_focus),
+//!     their conversations, driven from the shell (claude_chat_* / claude_send /
+//!     claude_interrupt / claude_set / claude_stop / claude_take_over)
 //!   - phone    : KDE Connect phones (phone_watch / phone_action)
 //!   - gesture  : webcam control (gesture_get/set/toggle/watch)
 //!   - pilot    : the desk pilot and its voice (pilot_*/voice_*)
@@ -251,6 +253,9 @@ async fn run_daemon(args: &[String]) {
     let recorder = recorder::Recorder::new();
     // The requests made of the user, shown by the shell (prompts.rs).
     let prompts = prompts::Prompts::new();
+    // The Claude Code sessions driven from the shell; their permission
+    // requests are answered in the Claude tab itself.
+    let drive = claude::drive::Drive::new();
 
     // Every screenshot also lands in the « Notes » tab.
     tokio::spawn(notes::watch_screenshots());
@@ -267,6 +272,7 @@ async fn run_daemon(args: &[String]) {
         voice,
         recorder,
         prompts,
+        drive,
         opts,
     });
 
@@ -298,6 +304,7 @@ struct Ctx {
     voice: Arc<claude::voice::Voice>,
     recorder: Arc<recorder::Recorder>,
     prompts: Arc<prompts::Prompts>,
+    drive: Arc<claude::drive::Drive>,
     opts: AppCtlOptions,
 }
 
@@ -541,6 +548,95 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
                     Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }),
                 };
             let _ = write_line(&mut writer, &reply.to_string()).await;
+        }
+
+        Command::ClaudeChatWatch { id, agent } => {
+            ctx.drive.watch(id, agent, &mut writer).await;
+        }
+
+        Command::ClaudeChatPage { id, agent, before, limit } => {
+            let reply = tokio::task::spawn_blocking(move || {
+                match claude::transcript::conversation(&id, agent.as_deref()) {
+                    Some(path) => {
+                        let (page, _) = claude::transcript::page(&path, Some(before), limit);
+                        let mut v = serde_json::to_value(page).unwrap_or_default();
+                        v["ok"] = true.into();
+                        v
+                    }
+                    None => serde_json::json!({ "ok": false, "error": "unknown session" }),
+                }
+            })
+            .await
+            .unwrap_or_else(|e| serde_json::json!({ "ok": false, "error": e.to_string() }));
+            let _ = write_line(&mut writer, &reply.to_string()).await;
+        }
+
+        Command::ClaudeChatDiff { id, agent, path } => {
+            let reply = tokio::task::spawn_blocking(move || {
+                match claude::transcript::conversation(&id, agent.as_deref()) {
+                    Some(t) => serde_json::json!({
+                        "ok": true,
+                        "hunks": claude::summary::diff(&t, &path),
+                    }),
+                    None => serde_json::json!({ "ok": false, "error": "unknown session" }),
+                }
+            })
+            .await
+            .unwrap_or_else(|e| serde_json::json!({ "ok": false, "error": e.to_string() }));
+            let _ = write_line(&mut writer, &reply.to_string()).await;
+        }
+
+        Command::ClaudeChatOutput { id, path } => {
+            let reply =
+                match tokio::task::spawn_blocking(move || claude::transcript::output(&id, &path))
+                    .await
+                {
+                    Ok(Ok(text)) => serde_json::json!({ "ok": true, "text": text }),
+                    Ok(Err(e)) => serde_json::json!({ "ok": false, "error": e }),
+                    Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }),
+                };
+            let _ = write_line(&mut writer, &reply.to_string()).await;
+        }
+
+        Command::ClaudeSend { id, cwd, text, files, model, effort, mode } => {
+            let launch = claude::drive::Launch { model, effort, mode };
+            let reply = match ctx.drive.send(id, cwd, text, files, launch).await {
+                Ok(id) => serde_json::json!({ "ok": true, "id": id }),
+                Err(e) => serde_json::json!({ "ok": false, "error": e }),
+            };
+            let _ = write_line(&mut writer, &reply.to_string()).await;
+        }
+
+        Command::ClaudeInterrupt { id } => {
+            write_result(&mut writer, ctx.drive.interrupt(&id).await).await;
+        }
+
+        Command::ClaudeSet { id, model, effort, mode, remote } => {
+            write_result(&mut writer, ctx.drive.set(&id, model, effort, mode, remote).await).await;
+        }
+
+        Command::ClaudeUsage => {
+            let usage = claude::drive::usage().await;
+            let reply = serde_json::json!({ "ok": !usage.is_null(), "usage": usage });
+            let _ = write_line(&mut writer, &reply.to_string()).await;
+        }
+
+        Command::ClaudeCommands { cwd } => {
+            let commands = claude::drive::commands(&cwd).await;
+            let reply = serde_json::json!({ "ok": true, "commands": commands });
+            let _ = write_line(&mut writer, &reply.to_string()).await;
+        }
+
+        Command::ClaudeAnswer { id, ask, action, values } => {
+            write_result(&mut writer, ctx.drive.answer(&id, &ask, action, values)).await;
+        }
+
+        Command::ClaudeStop { id } => {
+            write_result(&mut writer, ctx.drive.stop(&id).await).await;
+        }
+
+        Command::ClaudeTakeOver { id, force } => {
+            write_result(&mut writer, ctx.drive.take_over(&id, force).await).await;
         }
 
         // ── phones (KDE Connect) ─────────────────────────────────────────

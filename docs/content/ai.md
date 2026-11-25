@@ -94,7 +94,7 @@ prompt (preferred apps, habits, projects…).
 sentence is written **while** you speak, live in the conversation bar's
 field (the snowflake lights up), then goes to the pilot as if it had been
 typed. The answer shows above the bar, under the understood sentence to
-check it. The word “Karénine” and a click on the snowflake do the same;
+check it. The word “Karénine” and a click on the microphone at the end of the field do the same;
 `anna voice dictate` only shows the transcript, without sending it.
 
 The end of the sentence stops listening (a second press or a click on the

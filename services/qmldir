@@ -24,6 +24,7 @@ singleton Google 1.0 Google.qml
 singleton Agenda 1.0 Agenda.qml
 singleton Tempo 1.0 Tempo.qml
 singleton ClaudeSessions 1.0 ClaudeSessions.qml
+singleton ClaudeChat 1.0 ClaudeChat.qml
 singleton Prompts 1.0 Prompts.qml
 singleton Phone 1.0 Phone.qml
 singleton Previews 1.0 Previews.qml

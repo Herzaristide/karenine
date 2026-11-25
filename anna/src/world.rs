@@ -2,7 +2,7 @@
 //! panels/Globe.qml, through services/World.qml):
 //!
 //!   anna world apple <CC>        → {"ok":true,"charts":{"paid":[…],"free":[…],
-//!                                   "audio":[…],"music":[…]}}, each entry
+//!                                   "music":[…]}}, each entry
 //!                                   {"id","title","artist","url","artwork",
 //!                                   "genre"} and, for a book, "cover"
 //!   anna world item <CC> <id>    → {"ok":true,"item":{"kind","title","author",
@@ -15,8 +15,8 @@
 //!                                   (`items`: the details alone)
 //!
 //! `apple`: the country's charts on Apple's stores, which Apple publishes
-//! without a key (`rss.marketingtools.apple.com`): paid and free ebooks and
-//! audiobooks on Apple Books, the most played songs on Apple Music. They are
+//! without a key (`rss.marketingtools.apple.com`): paid and free ebooks on
+//! Apple Books, the most played songs on Apple Music. They are
 //! Apple's customers only — on Books, ebook readers — not the whole market.
 //! A store missing from the country gives an empty list, not an error.
 //!
@@ -31,7 +31,7 @@
 //!
 //! `item`: the details of an entry of these charts, on demand
 //! (`itunes.apple.com/lookup`, the country's store). A book: its summary as
-//! plain text, price, readers' rating. An audiobook or a song: also its
+//! plain text, price, readers' rating. A song: also its
 //! extract, 30 s of AAC that Apple serves (`preview`). Kept a week; the
 //! prefetch takes those it doesn't have, a call per country.
 //!
@@ -55,19 +55,18 @@ const APPLE_KEEP: u64 = 26 * 3600;
 const ITEM_KEEP: u64 = 7 * 24 * 3600;
 /// Covers no chart has used for that long are removed.
 const COVER_KEEP: u64 = 14 * 24 * 3600;
-/// Four charts on the card: a few lines each.
-const APPLE_COUNT: usize = 3;
+/// The entries kept of each chart: all of a list of 10 (see `CHARTS`).
+const APPLE_COUNT: usize = 10;
 
 /// Each chart's key in the answer and its feed. Apple serves lists of 10,
 /// 25, 50 or 100 only; another size may be refused.
 const CHARTS: &[(&str, &str)] = &[
     ("paid", "books/top-paid/10/books"),
     ("free", "books/top-free/10/books"),
-    ("audio", "audio-books/top/10/audio-books"),
     ("music", "music/most-played/10/songs"),
 ];
 /// The charts whose entries are books, with a cover.
-const BOOK_CHARTS: &[&str] = &["paid", "free", "audio"];
+const BOOK_CHARTS: &[&str] = &["paid", "free"];
 
 /// The globe's countries: the two-letter codes of
 /// assets/globe/countries.json.
@@ -287,11 +286,12 @@ fn assemble(cc: &str, fetched: &[Option<Vec<Value>>]) -> Value {
     charts
 }
 
-/// The country's charts, from the cache, or else fetched now: the four at
+/// The country's charts, from the cache, or else fetched now: all at
 /// once, each tried twice, the second time once Apple had time to build it.
 fn apple(cc: &str) -> Result<Value, String> {
     let file = format!("apple-{cc}.json");
-    if let Some(v) = cached(&file, APPLE_KEEP) {
+    // Charts cached with another length are asked again.
+    if let Some(v) = cached(&file, APPLE_KEEP).filter(|v| v["count"] == APPLE_COUNT) {
         return Ok(v);
     }
     let agent = agent(40);
@@ -316,7 +316,7 @@ fn apple(cc: &str) -> Result<Value, String> {
         fetch_cover(&agent, id, art)
     });
     mark_covers(&mut charts);
-    let v = json!({ "ok": true, "charts": charts });
+    let v = json!({ "ok": true, "count": APPLE_COUNT, "charts": charts });
     // A chart that failed is asked again next time.
     if complete {
         cache(&file, &v);
@@ -402,7 +402,7 @@ fn prefetch() -> Result<Value, String> {
         mark_covers(charts);
         cache(
             &format!("apple-{cc}.json"),
-            &json!({ "ok": true, "charts": charts }),
+            &json!({ "ok": true, "count": APPLE_COUNT, "charts": charts }),
         );
     }
     prune_covers(&seen);
@@ -559,7 +559,7 @@ fn decode_entities(s: &str) -> String {
 }
 
 /// A price as the store writes it, where Lookup gives only the number
-/// (audiobooks): the common currencies by their sign, the others by code.
+/// (songs): the common currencies by their sign, the others by code.
 fn money(p: f64, currency: &str) -> String {
     let n = format!("{p:.2}");
     match currency {
@@ -591,35 +591,22 @@ fn lookup(agent: &ureq::Agent, cc: &str, ids: &[String]) -> Result<Vec<Value>, S
     Ok(body["results"].as_array().cloned().unwrap_or_default())
 }
 
-/// The Apple identifier of a Lookup result: an ebook's or a song's track,
-/// an audiobook's collection.
+/// The Apple identifier of a Lookup result.
 fn result_id(r: &Value) -> String {
-    let id = if r["wrapperType"] == "audiobook" {
-        &r["collectionId"]
-    } else {
-        &r["trackId"]
-    };
-    id.as_u64().map(|n| n.to_string()).unwrap_or_default()
+    r["trackId"]
+        .as_u64()
+        .map(|n| n.to_string())
+        .unwrap_or_default()
 }
 
 /// An entry's details from its Lookup result, as `item` answers them. A
 /// book's cover is downloaded if it isn't yet.
 fn item_of(agent: &ureq::Agent, r: &Value) -> Value {
     let id = result_id(r);
-    let audio = r["wrapperType"] == "audiobook";
     let song = r["kind"] == "song";
-    let pick = |track: &str, collection: &str| text(&r[if audio { collection } else { track }]);
     let price = match r["formattedPrice"].as_str() {
         Some(p) => p.to_string(),
-        None => match r[if audio {
-            "collectionPrice"
-        } else if song {
-            "trackPrice"
-        } else {
-            "price"
-        }]
-        .as_f64()
-        {
+        None => match r[if song { "trackPrice" } else { "price" }].as_f64() {
             Some(0.0) => "Gratuit".to_string(),
             Some(p) if p > 0.0 => money(p, &text(&r["currency"])),
             _ => String::new(),
@@ -648,8 +635,8 @@ fn item_of(agent: &ureq::Agent, r: &Value) -> Value {
         "ok": true,
         "item": {
             "id": id,
-            "kind": if audio { "audiobook" } else if song { "song" } else { "ebook" },
-            "title": pick("trackName", "collectionName"),
+            "kind": if song { "song" } else { "ebook" },
+            "title": text(&r["trackName"]),
             "author": text(&r["artistName"]),
             "description": plain(&text(&r["description"])),
             "price": price,
@@ -660,7 +647,7 @@ fn item_of(agent: &ureq::Agent, r: &Value) -> Value {
             "publisher": text(&r["copyright"]),
             "album": if song { text(&r["collectionName"]) } else { String::new() },
             "duration": r["trackTimeMillis"].as_u64().unwrap_or(0) / 1000,
-            "url": clean_url(&pick("trackViewUrl", "collectionViewUrl")),
+            "url": clean_url(&text(&r["trackViewUrl"])),
             "cover": cover,
             "artwork": cover_url(&art).unwrap_or(art),
             "preview": text(&r["previewUrl"]),

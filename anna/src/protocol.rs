@@ -72,6 +72,111 @@ pub enum Command {
     ClaudeFocus {
         pid: u32,
     },
+    /// Keep connection open; daemon pushes session `id`'s conversation
+    /// (claude/drive.rs `watch`): `{"chat":Page}` first, then
+    /// `{"chat_upsert":[Item…]}` (new items, and tool calls completed by
+    /// their result, same key), `{"chat_partial":{kind,text}}` (the text
+    /// being written), `{"chat_summary":Summary}` (context, changes,
+    /// outputs, jobs, task list — claude/summary.rs — whenever it changes),
+    /// `{"chat_state":State}` and `{"chat_elsewhere":pid}` (the `claude`
+    /// holding it in a terminal, 0 if none). With `agent`, the conversation
+    /// of that subagent of the session instead.
+    ClaudeChatWatch {
+        id: String,
+        #[serde(default)]
+        agent: Option<String>,
+    },
+    /// An earlier page: `{"ok":true,"items":[…],"first":n,"total":n}`.
+    ClaudeChatPage {
+        id: String,
+        #[serde(default)]
+        agent: Option<String>,
+        before: usize,
+        #[serde(default = "default_page")]
+        limit: usize,
+    },
+    /// A long tool output Claude Code kept in a file of its own, or a
+    /// background command's output file: `{"ok":true,"text":"…"}`.
+    ClaudeChatOutput {
+        id: String,
+        path: String,
+    },
+    /// Every change the session (or subagent `agent`) made to `path` (as the
+    /// summary names it): `{"ok":true,"hunks":[structuredPatch hunk…]}`.
+    ClaudeChatDiff {
+        id: String,
+        #[serde(default)]
+        agent: Option<String>,
+        path: String,
+    },
+    /// The slash commands Claude Code has in folder `cwd`:
+    /// `{"ok":true,"commands":[{name,description,argumentHint,aliases}]}`.
+    ClaudeCommands {
+        cwd: String,
+    },
+    /// Send a request to session `id` (resumed by anna if needed), or start
+    /// a new session in `cwd`: `{"ok":true,"id":"…"}`, or
+    /// `{"ok":false,"error":"open_elsewhere"|"…"}`. `model`, `effort` and
+    /// `mode` start the `claude` with them when it doesn't run yet. `files`
+    /// (absolute paths) are joined to the request, images as such.
+    ClaudeSend {
+        #[serde(default)]
+        id: Option<String>,
+        #[serde(default)]
+        cwd: Option<String>,
+        text: String,
+        #[serde(default)]
+        files: Vec<String>,
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        effort: Option<String>,
+        #[serde(default)]
+        mode: Option<String>,
+    },
+    /// Interrupt the turn of a driven session.
+    ClaudeInterrupt {
+        id: String,
+    },
+    /// Change a driven session's model, effort or permission mode, or turn
+    /// its Remote Control on or off.
+    ClaudeSet {
+        id: String,
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        effort: Option<String>,
+        #[serde(default)]
+        mode: Option<String>,
+        #[serde(default)]
+        remote: Option<bool>,
+    },
+    /// What is left of the Claude plan (claude/drive.rs `usage`, asked of
+    /// `claude` at most once a minute): `{"ok":true,"usage":{subscription_type,
+    /// rate_limits:{five_hour:{utilization,resets_at},seven_day:{…},…}}}`.
+    ClaudeUsage,
+    /// Answer request `ask` of a driven session (its `chat_state.asks`):
+    /// `action` is a button's id (`allow`, `always`, `deny`, `answer`),
+    /// `values` the choices made for Claude's questions.
+    ClaudeAnswer {
+        id: String,
+        ask: String,
+        action: String,
+        #[serde(default)]
+        values: HashMap<String, String>,
+    },
+    /// Stop anna's `claude` on session `id` (the conversation stays).
+    ClaudeStop {
+        id: String,
+    },
+    /// End the `claude` holding session `id` in a terminal, so anna can
+    /// drive it: `{"ok":false,"error":"busy"}` while it works, unless
+    /// `force`.
+    ClaudeTakeOver {
+        id: String,
+        #[serde(default)]
+        force: bool,
+    },
 
     // ── phones (KDE Connect, see phone.rs) ────────────────────────────────
     /// Keep connection open; daemon pushes `{"phone":{"running",
@@ -308,6 +413,10 @@ impl Response {
 
 fn yes() -> bool {
     true
+}
+
+fn default_page() -> usize {
+    150
 }
 
 #[cfg(test)]
