@@ -1,7 +1,5 @@
 pragma ComponentBehavior: Bound
 import QtQuick
-import QtQuick.Effects
-import QtQuick.Shapes
 import Qt.labs.folderlistmodel
 import Quickshell
 import Quickshell.Io
@@ -109,12 +107,9 @@ Item {
     readonly property int sideW: root.compact ? 0 : root.placesW + 12
     readonly property int headerH: 34
     readonly property int footerH: 30
-    // Les disques, en haut sur toute la largeur, en une rangée : ils se
-    // partagent la place à parts égales, selon leur nombre.
-    readonly property int diskGap: 6
-    readonly property real diskW: root.disks.length === 0 ? 0
-        : (root.width - root.diskGap * (root.disks.length - 1)) / root.disks.length
-    readonly property int switchH: 46
+    // Les disques, en haut sur toute la largeur (DiskTiles) : une rangée,
+    // plusieurs s'ils sont trop nombreux pour tenir.
+    readonly property int switchH: Math.max(46, diskBar.implicitHeight)
 
     // Un chemin en URL « file:// », chaque segment encodé.
     function urlOf(p) {
@@ -917,7 +912,10 @@ Item {
     property bool addressError: false
     // Les propositions : les entrées du dossier tapé dont le nom commence
     // par ce qui suit le dernier « / » (puis celles qui le contiennent).
-    property var suggestions: []   // [{ name, path, isDir, suffix, at }]
+    // La barre qui s'ouvre (ou vidée) propose les dossiers récents (Places) ;
+    // un nom tapé sans « / », ceux d'entre eux qui y correspondent, d'abord.
+    property var suggestions: []   // [{ name, path, isDir, suffix, at, recent }]
+    property bool suggestAllRecent: false
     property int suggestIndex: -1
     // Le texte jusqu'au dernier « / » compris, et ce qui le suit.
     property string suggestDirText: ""
@@ -968,6 +966,7 @@ Item {
     function startEditing(text) {
         root.editing = true;
         root.addressError = false;
+        Places.refresh();
         pathInput.forceActiveFocus();
         if (text) {
             pathInput.text = text;
@@ -978,8 +977,11 @@ Item {
             pathInput.text = shown + (shown.charAt(shown.length - 1) === "/" ? "" : "/");
             pathInput.selectAll();
             root.suggestDir = "";
-            root.suggestions = [];
+            root.suggestDirText = "";
+            root.suggestBase = "";
             root.suggestIndex = -1;
+            root.suggestAllRecent = true;
+            root.rebuildSuggestions();
         }
     }
     // `back` : rendre le clavier à la liste (Échap).
@@ -989,12 +991,14 @@ Item {
         root.suggestions = [];
         root.suggestIndex = -1;
         root.suggestDir = "";
+        root.suggestAllRecent = false;
         if (back)
             root.focusGrid();
     }
 
     function pathEdited(t) {
         var slash = t.lastIndexOf("/");
+        root.suggestAllRecent = t === "" && !root.remote;
         root.suggestDirText = slash >= 0 ? t.substring(0, slash + 1) : "";
         root.suggestBase = t.substring(slash + 1);
         // « ~ » ou « ~nom » : pas encore un dossier à lire.
@@ -1004,17 +1008,60 @@ Item {
         Qt.callLater(root.rebuildSuggestions);
     }
 
+    // Les dossiers récents qui correspondent à `q` (vide : tous), sauf celui
+    // qu'on montre. Ils sont de cette machine : rien sur un serveur.
+    function recentSuggestions(q, max) {
+        if (root.remote)
+            return [];
+        return Places.dirs.filter(d => d.path !== root.path && d.path !== root.home && !Places.temporary(d.path)
+                && Fuzzy.score(q, d.path.substring(d.path.lastIndexOf("/") + 1)) > (q === "" ? 0 : 150))
+            .slice(0, max)
+            .map(d => {
+                var shown = root.displayPath(d.path);
+                return { name: shown, path: d.path, isDir: true, suffix: "", recent: true,
+                         at: q === "" ? -1 : shown.toLowerCase().lastIndexOf(q) };
+            });
+    }
+
+    Connections {
+        target: Places
+        function onDirsChanged() {
+            // Pas sous le choix en cours au clavier.
+            if (root.editing && root.suggestIndex < 0)
+                Qt.callLater(root.rebuildSuggestions);
+        }
+    }
+
+    // Un dossier où l'on s'arrête est un dossier utilisé ; pas ceux qu'on
+    // ne fait que traverser.
+    Connections {
+        target: Widgets
+        function onExplorerPathChanged() {
+            visitTimer.restart();
+        }
+    }
+    Timer {
+        id: visitTimer
+        interval: 5000
+        onTriggered: if (!root.remote && root.visible) Places.visit(root.path)
+    }
+
     function rebuildSuggestions() {
+        if (root.editing && root.suggestAllRecent) {
+            root.suggestions = root.recentSuggestions("", root.suggestMax);
+            return;
+        }
         if (!root.editing || root.suggestDir === ""
                 || root.pathOf(suggestModel.folder) !== root.suggestDir) {
             root.suggestions = [];
             return;
         }
         var b = root.suggestBase.toLowerCase();
+        var recent = b !== "" && root.suggestDirText === "" ? root.recentSuggestions(b, 4) : [];
         var hidden = root.showHidden || b.charAt(0) === ".";
         var starts = [];
         var inside = [];
-        for (var i = 0; i < suggestModel.count && starts.length < root.suggestMax; i++) {
+        for (var i = 0; i < suggestModel.count; i++) {
             var name = String(suggestModel.get(i, "fileName"));
             if (!hidden && name.charAt(0) === ".")
                 continue;
@@ -1022,13 +1069,18 @@ Item {
             if (at < 0 || (at > 0 && b === ""))
                 continue;
             var e = { name: name, path: suggestModel.get(i, "filePath"),
-                      isDir: suggestModel.get(i, "fileIsDir"), suffix: suggestModel.get(i, "fileSuffix"), at: at };
+                      isDir: suggestModel.get(i, "fileIsDir"), suffix: suggestModel.get(i, "fileSuffix"), at: at,
+                      recent: false, order: i };
+            if (recent.some(r => r.path === e.path))
+                continue;
             if (at === 0)
                 starts.push(e);
-            else if (inside.length < root.suggestMax)
+            else
                 inside.push(e);
         }
-        root.suggestions = starts.concat(inside).slice(0, root.suggestMax);
+        // Les plus utilisés d'abord, puis l'ordre du dossier.
+        var byUse = (x, y) => (Places.scores[y.path] || 0) - (Places.scores[x.path] || 0) || x.order - y.order;
+        root.suggestions = recent.concat(starts.sort(byUse), inside.sort(byUse)).slice(0, root.suggestMax);
         if (root.suggestIndex >= root.suggestions.length)
             root.suggestIndex = -1;
     }
@@ -1036,7 +1088,7 @@ Item {
     // Le nom d'une proposition, la partie tapée en gras (StyledText).
     function highlight(name, at, len) {
         var esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        if (len === 0)
+        if (len === 0 || at < 0)
             return esc(name);
         return esc(name.substring(0, at)) + "<b>" + esc(name.substring(at, at + len)) + "</b>"
              + esc(name.substring(at + len));
@@ -1046,7 +1098,7 @@ Item {
         var s = root.suggestions[i];
         if (!s)
             return;
-        var t = root.suggestDirText + s.name + (s.isDir ? "/" : "");
+        var t = (s.recent ? s.name : root.suggestDirText + s.name) + (s.isDir ? "/" : "");
         pathInput.text = t;
         pathInput.cursorPosition = t.length;
         // Un fichier : le texte est complet, plus rien à proposer.
@@ -1068,7 +1120,7 @@ Item {
             return;
         }
         if (root.suggestIndex < 0) {
-            var pre = root.suggestions.filter(s => s.at === 0).map(s => s.name);
+            var pre = root.suggestions.filter(s => !s.recent && s.at === 0).map(s => s.name);
             if (pre.length > 0) {
                 var common = pre[0];
                 pre.forEach(name => {
@@ -1661,10 +1713,17 @@ Item {
         root.pickSetup();
     }
 
-    // Ce qu'on demande de montrer de l'extérieur (Widgets.explorerShow) :
-    // toujours un chemin local, gardé tant qu'un serveur est encore monté.
+    // Ce qu'on demande de montrer de l'extérieur : un chemin local
+    // (Widgets.explorerShow), gardé tant qu'un serveur est encore monté, ou
+    // un disque de n'importe quelle machine (Widgets.explorerShowDisk), où
+    // l'on va comme d'un clic sur sa case.
     function takeRequest() {
         var r = Widgets.explorerRequest;
+        if (r && r.disk) {
+            Widgets.explorerRequest = null;
+            root.openDisk(r.disk);
+            return;
+        }
         if (!r || root.remote)
             return;
         Widgets.explorerRequest = null;
@@ -1797,64 +1856,37 @@ Item {
     // ── Les disques ──────────────────────────────────────────────
     // Les disques physiques de toutes les machines : celle-ci et chaque
     // serveur en ligne, tels qu'anna les relève (servers_watch sans nom :
-    // lsblk ici, node_exporter sur les serveurs ; un relevé, puis on
+    // le node_exporter de chacune, celle-ci comprise ; un relevé, puis on
     // raccroche). Un par disque, avec ce que ses systèmes de fichiers
     // occupent et son point de montage principal, sans ceux qui ne portent
     // que /boot, /efi ou le store. Un clic choisit sa machine (la montant au
     // besoin) et va à ce point de montage. Relu à l'affichage et chaque
     // minute.
-    // [{ machine ("" ici), host, hostLabel, name, label, used, size (octets), main }]
+    // La forme de Disks.fromDrives.
     property var disks: []
     // Le disque cliqué d'un serveur en cours de montage : on y va une fois monté.
     property var pendingDisk: null
-
-    function drivesOf(drives, machine, host, hostLabel) {
-        var shown = m => m.indexOf("/boot") !== 0 && m.indexOf("/efi") !== 0 && m.indexOf("/nix/store") !== 0;
-        var list = (drives || []).filter(d => d.fs_size > 0 && (d.mounts || []).some(shown))
-            .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
-        return list.map(d => ({
-                machine: machine, host: host, hostLabel: hostLabel, name: d.name,
-                // « Micron 3400 MTFDKBA1T0TFH » → « Micron 3400 ».
-                label: (d.model || "").trim().split(/\s+/).slice(0, 2).join(" ") || d.name,
-                used: d.fs_used, size: d.fs_size, main: d.mounts.find(shown)
-            }));
-    }
 
     // Celle-ci d'abord, puis les serveurs. Un relevé raté (node_exporter
     // muet) garde ce qu'on montrait de la machine ; hors ligne, elle n'en a plus.
     function applyDisks(msg) {
         var keep = m => root.disks.filter(d => d.machine === m);
-        var local = msg.local || {};
-        var out = (local.drives || []).length > 0
-            ? root.drivesOf(local.drives, "", "", local.hostname || I18n.tr("machine.thisComputer"))
-            : keep("");
+        var out = [];
         (msg.servers || []).forEach(s => {
-            if (!s.host || !s.online)
+            // Celle-ci : machine "", son node_exporter comme les autres.
+            var m = s.local ? "" : s.name;
+            if (!s.local && (!s.host || !s.online))
                 return;
-            out = out.concat(s.measured && !s.error ? root.drivesOf(s.drives, s.name, s.host, s.name)
-                                                    : keep(s.name));
+            out = out.concat(s.measured && !s.error
+                             ? Disks.fromDrives(s.drives, m, s.host, s.name || I18n.tr("machine.thisComputer"), true)
+                             : keep(m));
         });
+        // Un disque éjecté reste dans extras.prom jusqu'au prochain passage
+        // de son timer : Disks.fromDrives le cache d'ici là.
         root.disks = out;
     }
 
     // Son point de montage, vu d'ici : "" pour un serveur qui n'est pas monté.
-    // « 300 / 954 Go » : l'occupé dans l'unité du total, entier (une
-    // décimale sous 10).
-    function diskUsage(used, size) {
-        var units = ["unit.bytes", "unit.kb", "unit.mb", "unit.gb", "unit.tb"];
-        var i = 0, div = 1;
-        while (size / div >= 1024 && i < units.length - 1) {
-            div *= 1024;
-            i++;
-        }
-        var fmt = v => i === 0 ? String(Math.round(v)) : v.toLocaleString(I18n.locale, "f", size / div < 10 ? 1 : 0);
-        return fmt(used / div) + " / " + I18n.tr(units[i], { n: fmt(size / div) });
-    }
-
-    function escapeHtml(s) {
-        return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    }
-
     function diskPath(d) {
         if (d.machine === "")
             return d.main;
@@ -1905,6 +1937,29 @@ Item {
         } else {
             root.pendingDisk = { machine: d.machine, main: d.main };
             Widgets.machine = { name: d.machine, host: d.host };
+        }
+    }
+
+    // ── Éjecter un disque amovible (Disks.eject) ─────────────────
+    // Si l'on est dedans, on en sort d'abord ; puis il disparaît, ou
+    // l'erreur d'udisks s'affiche.
+    Connections {
+        target: Disks
+        function onAboutToEject(d) {
+            root.error = "";
+            var p = root.diskPath(d);
+            var prefix = p.charAt(p.length - 1) === "/" ? p : p + "/";
+            if (!root.remote && p !== "" && (root.path === p || root.path.indexOf(prefix) === 0))
+                root.go(root.home);
+        }
+        function onEjectDone(d) {
+            root.disks = root.disks.filter(x => x.machine !== "" || x.name !== d.name);
+            root.say(I18n.tr("explorer.ejected", { name: d.label }));
+            root.refreshDisks();
+        }
+        function onEjectFailed(d, why) {
+            root.error = Disks.error;
+            root.refreshDisks();
         }
     }
 
@@ -2024,214 +2079,22 @@ Item {
     }
 
     // ── Les disques de toutes les machines, en haut ──────────────
-    // Une case par disque, à parts égales sur toute la largeur, remplie d'un liquide à l'accent autant qu'il est
-    // plein ; sa machine et son nom en haut, l'occupé sur le total en bas (le pourcentage au
-    // survol). Un clic va à sa racine. Celui où l'on est est cerclé d'accent. Un clic y va, sur sa
-    // machine.
-    //   ┌────────┐ ┌────────┐ ┌────────┐
-    //   │  zola  │ │  gary  │ │  gary  │
-    //   │▓▓▓▓▓▓▓▓│ │        │ │▓▓▓▓▓▓▓▓│
-    //   └────────┘ └────────┘ └────────┘
-    Row {
+    // Les mêmes cases que dans la flotte (DiskTiles), sur toute la largeur :
+    // un clic va à sa racine, sur sa machine (montée au besoin) ; celui où
+    // l'on est est cerclé d'accent.
+    DiskTiles {
         id: diskBar
         width: root.width
-        height: root.switchH
-        spacing: root.diskGap
-
-        Repeater {
-            model: root.disks
-
-            Rectangle {
-                id: disk
-                required property var modelData
-                required property int index
-                readonly property real pct: disk.modelData.size > 0
-                                            ? Math.min(1, disk.modelData.used / disk.modelData.size) : 0
-                readonly property bool here: root.currentDisk === disk.index
-                // Sa machine est en train d'être montée.
-                readonly property bool joining: root.connecting !== "" && root.connecting === disk.modelData.machine
-
-                width: root.diskW
-                height: root.switchH
-                radius: Theme.radiusSmall
-                color: Qt.alpha(Theme.textPrimary, diskMa.containsMouse || disk.activeFocus ? 0.09 : 0.05)
-                border.width: disk.here ? 1.5 : 1
-                border.color: disk.here ? Theme.accentColor : Theme.dividerColor
-                Behavior on color { ColorAnimation { duration: 140 } }
-
-                Accessible.role: Accessible.Button
-                Accessible.name: disk.modelData.hostLabel + " · " + disk.modelData.label + " · "
-                                 + root.humanSize(disk.modelData.used) + " / " + root.humanSize(disk.modelData.size)
-
-                // Au clavier aussi : Tab, puis Entrée ou Espace.
-                activeFocusOnTab: true
-                Keys.onPressed: (event) => {
-                    if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                        root.openDisk(disk.modelData);
-                        event.accepted = true;
-                    }
-                }
-
-                // Le liquide : deux vagues à la surface, qui roulent en sens
-                // contraires, la plus claire derrière ; le niveau monte avec
-                // un rebond (un ressort), la houle se creuse au survol.
-                // Peint opaque dans une couche, puis découpé aux coins du
-                // carré et rendu translucide d'un coup (sans recouvrement
-                // plus foncé entre la vague et le corps).
-                Item {
-                    id: liquid
-                    anchors.fill: parent
-                    visible: false
-                    layer.enabled: true
-
-                    property real level: disk.pct
-                    Behavior on level { SpringAnimation { spring: 2.2; damping: 0.16; epsilon: 0.002 } }
-                    // La surface, depuis le haut.
-                    readonly property real surface: liquid.height * (1 - liquid.level)
-                    property real amp: diskMa.containsMouse ? 5.5 : 3.5
-                    Behavior on amp { NumberAnimation { duration: 600; easing.type: Easing.OutCubic } }
-                    readonly property real period: 60
-                    readonly property bool wet: liquid.level > 0.004
-
-                    LiquidWave {
-                        tone: Qt.lighter(Theme.accentColor, 1.35)
-                        duration: 3400
-                        reversed: true
-                        a: liquid.amp
-                        p: liquid.period
-                        y: liquid.surface - liquid.amp - 1
-                        width: liquid.width + liquid.period
-                        visible: liquid.wet
-                        running: root.visible
-                    }
-                    Rectangle {
-                        visible: liquid.wet
-                        y: liquid.surface + liquid.amp
-                        width: liquid.width
-                        height: Math.max(0, liquid.height - liquid.surface - liquid.amp)
-                        color: Theme.accentColor
-                    }
-                    LiquidWave {
-                        tone: Theme.accentColor
-                        duration: 2200
-                        a: liquid.amp
-                        p: liquid.period
-                        y: liquid.surface - liquid.amp
-                        width: liquid.width + liquid.period
-                        visible: liquid.wet
-                        running: root.visible
-                    }
-                }
-                Rectangle {
-                    id: diskShape
-                    anchors.fill: parent
-                    radius: disk.radius
-                    visible: false
-                    layer.enabled: true
-                }
-                MultiEffect {
-                    anchors.fill: parent
-                    source: liquid
-                    maskEnabled: true
-                    maskSource: diskShape
-                    maskThresholdMin: 0.5
-                    maskSpreadAtMin: 1.0
-                    opacity: disk.here ? 0.7 : 0.5
-                    Behavior on opacity { NumberAnimation { duration: 200 } }
-                }
-
-                Text {
-                    anchors.top: parent.top
-                    anchors.topMargin: 5
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: parent.width - 8
-                    horizontalAlignment: Text.AlignHCenter
-                    // Sa machine en gras, puis le disque : « gary · Micron 3400 ».
-                    textFormat: Text.StyledText
-                    text: "<b>" + root.escapeHtml(disk.modelData.hostLabel) + "</b> · "
-                          + root.escapeHtml(disk.modelData.label)
-                    elide: Text.ElideRight
-                    font.family: "Inter"
-                    font.pixelSize: 10
-                    font.weight: Font.Medium
-                    color: Theme.textPrimary
-                }
-                Text {
-                    anchors.bottom: parent.bottom
-                    anchors.bottomMargin: 5
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: parent.width - 4
-                    horizontalAlignment: Text.AlignHCenter
-                    text: diskMa.containsMouse ? I18n.tr("common.percent", { n: Math.round(disk.pct * 100) })
-                                               : root.diskUsage(disk.modelData.used, disk.modelData.size)
-                    elide: Text.ElideRight
-                    font.family: "Inter"
-                    font.pixelSize: 9
-                    font.features: { "tnum": 1 }
-                    color: Theme.textPrimary
-                    opacity: 0.8
-                }
-
-                // Le montage de sa machine : le carré respire.
-                SequentialAnimation on opacity {
-                    running: disk.joining
-                    loops: Animation.Infinite
-                    onStopped: disk.opacity = 1
-                    NumberAnimation { to: 0.45; duration: 500; easing.type: Easing.InOutSine }
-                    NumberAnimation { to: 1; duration: 500; easing.type: Easing.InOutSine }
-                }
-
-                MouseArea {
-                    id: diskMa
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.openDisk(disk.modelData)
-                }
-
-                FocusRing { radius: disk.radius + gap }
-            }
-        }
-    }
-
-    // Une vague de liquide (les disques) : sur la largeur du carré et une
-    // période `p` de plus, d'amplitude `a`, qui glisse d'une période en
-    // boucle : la reprise ne se voit pas. Pleine sous la crête.
-    component LiquidWave: Shape {
-        id: wave
-        property color tone
-        property real a: 1.5
-        property real p: 40
-        property int duration: 2400
-        property bool reversed: false
-        property bool running: true
-        height: wave.a * 2 + 2
-        preferredRendererType: Shape.CurveRenderer
-        NumberAnimation on x {
-            from: wave.reversed ? -wave.p : 0
-            to: wave.reversed ? 0 : -wave.p
-            duration: wave.duration
-            loops: Animation.Infinite
-            running: wave.running && wave.visible
-        }
-        ShapePath {
-            fillColor: wave.tone
-            strokeWidth: -1
-            PathSvg {
-                path: {
-                    var a = wave.a, h = wave.p / 2;
-                    // Avant la mise en page, la largeur (donc la période)
-                    // est nulle : la boucle ne finirait pas.
-                    if (!(h >= 1) || !(wave.width > 0))
-                        return "";
-                    var d = "M 0 " + a + " Q " + (h / 2) + " " + (-a) + " " + h + " " + a;
-                    for (var x = 2 * h; x <= wave.width + h; x += h)
-                        d += " T " + x + " " + a;
-                    return d + " L " + (wave.width + h) + " " + wave.height
-                         + " L 0 " + wave.height + " Z";
-                }
-            }
-        }
+        disks: root.disks
+        showHost: true
+        current: root.currentDisk
+        connecting: root.connecting
+        // Vu de la machine du disque : le chemin sur le serveur.
+        currentPath: root.remote ? root.remotePath(root.path) : root.path
+        running: root.visible
+        onOpened: (d) => root.openDisk(d)
+        // Comme un clic sur le disque, mais vers ce dossier.
+        onOpenedHome: (d, path) => root.openDisk(Object.assign({}, d, { main: path }))
     }
 
     // Une icône du thème, en couleurs ; un glyphe de assets/icons, teint.
@@ -3388,18 +3251,13 @@ Item {
                 accent: root.showHidden
                 onClicked: root.showHidden = !root.showHidden
             }
-            // Tuiles, liste ou arborescence.
-            Repeater {
-                model: [{ mode: "grid", icon: "../assets/icons/view-grid.svg" },
-                        { mode: "list", icon: "../assets/icons/view-list.svg" },
-                        { mode: "tree", icon: "../assets/icons/view-tree.svg" }]
-                GlassButton {
-                    required property var modelData
-                    implicitHeight: 24
-                    icon: modelData.icon
-                    accent: root.viewMode === modelData.mode
-                    onClicked: Widgets.explorerView = modelData.mode
-                }
+            // La vue, d'un seul bouton qui montre la vue actuelle ; un clic
+            // passe à la suivante : tuiles → arborescence → liste → tuiles.
+            GlassButton {
+                readonly property var modes: ["grid", "tree", "list"]
+                implicitHeight: 24
+                icon: "../assets/icons/view-" + (modes.indexOf(root.viewMode) >= 0 ? root.viewMode : "grid") + ".svg"
+                onClicked: Widgets.explorerView = modes[(modes.indexOf(root.viewMode) + 1) % modes.length]
             }
         }
     }
@@ -3579,6 +3437,12 @@ Item {
                         // Un dossier se complète (on continue à taper), un
                         // fichier s'ouvre dans son dossier.
                         onClicked: {
+                            // Un dossier récent : on y va.
+                            if (sugg.modelData.recent) {
+                                root.suggestIndex = sugg.index;
+                                root.acceptPath();
+                                return;
+                            }
                             root.takeSuggestion(sugg.index);
                             if (!sugg.modelData.isDir)
                                 root.acceptPath();

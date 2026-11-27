@@ -201,7 +201,10 @@ impl Prompts {
         if self.tx.receiver_count() == 0 {
             return Err(Refused::NoShell);
         }
-        let timeout = spec.timeout.unwrap_or(DEFAULT_TIMEOUT).clamp(1, MAX_TIMEOUT);
+        let timeout = spec
+            .timeout
+            .unwrap_or(DEFAULT_TIMEOUT)
+            .clamp(1, MAX_TIMEOUT);
         let id = new_id();
         let (reply, answer) = oneshot::channel();
         let view = View {
@@ -327,7 +330,13 @@ mod tests {
         assert!(!p.reply("not-an-id", Answer::default()));
         let mut values = HashMap::new();
         values.insert("password".into(), "s3cret".into());
-        assert!(p.reply(&id, Answer { action: "ok".into(), values }));
+        assert!(p.reply(
+            &id,
+            Answer {
+                action: "ok".into(),
+                values
+            }
+        ));
         let a = asker.await.unwrap().unwrap();
         assert_eq!(a.action, "ok");
         assert_eq!(a.values["password"], "s3cret");

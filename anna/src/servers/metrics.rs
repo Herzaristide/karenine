@@ -1,7 +1,7 @@
 //! A server's measures over HTTP: node_exporter's `/metrics` on its
 //! Tailscale address. Through its textfile collector come two files more:
-//! `extras.prom` (anna/metrics/node_extras.py: disks, AI services,
-//! Wake-on-LAN, the same on every machine) and `gpu.prom` (`gpu_*` lines,
+//! `extras.prom` (anna/metrics/node_extras.py: disks and Wake-on-LAN,
+//! the same on every machine) and `gpu.prom` (`gpu_*` lines,
 //! written by each machine's own script in its NixOS configuration: an
 //! NVIDIA card in offload and an AMD card are not read alike). No shell and
 //! no key: one read on the tailnet.
@@ -21,13 +21,19 @@
 //! `name` a pci.ids name (`short_gpu_name` shortens it), `vendor` picks the
 //! main card: NVIDIA first, else the AMD card with the most VRAM.
 
-use super::{base, short_gpu_name, Drive, Memory, RemoteDisk, RemoteGpu, Server, ServerStats};
-use super::{Service, Wake};
+use super::Wake;
+use super::{
+    base, short_gpu_name, Container, Drive, Home, Memory, RemoteDisk, RemoteGpu, Server, ServerStats,
+    Smart,
+};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 /// node_exporter's port.
 const PORT: u16 = 9100;
+/// smartctl_exporter's and cAdvisor's (the NixOS module sets them).
+const SMART_PORT: u16 = 9633;
+const CADVISOR_PORT: u16 = 9080;
 
 /// The lines of a textfile older than this are left out: its timer has
 /// stopped, and stale measures would pass for live ones.
@@ -54,13 +60,30 @@ impl Sample {
     }
 }
 
-pub async fn fetch(ip: &str) -> Result<String, String> {
+/// node_exporter's page, then smartctl_exporter's and cAdvisor's when they
+/// answer (their metric names never meet): one text, one parse. A silent
+/// node_exporter is the error; a silent extra leaves its part out.
+pub async fn fetch_all(ip: &str) -> Result<String, String> {
+    let (node, smart, cadvisor) = tokio::join!(
+        fetch(ip, PORT),
+        fetch(ip, SMART_PORT),
+        fetch(ip, CADVISOR_PORT)
+    );
+    let mut text = node?;
+    for extra in [smart, cadvisor].into_iter().flatten() {
+        text.push('\n');
+        text.push_str(&extra);
+    }
+    Ok(text)
+}
+
+pub async fn fetch(ip: &str, port: u16) -> Result<String, String> {
     let host = if ip.contains(':') {
         format!("[{ip}]")
     } else {
         ip.to_string()
     };
-    let url = format!("http://{host}:{PORT}/metrics");
+    let url = format!("http://{host}:{port}/metrics");
     tokio::task::spawn_blocking(move || {
         ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(2))
@@ -200,6 +223,16 @@ pub fn stats(
         .map(|m| m.label("nodename").to_string())
         .unwrap_or_default();
 
+    os_info(samples, &mut s);
+    s.cpu_watts = rapl(samples, &server.name, now, memory);
+    s.battery_watts = battery(samples);
+    s.containers = containers(samples, &server.name, now, memory);
+    s.systemd = of(samples, "node_systemd_unit_state").next().is_some();
+    s.failed = of(samples, "node_systemd_unit_state")
+        .filter(|m| m.label("state") == "failed" && m.value == 1.0)
+        .map(|m| m.label("name").to_string())
+        .collect();
+
     let fresh = |file: &str| {
         of(samples, "node_textfile_mtime_seconds").any(|m| {
             m.label("file").ends_with(&format!("/{file}"))
@@ -213,12 +246,158 @@ pub fn stats(
         return (s, None);
     }
     s.drives = drives(samples);
-    s.services = services(samples);
     let wake = of(samples, "wake_info").next().map(|m| Wake {
         mac: m.label("mac").to_string(),
         broadcast: m.label("broadcast").to_string(),
     });
     (s, wake)
+}
+
+/// « NixOS 26.11 (Zokor) », and the nixpkgs revision and date of its
+/// `build_id` (« 26.11.20261121.2786a2a »).
+fn os_info(samples: &[Sample], s: &mut ServerStats) {
+    let Some(m) = of(samples, "node_os_info").next() else {
+        return;
+    };
+    s.os_name = m.label("pretty_name").to_string();
+    if m.label("id") != "nixos" {
+        return;
+    }
+    let parts: Vec<&str> = m.label("build_id").split('.').collect();
+    if let [.., date, rev] = parts.as_slice() {
+        if date.len() == 8 && date.chars().all(|c| c.is_ascii_digit()) {
+            s.nixpkgs_date = format!("{}-{}-{}", &date[..4], &date[4..6], &date[6..]);
+            s.nixpkgs_rev = rev.to_string();
+        }
+    }
+}
+
+/// Watts of the CPU packages: RAPL's joules since the last sample, over the
+/// time between them (node_time_seconds, the machine's own clock); -1 on the
+/// first sample or without RAPL. A counter that wrapped skips one sample.
+fn rapl(samples: &[Sample], name: &str, now: Option<f64>, memory: &mut Memory) -> f32 {
+    let joules: Vec<f64> = of(samples, "node_rapl_package_joules_total")
+        .map(|m| m.value)
+        .collect();
+    let (Some(now), false) = (now, joules.is_empty()) else {
+        return -1.0;
+    };
+    let total: f64 = joules.iter().sum();
+    let watts = match memory.rapl.get(name) {
+        Some(&(j, t)) if now > t && total >= j => ((total - j) / (now - t)) as f32,
+        _ => -1.0,
+    };
+    memory.rapl.insert(name.to_string(), (total, now));
+    watts
+}
+
+/// Watts drawn from the batteries while they discharge (power, else
+/// current × voltage): the whole machine. -1 when plugged in or batteryless.
+fn battery(samples: &[Sample]) -> f32 {
+    let mut total = 0.0;
+    let mut any = false;
+    for info in of(samples, "node_power_supply_info") {
+        if info.label("type") != "Battery" || info.label("status") != "Discharging" {
+            continue;
+        }
+        let supply = info.label("power_supply");
+        let watts = by(
+            samples,
+            "node_power_supply_power_watt",
+            "power_supply",
+            supply,
+        )
+        .or_else(|| {
+            Some(
+                by(
+                    samples,
+                    "node_power_supply_current_ampere",
+                    "power_supply",
+                    supply,
+                )? * by(
+                    samples,
+                    "node_power_supply_voltage_volt",
+                    "power_supply",
+                    supply,
+                )?,
+            )
+        });
+        if let Some(w) = watts {
+            total += w;
+            any = true;
+        }
+    }
+    if any {
+        total as f32
+    } else {
+        -1.0
+    }
+}
+
+/// The running Docker containers of cAdvisor (named ones: its root cgroup
+/// has no name), their CPU over the last sample and their working set,
+/// busiest first.
+fn containers(
+    samples: &[Sample],
+    server: &str,
+    now: Option<f64>,
+    memory: &mut Memory,
+) -> Vec<Container> {
+    let mut out: Vec<Container> = of(samples, "container_memory_working_set_bytes")
+        .filter(|m| !m.label("name").is_empty())
+        .map(|m| {
+            let name = m.label("name");
+            let key = (server.to_string(), name.to_string());
+            let seconds: f64 = of(samples, "container_cpu_usage_seconds_total")
+                .filter(|c| c.label("name") == name)
+                .map(|c| c.value)
+                .sum();
+            let cpu = match (now, memory.containers.get(&key)) {
+                (Some(now), Some(&(sec, t))) if now > t && seconds >= sec => {
+                    ((seconds - sec) * 100.0 / (now - t)).round() as i32
+                }
+                _ => -1,
+            };
+            if let Some(now) = now {
+                memory.containers.insert(key, (seconds, now));
+            }
+            Container {
+                name: name.to_string(),
+                image: m.label("image").to_string(),
+                cpu,
+                mem: m.value as u64,
+            }
+        })
+        .collect();
+    out.sort_by(|a, b| b.cpu.cmp(&a.cpu).then(b.mem.cmp(&a.mem)));
+    // Gone containers are forgotten.
+    memory
+        .containers
+        .retain(|(s, n), _| s != server || out.iter().any(|c| &c.name == n));
+    out
+}
+
+/// A disk's SMART health: smartctl_exporter names it as smartctl's scan
+/// does (`sda`, `nvme0`), lsblk by its namespace (`nvme0n1`).
+fn smart(samples: &[Sample], drive: &str) -> Option<Smart> {
+    let device = of(samples, "smartctl_device_smart_status")
+        .map(|m| m.label("device"))
+        .find(|d| {
+            *d == drive
+                || drive
+                    .strip_prefix(d)
+                    .and_then(|rest| rest.strip_prefix('n'))
+                    .is_some_and(|ns| !ns.is_empty() && ns.chars().all(|c| c.is_ascii_digit()))
+        })?;
+    let value = |metric: &str| by(samples, metric, "device", device);
+    Some(Smart {
+        ok: value("smartctl_device_smart_status") == Some(1.0),
+        wear: value("smartctl_device_percentage_used").map_or(-1, |v| v as i32),
+        temp: of(samples, "smartctl_device_temperature")
+            .find(|m| m.label("device") == device && m.label("temperature_type") == "current")
+            .map_or(-1, |m| m.value as i32),
+        hours: value("smartctl_device_power_on_seconds").map_or(0, |v| (v / 3600.0) as u64),
+    })
 }
 
 /// °C: the hottest thermal zone, else the hottest sensor of a CPU chip.
@@ -315,22 +494,14 @@ fn drives(samples: &[Sample]) -> Vec<Drive> {
                 fs_size: value("drive_fs_size_bytes"),
                 fs_used: value("drive_fs_used_bytes"),
                 mounts,
-            }
-        })
-        .collect()
-}
-
-fn services(samples: &[Sample]) -> Vec<Service> {
-    of(samples, "service_info")
-        .map(|m| {
-            let name = m.label("name");
-            Service {
-                name: name.to_string(),
-                state: m.label("state").to_string(),
-                queue: by(samples, "service_queue", "name", name).map_or(-1, |v| v as i32),
-                models: of(samples, "service_model")
-                    .filter(|s| s.label("name") == name)
-                    .map(|s| s.label("model").to_string())
+                removable: m.label("removable") == "1",
+                smart: smart(samples, name),
+                homes: of(samples, "drive_home")
+                    .filter(|h| h.label("name") == name)
+                    .map(|h| Home {
+                        user: h.label("user").to_string(),
+                        path: h.label("home").to_string(),
+                    })
                     .collect(),
             }
         })
@@ -372,10 +543,9 @@ drive_info{name="nvme0n1",model="Micron 3400",kind="NVMe"} 1
 drive_size_bytes{name="nvme0n1"} 1e+12
 drive_mount{name="nvme0n1",mount="/boot"} 1
 drive_mount{name="nvme0n1",mount="/"} 1
-service_info{name="comfyui",state="active"} 1
-service_queue{name="comfyui"} 3
-service_info{name="ollama",state="active"} 1
-service_model{name="ollama",model="qwen3:8b"} 1
+drive_home{name="nvme0n1",user="me",home="/home/me"} 1
+drive_info{name="sdb",model="SanDisk",kind="USB",removable="1"} 1
+drive_mount{name="sdb",mount="/run/media/me/KEY"} 1
 wake_info{mac="aa:bb:cc:dd:ee:ff",broadcast="192.168.1.255"} 1
 "#;
 
@@ -415,11 +585,13 @@ wake_info{mac="aa:bb:cc:dd:ee:ff",broadcast="192.168.1.255"} 1
         );
         assert!(!gpu.asleep);
         assert_eq!(s.drives[0].mounts, ["/", "/boot"]);
+        // Without the label (an older node-extras), not removable.
+        assert!(!s.drives[0].removable && s.drives[1].removable);
         assert_eq!(
-            (s.services[0].name.as_str(), s.services[0].queue),
-            ("comfyui", 3)
+            s.drives[0].homes,
+            [Home { user: "me".into(), path: "/home/me".into() }]
         );
-        assert_eq!((s.services[1].queue, s.services[1].models.len()), (-1, 1));
+        assert!(s.drives[1].homes.is_empty());
         assert_eq!(wake.unwrap().mac, "aa:bb:cc:dd:ee:ff");
 
         // The next sample: 20 s more, 10 of them busy.
@@ -431,6 +603,86 @@ wake_info{mac="aa:bb:cc:dd:ee:ff",broadcast="192.168.1.255"} 1
             );
         let (s, _) = stats(&server(), &parse(&next), &mut memory);
         assert_eq!(s.cpu_usage, 50);
+    }
+
+    /// The other exporters' lines, and node_exporter's OS, RAPL and battery.
+    const EXTRAS: &str = r#"node_time_seconds 100
+node_os_info{id="nixos",pretty_name="NixOS 26.11 (Zokor)",build_id="26.11.20261121.2786a2a"} 1
+node_rapl_package_joules_total{index="0",path="/sys/class/powercap/intel-rapl:0"} 1000
+node_power_supply_info{power_supply="ADP1",type="Mains"} 1
+node_power_supply_info{power_supply="BAT1",status="Discharging",type="Battery"} 1
+node_power_supply_current_ampere{power_supply="BAT1"} 2
+node_power_supply_voltage_volt{power_supply="BAT1"} 15.5
+drive_info{name="nvme0n1",model="Micron 3400",kind="NVMe"} 1
+drive_mount{name="nvme0n1",mount="/"} 1
+drive_info{name="sda",model="WD",kind="HDD"} 1
+drive_mount{name="sda",mount="/data"} 1
+node_systemd_unit_state{name="backup.service",state="failed",type="oneshot"} 1
+node_systemd_unit_state{name="backup.service",state="active",type="oneshot"} 0
+node_systemd_unit_state{name="sshd.service",state="failed",type="simple"} 0
+node_systemd_unit_state{name="sshd.service",state="active",type="simple"} 1
+node_textfile_mtime_seconds{file="/run/node-exporter/extras.prom"} 90
+smartctl_device_smart_status{device="nvme0"} 1
+smartctl_device_percentage_used{device="nvme0"} 3
+smartctl_device_temperature{device="nvme0",temperature_type="current"} 41
+smartctl_device_power_on_seconds{device="nvme0"} 7200
+smartctl_device_smart_status{device="sda"} 0
+container_cpu_usage_seconds_total{cpu="total",id="/",image="",name=""} 500
+container_memory_working_set_bytes{id="/",image="",name=""} 9e9
+container_cpu_usage_seconds_total{cpu="total",id="/user.slice/docker-a.scope",image="redis:7",name="cache"} 10
+container_memory_working_set_bytes{id="/user.slice/docker-a.scope",image="redis:7",name="cache"} 5e7
+container_cpu_usage_seconds_total{cpu="total",id="/user.slice/docker-b.scope",image="postgres:16",name="db"} 20
+container_memory_working_set_bytes{id="/user.slice/docker-b.scope",image="postgres:16",name="db"} 2e8
+"#;
+
+    #[test]
+    fn extras_give_nixos_power_health_and_containers() {
+        let mut memory = Memory::default();
+        let (s, _) = stats(&server(), &parse(EXTRAS), &mut memory);
+        assert_eq!(s.os_name, "NixOS 26.11 (Zokor)");
+        assert_eq!(
+            (s.nixpkgs_rev.as_str(), s.nixpkgs_date.as_str()),
+            ("2786a2a", "2026-11-21")
+        );
+        assert_eq!(s.cpu_watts, -1.0, "no delta yet");
+        assert_eq!(s.battery_watts, 31.0);
+        // `nvme0` is the controller of `nvme0n1`; a failing disk says so.
+        let smart = s.drives[0].smart.as_ref().unwrap();
+        assert_eq!(
+            (smart.ok, smart.wear, smart.temp, smart.hours),
+            (true, 3, 41, 2)
+        );
+        assert!(!s.drives[1].smart.as_ref().unwrap().ok);
+        assert!(s.systemd);
+        assert_eq!(s.failed, ["backup.service"]);
+        // The root cgroup is no container; no CPU before a second sample.
+        let names: Vec<&str> = s.containers.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["db", "cache"]);
+        assert_eq!(s.containers[0].cpu, -1);
+
+        // 10 s later: 150 J (15 W), « cache » used 5 s of CPU (50 %).
+        let next = EXTRAS
+            .replace("node_time_seconds 100", "node_time_seconds 110")
+            .replace("} 1000\n", "} 1150\n")
+            .replace(r#"name="cache"} 10"#, r#"name="cache"} 15"#);
+        let (s, _) = stats(&server(), &parse(&next), &mut memory);
+        assert_eq!(s.cpu_watts, 15.0);
+        assert_eq!(
+            (s.containers[0].name.as_str(), s.containers[0].cpu),
+            ("cache", 50)
+        );
+        assert_eq!(s.containers[1].cpu, 0);
+    }
+
+    #[test]
+    fn plugged_in_and_not_nixos() {
+        let page = EXTRAS
+            .replace("Discharging", "Charging")
+            .replace(r#"id="nixos""#, r#"id="debian""#);
+        let (s, _) = stats(&server(), &parse(&page), &mut Memory::default());
+        assert_eq!(s.battery_watts, -1.0);
+        assert_eq!(s.os_name, "NixOS 26.11 (Zokor)");
+        assert!(s.nixpkgs_rev.is_empty());
     }
 
     #[test]

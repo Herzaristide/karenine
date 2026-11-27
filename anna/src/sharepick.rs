@@ -71,12 +71,20 @@ fn parse_outputs(list: &str) -> Vec<Output> {
     let mut out = Vec::new();
     let mut rest = list;
     while !rest.is_empty() {
-        let Some((name, after)) = take_sized(rest) else { break };
+        let Some((name, after)) = take_sized(rest) else {
+            break;
+        };
         let after = after.strip_prefix(':').unwrap_or(after);
         let (geom, next) = after.split_once(';').unwrap_or((after, ""));
         let n: Vec<i64> = geom.split(':').filter_map(|v| v.parse().ok()).collect();
         if let [x, y, w, h] = n[..] {
-            out.push(Output { name: name.into(), x, y, w, h });
+            out.push(Output {
+                name: name.into(),
+                x,
+                y,
+                w,
+                h,
+            });
         }
         rest = next;
     }
@@ -108,11 +116,16 @@ fn parse_workspaces(list: &str) -> Vec<Workspace> {
     let mut out = Vec::new();
     let mut rest = list;
     while !rest.is_empty() {
-        let Some((name, after)) = take_sized(rest) else { break };
+        let Some((name, after)) = take_sized(rest) else {
+            break;
+        };
         let after = after.strip_prefix(':').unwrap_or(after);
         let (id, next) = after.split_once(';').unwrap_or((after, ""));
         if id.parse::<u64>().is_ok_and(|i| i != 0) {
-            out.push(Workspace { name: name.into(), id: id.into() });
+            out.push(Workspace {
+                name: name.into(),
+                id: id.into(),
+            });
         }
         rest = next;
     }
@@ -162,12 +175,20 @@ fn take_last(now: u64) -> Option<String> {
 fn recent(text: &str, now: u64) -> Option<String> {
     let (at, line) = text.split_once('\n')?;
     let at: u64 = at.trim().parse().ok()?;
-    (now >= at && now - at <= REUSE_MS && line.starts_with("[SELECTION]")).then(|| line.trim().to_string())
+    (now >= at && now - at <= REUSE_MS && line.starts_with("[SELECTION]"))
+        .then(|| line.trim().to_string())
 }
 
 /// Whether the answer line still names something that can be shared.
-fn still_there(line: &str, outputs: &[Output], windows: &[Window], workspaces: &[Workspace]) -> bool {
-    let Some((_, what)) = line.split_once('/') else { return false };
+fn still_there(
+    line: &str,
+    outputs: &[Output],
+    windows: &[Window],
+    workspaces: &[Workspace],
+) -> bool {
+    let Some((_, what)) = line.split_once('/') else {
+        return false;
+    };
     if let Some(name) = what.strip_prefix("screen:") {
         outputs.iter().any(|o| o.name == name)
     } else if let Some(handle) = what.strip_prefix("window:") {
@@ -199,7 +220,11 @@ fn spec(outputs: &[Output], windows: &[Window], workspaces: &[Workspace], rememb
     for w in windows {
         options.push(Choice {
             id: format!("window:{}", w.handle),
-            label: if w.title.is_empty() { w.class.clone() } else { w.title.clone() },
+            label: if w.title.is_empty() {
+                w.class.clone()
+            } else {
+                w.title.clone()
+            },
             sub: w.class.clone(),
             group: wins.clone(),
             preview: Some(json!({ "window": w.address })),
@@ -338,7 +363,11 @@ pub fn run(args: &[String]) -> ! {
     if what.is_empty() {
         std::process::exit(0);
     }
-    let flags = if reply["values"]["remember"] == json!("true") { "r" } else { "" };
+    let flags = if reply["values"]["remember"] == json!("true") {
+        "r"
+    } else {
+        ""
+    };
     let line = format!("[SELECTION]{flags}/{what}");
     println!("{line}");
     remember_last(&line);
@@ -353,7 +382,16 @@ mod tests {
     fn the_screens_are_read() {
         let o = parse_outputs("4:DP-1:0:0:2560:1440;5:eDP-1:2560:0:1920:1200;");
         assert_eq!(o.len(), 2);
-        assert_eq!(o[1], Output { name: "eDP-1".into(), x: 2560, y: 0, w: 1920, h: 1200 });
+        assert_eq!(
+            o[1],
+            Output {
+                name: "eDP-1".into(),
+                x: 2560,
+                y: 0,
+                w: 1920,
+                h: 1200
+            }
+        );
         // A name holding the separators is read by its length.
         let o = parse_outputs("7:HDMI:;1:10:20:800:600;");
         assert_eq!(o[0].name, "HDMI:;1");
@@ -377,10 +415,19 @@ mod tests {
     #[test]
     fn the_workspaces_are_read() {
         let ws = parse_workspaces("1:1:7;3:web:12;1:x:0;");
-        assert_eq!(ws, vec![
-            Workspace { name: "1".into(), id: "7".into() },
-            Workspace { name: "web".into(), id: "12".into() },
-        ]);
+        assert_eq!(
+            ws,
+            vec![
+                Workspace {
+                    name: "1".into(),
+                    id: "7".into()
+                },
+                Workspace {
+                    name: "web".into(),
+                    id: "12".into()
+                },
+            ]
+        );
     }
 
     #[test]
@@ -397,7 +444,10 @@ mod tests {
     #[test]
     fn a_choice_answers_the_next_request_for_a_while() {
         let line = "[SELECTION]r/screen:DP-1";
-        assert_eq!(recent(&format!("1000\n{line}"), 5000).as_deref(), Some(line));
+        assert_eq!(
+            recent(&format!("1000\n{line}"), 5000).as_deref(),
+            Some(line)
+        );
         assert_eq!(recent(&format!("1000\n{line}"), 1000 + REUSE_MS + 1), None);
         assert_eq!(recent("garbage", 5000), None);
         assert_eq!(recent("1000\nscreen:DP-1", 2000), None);
@@ -413,7 +463,12 @@ mod tests {
         assert!(still_there("[SELECTION]r/window:123", &o, &w, &ws));
         assert!(!still_there("[SELECTION]r/window:124", &o, &w, &ws));
         assert!(still_there("[SELECTION]/workspace-id:7", &o, &w, &ws));
-        assert!(still_there("[SELECTION]/region:DP-1@0,0,10,10", &o, &w, &ws));
+        assert!(still_there(
+            "[SELECTION]/region:DP-1@0,0,10,10",
+            &o,
+            &w,
+            &ws
+        ));
     }
 
     #[test]
@@ -423,11 +478,18 @@ mod tests {
         let s = spec(&o, &w, &[], true);
         let what = &s["prompt"]["fields"][0];
         assert_eq!(what["value"], "screen:DP-1");
-        let ids: Vec<&str> = what["options"].as_array().unwrap().iter()
-            .map(|c| c["id"].as_str().unwrap()).collect();
+        let ids: Vec<&str> = what["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["id"].as_str().unwrap())
+            .collect();
         assert_eq!(ids, ["screen:DP-1", "window:123", "region"]);
         assert_eq!(s["prompt"]["fields"][1]["value"], "true");
         let parsed: crate::prompts::Spec = serde_json::from_value(s["prompt"].clone()).unwrap();
-        assert_eq!(parsed.fields[0].options[1].preview, Some(json!({ "window": "0" })));
+        assert_eq!(
+            parsed.fields[0].options[1].preview,
+            Some(json!({ "window": "0" }))
+        );
     }
 }

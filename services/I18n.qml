@@ -84,8 +84,8 @@ Singleton {
     readonly property var voiceChoices: {
         var current = i18n.available.find(l => l.code === i18n.lang);
         return [
-            { code: "", name: i18n.tr("voice.sameAsInterface", { name: current ? current.name : i18n.lang }) },
-            { code: "auto", name: i18n.tr("voice.auto") }
+            { code: "auto", name: i18n.tr("voice.auto") },
+            { code: "", name: i18n.tr("voice.sameAsInterface", { name: current ? current.name : i18n.lang }) }
         ].concat(i18n.available);
     }
 
@@ -142,7 +142,7 @@ Singleton {
         JsonAdapter { // qmllint disable unresolved-type
             id: prefs
             property string lang: ""
-            property string voice: ""
+            property string voice: "auto"
         }
     }
 

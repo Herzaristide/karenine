@@ -146,7 +146,12 @@ impl Config {
             self.url = stripped.to_string();
         }
         if self.url.is_empty() {
-            self.url = if self.provider == "anthropic" { ANTHROPIC_URL } else { OLLAMA_URL }.into();
+            self.url = if self.provider == "anthropic" {
+                ANTHROPIC_URL
+            } else {
+                OLLAMA_URL
+            }
+            .into();
         }
         self.model = self.model.trim().to_string();
     }
@@ -194,7 +199,8 @@ fn save_key(key: &str) -> Result<(), String> {
     // An existing file keeps its mode: made private here too.
     use std::os::unix::fs::PermissionsExt;
     let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
-    f.write_all(key.trim().as_bytes()).map_err(|e| e.to_string())
+    f.write_all(key.trim().as_bytes())
+        .map_err(|e| e.to_string())
 }
 
 fn agent() -> ureq::Agent {
@@ -245,7 +251,11 @@ pub fn list_models(c: &Config) -> Result<Vec<String>, String> {
     .into_string()
     .map_err(|e| e.to_string())?;
     let v: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    let (list, field) = if c.provider == "ollama" { ("models", "name") } else { ("data", "id") };
+    let (list, field) = if c.provider == "ollama" {
+        ("models", "name")
+    } else {
+        ("data", "id")
+    };
     Ok(v.get(list)
         .and_then(Value::as_array)
         .map(|a| {
@@ -311,7 +321,13 @@ impl Message {
                     return out;
                 };
                 let delta = event.get("delta").cloned().unwrap_or(Value::Null);
-                let piece = |k: &str| delta.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+                let piece = |k: &str| {
+                    delta
+                        .get(k)
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string()
+                };
                 match delta.get("type").and_then(Value::as_str) {
                     Some("text_delta") => {
                         let p = piece("text");
@@ -399,7 +415,11 @@ impl Message {
             .filter(|b| b.get("type").and_then(Value::as_str) == Some("tool_use"))
             .map(|b| {
                 let s = |k: &str| b.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-                (s("id"), s("name"), b.get("input").cloned().unwrap_or(json!({})))
+                (
+                    s("id"),
+                    s("name"),
+                    b.get("input").cloned().unwrap_or(json!({})),
+                )
             })
             .collect()
     }
@@ -670,7 +690,8 @@ impl Pilot {
             Update::Text(piece) => {
                 if self.in_text.load(Ordering::SeqCst) {
                     let mut log = lock(&self.log);
-                    if let Some(Value::String(text)) = log.back_mut().and_then(|e| e.get_mut("text"))
+                    if let Some(Value::String(text)) =
+                        log.back_mut().and_then(|e| e.get_mut("text"))
                     {
                         text.push_str(&piece);
                     }
@@ -794,7 +815,9 @@ impl Pilot {
                     return Ok(());
                 }
                 let (ok, text, image) = super::mcp::call_daemon(&name, &input);
-                let mut content = vec![json!({ "type": "text", "text": if text.is_empty() { "ok".into() } else { text } })];
+                let mut content = vec![
+                    json!({ "type": "text", "text": if text.is_empty() { "ok".into() } else { text } }),
+                ];
                 if let Some(data) = image {
                     content.push(json!({ "type": "image", "source": {
                         "type": "base64", "media_type": "image/jpeg", "data": data } }));
@@ -944,7 +967,9 @@ mod tests {
     #[test]
     fn an_error_event_is_kept() {
         let mut m = Message::default();
-        m.feed(&ev(r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#));
+        m.feed(&ev(
+            r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#,
+        ));
         assert_eq!(m.error.as_deref(), Some("Overloaded"));
     }
 
@@ -970,7 +995,10 @@ mod tests {
                             { "type": "image", "source": { "type": "base64", "data": "AA" } }] }] }),
         ];
         drop_images(&mut h);
-        assert_eq!(h[1]["content"][0]["content"], json!([{ "type": "text", "text": "fenêtre firefox" }]));
+        assert_eq!(
+            h[1]["content"][0]["content"],
+            json!([{ "type": "text", "text": "fenêtre firefox" }])
+        );
         assert_eq!(h[0]["content"], "regarde");
     }
 
@@ -983,7 +1011,9 @@ mod tests {
             assert!(
                 !name.is_empty()
                     && name.len() <= 64
-                    && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'),
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'),
                 "{name}"
             );
             assert_eq!(t["input_schema"]["type"], "object");
@@ -992,17 +1022,32 @@ mod tests {
 
     #[test]
     fn the_configuration_falls_back_on_sane_defaults() {
-        let mut c = Config { provider: "x".into(), url: " http://h:1/v1/ ".into(), model: " m ".into(), think: false };
+        let mut c = Config {
+            provider: "x".into(),
+            url: " http://h:1/v1/ ".into(),
+            model: " m ".into(),
+            think: false,
+        };
         c.normalize();
-        assert_eq!((c.provider.as_str(), c.url.as_str(), c.model.as_str()), ("ollama", "http://h:1", "m"));
-        let mut c = Config { provider: "anthropic".into(), url: "".into(), ..Config::default() };
+        assert_eq!(
+            (c.provider.as_str(), c.url.as_str(), c.model.as_str()),
+            ("ollama", "http://h:1", "m")
+        );
+        let mut c = Config {
+            provider: "anthropic".into(),
+            url: "".into(),
+            ..Config::default()
+        };
         c.normalize();
         assert_eq!(c.url, ANTHROPIC_URL);
     }
 
     #[test]
     fn action_lines_name_the_tool_and_its_arguments() {
-        assert_eq!(action_line("volume", &json!({"pourcentage": 30})), "volume · 30");
+        assert_eq!(
+            action_line("volume", &json!({"pourcentage": 30})),
+            "volume · 30"
+        );
         assert_eq!(action_line("etat_bureau", &json!({})), "etat_bureau");
         assert_eq!(
             action_line("ouvrir_projet", &json!({"projet": "karenine"})),

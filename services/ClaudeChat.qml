@@ -251,6 +251,26 @@ Singleton {
     property bool dictating: false
     property string _dictKey: ""
     property bool _dictHeard: false
+    // Espace tenu (dictateHold) : anna écoute jusqu'à ce qu'il soit lâché,
+    // silences compris. Lâché avant que l'écoute ait commencé, on la finit
+    // dès qu'elle commence.
+    property bool dictateHeld: false
+    property bool _dictRelease: false
+
+    function dictateHold() {
+        if (!chat.dictating)
+            chat._dictStart(true);
+    }
+
+    function dictateRelease() {
+        if (!chat.dictateHeld)
+            return;
+        chat.dictateHeld = false;
+        if (Pilot.voicePhase === "listening")
+            Pilot.voiceToggle(false);
+        else if (!chat._dictHeard)
+            chat._dictRelease = true;
+    }
 
     function dictate() {
         if (chat.dictating) {
@@ -259,22 +279,28 @@ Singleton {
                 Pilot.voiceToggle(false);
             return;
         }
+        chat._dictStart(false);
+    }
+
+    function _dictStart(hold) {
         // La voix parle déjà au pilote : on la lui laisse.
         if (Pilot.voicePhase !== "idle")
             return;
         chat.error = "";
         chat._dictKey = chat._key;
         chat._dictHeard = false;
+        chat._dictRelease = false;
+        chat.dictateHeld = hold;
         chat.dictating = true;
         dictStart.restart();
-        Pilot.voiceToggle(false);
+        Pilot.voiceToggle(false, hold);
     }
 
     // L'écoute n'a pas démarré (anna absent).
     Timer {
         id: dictStart
         interval: 5000
-        onTriggered: if (!chat._dictHeard) chat.dictating = false
+        onTriggered: if (!chat._dictHeard) chat.dictating = chat.dictateHeld = false
     }
 
     Connections {
@@ -283,8 +309,13 @@ Singleton {
         function onVoicePhaseChanged() {
             if (Pilot.voicePhase !== "idle") {
                 chat._dictHeard = true;
+                if (chat._dictRelease && Pilot.voicePhase === "listening") {
+                    chat._dictRelease = false;
+                    Pilot.voiceToggle(false);
+                }
             } else if (chat._dictHeard) {
                 chat.dictating = false;
+                chat.dictateHeld = false;
                 if (Pilot.voiceError !== "")
                     chat.error = Pilot.voiceError;
                 else if (Pilot.voiceText.trim() !== "")
@@ -400,6 +431,31 @@ Singleton {
         chat.session = { id: "", title: "", project: project || "", branch: "", cwd: cwd };
         chat.open = true;
         chat.loaded = true;
+    }
+
+    // Une nouvelle session dans ce dossier ; où : "panel" ou "terminal".
+    function startIn(where, dir, name) {
+        Places.visit(dir);
+        if (where === "terminal")
+            ClaudeSessions.startInTerminal(dir);
+        else
+            chat.newSession(dir, name);
+    }
+
+    // Une nouvelle session dans un dossier sans session encore, choisi dans
+    // l'Explorer ; où : "panel" ou "terminal". Ici et non dans la vue, que
+    // le passage à l'Explorer peut détruire.
+    function newSessionElsewhere(where) {
+        Widgets.explorerPickStart({
+            mode: "dir", multiple: false, path: Quickshell.env("HOME") || "/",
+            done: (paths) => {
+                var dir = paths.length > 0 ? paths[0].replace(/(.)\/+$/, "$1") : "";
+                if (dir !== "")
+                    chat.startIn(where, dir, dir.substring(dir.lastIndexOf("/") + 1) || dir);
+                if (Widgets.panelOpen && Widgets.panelTab === "files")
+                    Widgets.show("claude");
+            }
+        });
     }
 
     // Ouvrir la conversation d'un sous-agent (son id, son titre).

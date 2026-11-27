@@ -133,6 +133,12 @@ QtObject {
     function _parse(seq, text) {
         var lines = text.split("\n");
         var out = [];
+        var seen = {};
+
+        // Les dossiers récents dont le nom correspond : fd s'arrête aux
+        // premiers trouvés, qui ne sont pas les plus utilisés.
+        lines = Places.dirs.filter(d => Fuzzy.score(src.runQuery, d.path.substring(d.path.lastIndexOf("/") + 1)) > 150)
+            .slice(0, 8).map(d => d.path + "/").concat(lines);
 
         // Tout le flux est parcouru avant d'être classé : s'arrêter à `limit` ici
         // reviendrait à classer les premières lignes de `fd` au lieu des
@@ -147,6 +153,10 @@ QtObject {
             var isDir = path.charAt(path.length - 1) === "/";
             while (path.length > 1 && path.charAt(path.length - 1) === "/")
                 path = path.substring(0, path.length - 1);
+
+            if (seen[path])
+                continue;
+            seen[path] = true;
 
             var slash = path.lastIndexOf("/");
             var name  = slash >= 0 ? path.substring(slash + 1) : path;
@@ -168,7 +178,7 @@ QtObject {
                 // Les correspondances sur le nom priment sur celles du chemin :
                 // le repli doit donc rester sous le plus faible score de nom,
                 // qui est celui d'une sous-séquence (150).
-                score:    src._rank(Fuzzy.score(src.runQuery, name) || 100, path),
+                score:    src._rank(Fuzzy.score(src.runQuery, name) || 100, path) + src._usage(path, isDir),
                 payload:  { path: path, isDir: isDir, suffix: suffix }
             });
         }
@@ -184,6 +194,16 @@ QtObject {
         var depth = rel.split("/").length - 2;
         var hidden = /\/\./.test(rel);
         return Math.max(1, score - (hidden ? 250 : 0) - Math.min(depth, 8) * 15);
+    }
+
+    // Ce qu'on utilise passe devant ; un fichier, un peu, par son projet.
+    function _usage(path, isDir) {
+        if (isDir)
+            return Places.boost(path);
+        for (var p = src._parentOf(path); p.length > 1; p = src._parentOf(p))
+            if (Places.scores[p] !== undefined)
+                return Places.boost(p) * 0.4;
+        return 0;
     }
 
     readonly property var tones: [
@@ -212,6 +232,9 @@ QtObject {
     function activate(item, actionId) {
         var p = item.payload.path;
         var dir = item.payload.isDir ? p : src._parentOf(p);
+
+        if (actionId !== "copy")
+            Places.visit(dir);
 
         switch (actionId) {
         case "open":     Quickshell.execDetached(["xdg-open", p]); break;

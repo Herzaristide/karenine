@@ -5,8 +5,8 @@
 //! - `lang`, the interface's: the messages anna shows on screen (errors,
 //!   alerts). English without one; `KARENINE_LANG` overrides it.
 //! - `voice`, the one spoken to the pilot: the one it answers in (the
-//!   transcription, Parakeet, detects what is said by itself). Empty: the
-//!   interface's; `auto`: the pilot answers in whatever was said.
+//!   transcription, Parakeet, detects what is said by itself). `auto`, the
+//!   default: the pilot answers in whatever was said; empty: the interface's.
 //!
 //! The messages live in the shell's dictionaries, `i18n/<lang>.json` under
 //! `anna.*` keys: the same files the QML reads, so a language added there
@@ -47,7 +47,11 @@ pub fn lang() -> String {
 
 /// The spoken language, as ISO 639-1: `en`, `fr`… or `auto`.
 pub fn voice_lang() -> String {
-    pref("voice").unwrap_or_else(lang)
+    match prefs().get("voice").and_then(Value::as_str) {
+        None => AUTO.into(),
+        Some("") => lang(),
+        Some(code) => code.into(),
+    }
 }
 
 /// What the pilot is told about the language to answer in.

@@ -1,14 +1,18 @@
 //! The devices of the tailnet, and their stats, for the « Système » tab.
 //!
-//! The list is Tailscale's (`tailscale status --json`): every other device of
-//! the tailnet, phones included, re-read every 5 s (`LIST_EVERY`) — a device
-//! that joins shows up within that. Only the Linux ones are asked for stats;
-//! the others show their state, system and address.
+//! The list is Tailscale's (`tailscale status --json`): every device of the
+//! tailnet, phones included, this one (`Self`, `local`) first, re-read every
+//! 5 s (`LIST_EVERY`) — a device that joins shows up within that. Only the
+//! Linux ones are asked for stats; the others show their state, system and
+//! address. This machine is measured exactly like the others, by its own
+//! node_exporter (on 127.0.0.1).
 //!
 //! Stats: node_exporter on the device's Tailscale address, read over HTTP
 //! (`metrics`), with what its textfile collector adds: the GPU (read by
-//! each machine's own script, never waking a sleeping card), the disks, the
-//! AI services and Wake-on-LAN. Nothing is read over ssh: a device without
+//! each machine's own script, never waking a sleeping card), the disks and
+//! Wake-on-LAN. Two more exporters ride along when they answer:
+//! smartctl_exporter (the disks' health) and cAdvisor (the Docker
+//! containers). Nothing is read over ssh: a device without
 //! node_exporter shows its Tailscale state and the error.
 //!
 //! Power (`power`), the only use of ssh here: off and reboot (`sudo -n
@@ -40,6 +44,10 @@ pub struct Server {
     pub online: bool,
     /// RFC 3339, "" while online.
     pub last_seen: String,
+    /// This machine (Tailscale's `Self`): measured like the others, by its
+    /// node_exporter, but on 127.0.0.1; no ssh ("" `host`), power and the
+    /// terminal are local.
+    pub local: bool,
 }
 
 #[derive(Serialize, Default, Clone)]
@@ -54,6 +62,8 @@ pub struct RemoteDisk {
 #[derive(Serialize, Default, Clone)]
 pub struct ServerStats {
     pub name: String,
+    /// This machine (`Server::local`).
+    pub local: bool,
     pub host: String,
     pub os: String,
     pub ip: String,
@@ -82,8 +92,47 @@ pub struct ServerStats {
     pub gpu: Option<RemoteGpu>,
     /// Its physical disks, each with what its filesystems hold.
     pub drives: Vec<Drive>,
-    /// The AI services it runs (ComfyUI, Ollama), when installed.
-    pub services: Vec<Service>,
+    /// node_exporter's `os_info`: « NixOS 26.11 (Zokor) », and the nixpkgs
+    /// it was built from (`2786a2a`, `2026-11-21`), "" when not NixOS.
+    pub os_name: String,
+    pub nixpkgs_rev: String,
+    pub nixpkgs_date: String,
+    /// Watts drawn by its CPU package (RAPL), -1 when unknown.
+    pub cpu_watts: f32,
+    /// Watts drawn from its battery while it discharges: the whole machine,
+    /// -1 otherwise (plugged in, or no battery).
+    pub battery_watts: f32,
+    /// Its running Docker containers (cAdvisor), busiest first.
+    pub containers: Vec<Container>,
+    /// Its systemd units in the failed state (`backup.service`), from
+    /// node_exporter's systemd collector.
+    pub failed: Vec<String>,
+    /// That collector answered: an empty `failed` means none, not unknown.
+    pub systemd: bool,
+}
+
+/// A running Docker container, as cAdvisor sees it.
+#[derive(Serialize, Default, Clone, Debug, PartialEq)]
+pub struct Container {
+    pub name: String,
+    pub image: String,
+    /// % of one core, -1 on the first sample.
+    pub cpu: i32,
+    /// Bytes (working set: what it really holds).
+    pub mem: u64,
+}
+
+/// A disk's health, from smartctl_exporter.
+#[derive(Serialize, Default, Clone, Debug, PartialEq)]
+pub struct Smart {
+    /// SMART's overall self-assessment passed.
+    pub ok: bool,
+    /// Wear of an SSD (NVMe `percentage_used`), %; -1 when unknown.
+    pub wear: i32,
+    /// °C, -1 when unknown.
+    pub temp: i32,
+    /// Hours powered on, 0 when unknown.
+    pub hours: u64,
 }
 
 /// A physical disk: what `lsblk` calls a `disk`, with the space its
@@ -102,18 +151,21 @@ pub struct Drive {
     pub fs_used: u64,
     /// Where it is mounted (`/`, `/data`…), the main mount first.
     pub mounts: Vec<String>,
+    /// A disk one unplugs (USB key, SD card, external drive): the shell
+    /// offers to eject it from this machine.
+    pub removable: bool,
+    /// Its SMART health, when smartctl_exporter knows it.
+    pub smart: Option<Smart>,
+    /// The users whose home directory lies on it (the system disk, or the
+    /// one that holds `/home`): the shell offers a button for each.
+    pub homes: Vec<Home>,
 }
 
-/// A systemd service (`comfyui`, `ollama`) and what it is doing.
+/// A user's home directory, on the disk that holds it.
 #[derive(Serialize, Default, Clone, Debug, PartialEq)]
-pub struct Service {
-    pub name: String,
-    /// systemd's ActiveState: `active`, `inactive`, `failed`, `activating`…
-    pub state: String,
-    /// ComfyUI: prompts running or waiting, -1 when unknown.
-    pub queue: i32,
-    /// Ollama: the models loaded in memory.
-    pub models: Vec<String>,
+pub struct Home {
+    pub user: String,
+    pub path: String,
 }
 
 #[derive(Serialize, Default, Clone, Debug, PartialEq)]
@@ -137,6 +189,8 @@ pub struct RemoteGpu {
 struct Status {
     #[serde(rename = "Peer", default)]
     peers: HashMap<String, StatusPeer>,
+    #[serde(rename = "Self", default)]
+    me: Option<StatusPeer>,
 }
 
 #[derive(Deserialize, Default)]
@@ -160,8 +214,9 @@ struct StatusPeer {
 /// ~20 ms of processor, and the samples come every second.
 const LIST_EVERY: Duration = Duration::from_secs(5);
 
-/// The other devices of the tailnet; none when Tailscale is missing or down.
-/// Re-read at most every `LIST_EVERY`, shared by every caller.
+/// The devices of the tailnet, this one first (`local`); this one alone,
+/// named after its hostname, when Tailscale is missing or down. Re-read at
+/// most every `LIST_EVERY`, shared by every caller.
 pub async fn load() -> Vec<Server> {
     static LIST: std::sync::Mutex<Option<(Instant, Vec<Server>)>> = std::sync::Mutex::new(None);
     if let Some((at, list)) = LIST.lock().unwrap().as_ref() {
@@ -183,7 +238,7 @@ async fn fetch() -> Vec<Server> {
         .kill_on_drop(true)
         .output();
     let Ok(Ok(out)) = tokio::time::timeout(Duration::from_secs(4), child).await else {
-        return vec![];
+        return parse_status("", &[]);
     };
     let ssh_config = tokio::fs::read_to_string(crate::paths::home_dir().join(".ssh/config"))
         .await
@@ -229,10 +284,34 @@ fn parse_status(json: &str, aliases: &[(String, String)]) -> Vec<Server> {
                 last_seen: if p.online { String::new() } else { p.last_seen },
                 online: p.online,
                 os: p.os,
+                local: false,
             }
         })
         .collect();
     out.sort_by_key(|s| s.name.to_lowercase());
+    // This machine, first: Tailscale's `Self`, else its hostname.
+    let me = status.me.filter(|m| !m.host_name.is_empty());
+    let name = match &me {
+        Some(m) => m.host_name.clone(),
+        None => std::fs::read_to_string("/proc/sys/kernel/hostname")
+            .map(|h| h.trim().to_string())
+            .unwrap_or_default(),
+    };
+    out.insert(
+        0,
+        Server {
+            name,
+            host: String::new(),
+            os: "linux".into(),
+            ip: me
+                .as_ref()
+                .and_then(|m| m.ips.iter().find(|ip| !ip.contains(':')).cloned())
+                .unwrap_or_default(),
+            online: true,
+            last_seen: String::new(),
+            local: true,
+        },
+    );
     out
 }
 
@@ -278,22 +357,16 @@ fn parse_ssh_config(text: &str) -> Vec<(String, String)> {
 
 // ── Sampling ────────────────────────────────────────────────────────────────
 
-/// This machine's disks, AI services and what they do (`sample_local`).
-/// Plain commands only; each may be missing, its section then stays empty.
-const EXTRA: &str = "echo @@; \
-lsblk -b -P -o NAME,PKNAME,TYPE,SIZE,FSSIZE,FSUSED,MODEL,ROTA,TRAN,MOUNTPOINTS 2>/dev/null; echo @@; \
-systemctl show -p Id,LoadState,ActiveState comfyui.service ollama.service 2>/dev/null; echo @@; \
-curl -s -m 1 http://127.0.0.1:8188/queue 2>/dev/null; echo; echo @@; \
-curl -s -m 1 http://127.0.0.1:11434/api/ps 2>/dev/null; echo";
-
-/// The services worth showing, as systemd names them.
-const SERVICES: [&str; 2] = ["comfyui", "ollama"];
-
 /// What a sample remembers for the next ones, per server (by name).
 #[derive(Default)]
 pub struct Memory {
     /// node_exporter's CPU seconds (all, busy) last time, for the delta.
     cpu_seconds: HashMap<String, (f64, f64)>,
+    /// RAPL's joules and the clock (node_time_seconds) last time, per server.
+    rapl: HashMap<String, (f64, f64)>,
+    /// Each container's CPU seconds and the clock last time, per server and
+    /// container.
+    containers: HashMap<(String, String), (f64, f64)>,
 }
 
 /// Sample every device at once: node_exporter on those that are Linux and
@@ -309,7 +382,8 @@ pub async fn sample_all(memory: &mut Memory, only: Option<&str>) -> Vec<ServerSt
             let asked = only.is_none_or(|n| n == s.name);
             tokio::spawn(async move {
                 let result = if asked && s.online && s.os == "linux" {
-                    Some(metrics::fetch(&s.ip).await)
+                    // This machine: its own exporters, Tailscale or not.
+                    Some(metrics::fetch_all(if s.local { "127.0.0.1" } else { &s.ip }).await)
                 } else {
                     None
                 };
@@ -423,6 +497,14 @@ pub async fn power(name: &str, action: &str) -> Result<(), String> {
                 .into_iter()
                 .find(|s| s.name == name)
                 .ok_or("Appareil inconnu.")?;
+            if server.local {
+                return local_systemctl(if action == "off" {
+                    "poweroff"
+                } else {
+                    "reboot"
+                })
+                .await;
+            }
             if server.host.is_empty() {
                 return Err("Pas de ssh vers cet appareil.".into());
             }
@@ -437,6 +519,21 @@ pub async fn power(name: &str, action: &str) -> Result<(), String> {
             .await
         }
         _ => Err(format!("action inconnue : {action}")),
+    }
+}
+
+/// This machine: polkit lets the session's user power it off.
+async fn local_systemctl(verb: &str) -> Result<(), String> {
+    let out = tokio::process::Command::new("systemctl")
+        .arg(verb)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+        .map_err(|e| format!("systemctl : {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
     }
 }
 
@@ -500,192 +597,11 @@ fn base(server: &Server) -> ServerStats {
         ip: server.ip.clone(),
         last_seen: server.last_seen.clone(),
         online: server.online,
+        local: server.local,
+        cpu_watts: -1.0,
+        battery_watts: -1.0,
         ..Default::default()
     }
-}
-
-/// What this machine says of its own disks and services, with the same
-/// commands as a server (Tailscale lists only the others).
-#[derive(Serialize, Default)]
-pub struct Local {
-    pub hostname: String,
-    pub drives: Vec<Drive>,
-    pub services: Vec<Service>,
-}
-
-pub async fn sample_local() -> Local {
-    let script = format!("hostname; {EXTRA}");
-    let child = tokio::process::Command::new("sh")
-        .args(["-c", &script])
-        .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .output();
-    let Ok(Ok(out)) = tokio::time::timeout(Duration::from_secs(4), child).await else {
-        return Local::default();
-    };
-    let text = String::from_utf8_lossy(&out.stdout);
-    let parts: Vec<&str> = text.split("@@").map(str::trim).collect();
-    let part = |i: usize| parts.get(i).copied().unwrap_or("");
-    Local {
-        hostname: part(0).to_string(),
-        drives: parse_lsblk(part(1)),
-        services: parse_services(part(2), part(3), part(4)),
-    }
-}
-
-/// `KEY="value" KEY="value"…`, as `lsblk -P` prints a device.
-fn pairs(line: &str) -> HashMap<String, String> {
-    let mut out = HashMap::new();
-    let mut rest = line.trim();
-    while let Some(eq) = rest.find("=\"") {
-        let key = rest[..eq].trim().to_string();
-        let after = &rest[eq + 2..];
-        let Some(end) = after.find('"') else {
-            break;
-        };
-        out.insert(key, after[..end].to_string());
-        rest = &after[end + 1..];
-    }
-    out
-}
-
-/// The physical disks of `lsblk -b -P`, each with the filesystems found
-/// under it (through partitions, LUKS, LVM). Swap in RAM, loops and optical
-/// drives are left out.
-fn parse_lsblk(text: &str) -> Vec<Drive> {
-    let nodes: Vec<HashMap<String, String>> = text
-        .lines()
-        .map(pairs)
-        .filter(|n| n.contains_key("NAME"))
-        .collect();
-    let get = |n: &HashMap<String, String>, k: &str| n.get(k).cloned().unwrap_or_default();
-    let num = |n: &HashMap<String, String>, k: &str| get(n, k).parse::<u64>().unwrap_or(0);
-    let by_name: HashMap<String, &HashMap<String, String>> =
-        nodes.iter().map(|n| (get(n, "NAME"), n)).collect();
-
-    let mut drives: Vec<Drive> = nodes
-        .iter()
-        .filter(|n| get(n, "TYPE") == "disk")
-        .filter(|n| {
-            let name = get(n, "NAME");
-            !["zram", "loop", "ram", "sr"]
-                .iter()
-                .any(|p| name.starts_with(p))
-        })
-        .map(|n| {
-            let name = get(n, "NAME");
-            let tran = get(n, "TRAN");
-            Drive {
-                kind: if tran == "nvme" || name.starts_with("nvme") {
-                    "NVMe"
-                } else if tran == "usb" {
-                    "USB"
-                } else if get(n, "ROTA") == "1" {
-                    "HDD"
-                } else {
-                    "SSD"
-                }
-                .to_string(),
-                model: match get(n, "MODEL").replace('_', " ").trim() {
-                    "" => name.clone(),
-                    m => m.to_string(),
-                },
-                size: num(n, "SIZE"),
-                name,
-                ..Default::default()
-            }
-        })
-        .collect();
-
-    // Each filesystem counts once, on the disk it sits on.
-    for n in &nodes {
-        let fs_size = num(n, "FSSIZE");
-        if fs_size == 0 {
-            continue;
-        }
-        let mut cur = get(n, "PKNAME");
-        let mut root = if get(n, "TYPE") == "disk" {
-            get(n, "NAME")
-        } else {
-            String::new()
-        };
-        for _ in 0..16 {
-            if cur.is_empty() {
-                break;
-            }
-            match by_name.get(&cur) {
-                Some(p) if get(p, "TYPE") == "disk" => {
-                    root = cur.clone();
-                    break;
-                }
-                Some(p) => cur = get(p, "PKNAME"),
-                None => break,
-            }
-        }
-        if let Some(d) = drives.iter_mut().find(|d| d.name == root) {
-            d.fs_size += fs_size;
-            d.fs_used += num(n, "FSUSED");
-            // Every mount of it, `\x0a`-separated: with the impermanence binds
-            // of /home, MOUNTPOINT alone would name one of those, not `/`.
-            for mount in get(n, "MOUNTPOINTS").split("\\x0a") {
-                if !mount.is_empty() && mount != "[SWAP]" && !d.mounts.iter().any(|m| m == mount) {
-                    d.mounts.push(mount.to_string());
-                }
-            }
-        }
-    }
-    for d in &mut drives {
-        // The shortest mount (`/` before `/boot`, `/data` before
-        // `/data/models`) names the disk best.
-        d.mounts.sort_by_key(|m| (m.len(), m.clone()));
-    }
-    drives
-}
-
-/// The services of `systemctl show` (blank-line separated blocks) that are
-/// installed, with ComfyUI's queue and Ollama's loaded models when their
-/// API answered.
-fn parse_services(show: &str, comfy_queue: &str, ollama_ps: &str) -> Vec<Service> {
-    let mut out = Vec::new();
-    for block in show.split("\n\n") {
-        let field = |k: &str| {
-            block
-                .lines()
-                .find_map(|l| l.strip_prefix(&format!("{k}=")))
-                .unwrap_or_default()
-                .to_string()
-        };
-        let name = field("Id").trim_end_matches(".service").to_string();
-        if !SERVICES.contains(&name.as_str()) || field("LoadState") != "loaded" {
-            continue;
-        }
-        let mut svc = Service {
-            state: field("ActiveState"),
-            queue: -1,
-            ..Default::default()
-        };
-        if name == "comfyui" {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(comfy_queue.trim()) {
-                let len = |k: &str| v.get(k).and_then(|a| a.as_array()).map_or(0, Vec::len);
-                svc.queue = (len("queue_running") + len("queue_pending")) as i32;
-            }
-        } else if let Ok(v) = serde_json::from_str::<serde_json::Value>(ollama_ps.trim()) {
-            svc.models = v
-                .get("models")
-                .and_then(|m| m.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|m| m.get("name").and_then(|n| n.as_str()))
-                        .map(str::to_string)
-                        .collect()
-                })
-                .unwrap_or_default();
-        }
-        svc.name = name;
-        out.push(svc);
-    }
-    out
 }
 
 /// « 03:00.0 VGA compatible controller: Advanced Micro Devices, Inc.
@@ -699,52 +615,6 @@ fn short_gpu_name(lspci: &str) -> String {
         None => full.rsplit_once("] ").map_or(full, |(_, n)| n),
     };
     name.trim().to_string()
-}
-
-#[cfg(test)]
-mod fleet_tests {
-    use super::*;
-
-    #[test]
-    fn filesystems_count_on_the_disk_under_luks_and_lvm() {
-        let text = r#"NAME="zram0" PKNAME="" TYPE="disk" SIZE="8225554432" FSSIZE="" FSUSED="" MODEL="" ROTA="0" TRAN="" MOUNTPOINTS="[SWAP]"
-NAME="nvme0n1" PKNAME="" TYPE="disk" SIZE="1024209543168" FSSIZE="" FSUSED="" MODEL="Micron_3400_MTFDKBA1T0TFH" ROTA="0" TRAN="nvme" MOUNTPOINTS=""
-NAME="nvme0n1p1" PKNAME="nvme0n1" TYPE="part" SIZE="1073741824" FSSIZE="1000" FSUSED="200" MODEL="" ROTA="0" TRAN="nvme" MOUNTPOINTS="/boot"
-NAME="nvme0n1p2" PKNAME="nvme0n1" TYPE="part" SIZE="1023134400512" FSSIZE="" FSUSED="" MODEL="" ROTA="0" TRAN="nvme" MOUNTPOINTS=""
-NAME="crypt" PKNAME="nvme0n1p2" TYPE="crypt" SIZE="1023134400512" FSSIZE="9000" FSUSED="3000" MODEL="" ROTA="0" TRAN="" MOUNTPOINTS="/home/aristide/tune\x0a/nix\x0a/"
-NAME="sda" PKNAME="" TYPE="disk" SIZE="4000000000000" FSSIZE="" FSUSED="" MODEL="WDC WD40EFRX" ROTA="1" TRAN="sata" MOUNTPOINTS=""
-NAME="sda1" PKNAME="sda" TYPE="part" SIZE="4000000000000" FSSIZE="4000" FSUSED="3100" MODEL="" ROTA="1" TRAN="sata" MOUNTPOINTS="/data""#;
-        let d = parse_lsblk(text);
-        assert_eq!(d.len(), 2, "zram is no disk");
-        assert_eq!(d[0].model, "Micron 3400 MTFDKBA1T0TFH");
-        assert_eq!(
-            (d[0].kind.as_str(), d[0].fs_size, d[0].fs_used),
-            ("NVMe", 10000, 3200)
-        );
-        assert_eq!(
-            d[0].mounts,
-            ["/", "/nix", "/boot", "/home/aristide/tune"].map(String::from)
-        );
-        assert_eq!((d[1].kind.as_str(), d[1].fs_used), ("HDD", 3100));
-        assert_eq!(d[1].mounts, vec!["/data".to_string()]);
-    }
-
-    #[test]
-    fn services_keep_the_installed_ones_and_what_they_do() {
-        let show = "Id=comfyui.service\nLoadState=loaded\nActiveState=active\n\n\
-                    Id=ollama.service\nLoadState=not-found\nActiveState=inactive";
-        let s = parse_services(show, r#"{"queue_running":[1],"queue_pending":[2,3]}"#, "");
-        assert_eq!(s.len(), 1);
-        assert_eq!(
-            (s[0].name.as_str(), s[0].state.as_str(), s[0].queue),
-            ("comfyui", "active", 3)
-        );
-
-        let show = "Id=ollama.service\nLoadState=loaded\nActiveState=active";
-        let s = parse_services(show, "", r#"{"models":[{"name":"qwen3:8b"}]}"#);
-        assert_eq!(s[0].models, vec!["qwen3:8b".to_string()]);
-        assert_eq!(s[0].queue, -1);
-    }
 }
 
 #[cfg(test)]
@@ -775,16 +645,19 @@ mod tests {
         let aliases = vec![("g".to_string(), "100.90.139.70".to_string())];
         let d = parse_status(json, &aliases);
         let names: Vec<&str> = d.iter().map(|s| s.name.as_str()).collect();
-        assert_eq!(names, ["box", "gary", "Pixel 9a"]);
+        assert_eq!(names, ["zola", "box", "gary", "Pixel 9a"]);
+        // This machine first: local, online, no ssh.
+        assert!(d[0].local && d[0].online && d[0].host.is_empty());
+        assert!(d[1..].iter().all(|s| !s.local));
         // No alias: its MagicDNS name.
-        assert_eq!(d[0].host, "box.tail.ts.net");
+        assert_eq!(d[1].host, "box.tail.ts.net");
         // Its ssh config alias, found by address.
-        assert_eq!(d[1].host, "g");
-        assert_eq!(d[1].last_seen, "");
+        assert_eq!(d[2].host, "g");
+        assert_eq!(d[2].last_seen, "");
         // A phone: no ssh, its IPv4 first.
-        assert_eq!(d[2].host, "");
-        assert_eq!(d[2].ip, "100.71.19.96");
-        assert_eq!(d[2].last_seen, "2026-10-16T10:01:58Z");
+        assert_eq!(d[3].host, "");
+        assert_eq!(d[3].ip, "100.71.19.96");
+        assert_eq!(d[3].last_seen, "2026-10-16T10:01:58Z");
     }
 
     #[test]
@@ -808,5 +681,4 @@ mod tests {
             "Raphael"
         );
     }
-
 }

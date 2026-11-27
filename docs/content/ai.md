@@ -95,7 +95,9 @@ sentence is written **while** you speak, live in the conversation bar's
 field (the snowflake lights up), then goes to the pilot as if it had been
 typed. The answer shows above the bar, under the understood sentence to
 check it. The word “Karénine” and a click on the microphone at the end of the field do the same;
-`anna voice dictate` only shows the transcript, without sending it.
+`anna voice dictate` only shows the transcript, without sending it. In the Claude tab, **holding Space** in the
+prompt field dictates until it is released, pauses included (`voice_toggle` with
+`hold`, two minutes at most); the transcript joins the draft, and Enter sends it.
 
 The end of the sentence stops listening (a second press or a click on the
 chip too). The chip shows “listening…” as long as nothing is
@@ -115,8 +117,8 @@ transcription does not need it, Parakeet recognizes by itself which of its
 
 | Choice | Pilot |
 | --- | --- |
-| Same as interface (default) | the interface language |
-| Automatic detection | answers in the language of the request |
+| Automatic detection (default) | answers in the language of the request |
+| Same as interface | the interface language |
 | A language (English, Français…) | that language |
 
 ### Live transcript

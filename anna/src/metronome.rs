@@ -231,7 +231,8 @@ fn build_output_stream(
             &stream_config,
             move |data: &mut [i16], _: &_| {
                 for frame in data.chunks_mut(channels) {
-                    let s = ((metro.next_sample() + dither.next()).clamp(-1.0, 1.0) * 32767.0) as i16;
+                    let s =
+                        ((metro.next_sample() + dither.next()).clamp(-1.0, 1.0) * 32767.0) as i16;
                     for out in frame.iter_mut() {
                         *out = s;
                     }
@@ -244,7 +245,8 @@ fn build_output_stream(
             &stream_config,
             move |data: &mut [u16], _: &_| {
                 for frame in data.chunks_mut(channels) {
-                    let v = (((metro.next_sample() + dither.next()).clamp(-1.0, 1.0) * 0.5 + 0.5) * 65535.0) as u16;
+                    let v = (((metro.next_sample() + dither.next()).clamp(-1.0, 1.0) * 0.5 + 0.5)
+                        * 65535.0) as u16;
                     for out in frame.iter_mut() {
                         *out = v;
                     }

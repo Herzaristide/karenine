@@ -320,18 +320,15 @@ impl Feed {
             // the command's own name when it has no other line.
             "system" if s(v, "subtype") == "local_command" => {
                 let content = s(v, "content");
-                let (kind, text) = match between(
-                    content,
-                    "<local-command-stdout>",
-                    "</local-command-stdout>",
-                )
-                .or_else(|| {
-                    between(content, "<local-command-stderr>", "</local-command-stderr>")
-                }) {
-                    Some(out) => ("text", plain(out)),
-                    None if content.starts_with('/') => ("note", content.to_string()),
-                    None => return out,
-                };
+                let (kind, text) =
+                    match between(content, "<local-command-stdout>", "</local-command-stdout>")
+                        .or_else(|| {
+                            between(content, "<local-command-stderr>", "</local-command-stderr>")
+                        }) {
+                        Some(out) => ("text", plain(out)),
+                        None if content.starts_with('/') => ("note", content.to_string()),
+                        None => return out,
+                    };
                 let text = text.trim().to_string();
                 if !text.is_empty() {
                     out.push(Item {

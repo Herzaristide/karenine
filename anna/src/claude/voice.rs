@@ -42,6 +42,8 @@ const END_SILENCE: f32 = 1.2;
 const NO_SPEECH: f32 = 6.0;
 /// …and never record longer than this.
 const MAX_LEN: f32 = 30.0;
+/// While a key is held, the turn lasts until it is released, at most this.
+const MAX_HOLD: f32 = 120.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -590,6 +592,8 @@ pub struct Voice {
     /// Hand the transcript to the pilot (`anna voice`, Super+V), or only
     /// show it (`anna voice dictate`).
     send: AtomicBool,
+    /// The turn lasts until stopped by hand (a key held down).
+    hold: AtomicBool,
     /// Listening for the wake word (wake.rs).
     wake: AtomicBool,
     /// The current turn was started by the wake word, whose audio is
@@ -631,6 +635,7 @@ impl Voice {
             partial: AtomicBool::new(false),
             error: Mutex::new(String::new()),
             send: AtomicBool::new(true),
+            hold: AtomicBool::new(false),
             wake: AtomicBool::new(super::wake::remembered()),
             woken: AtomicBool::new(false),
             confirmed: AtomicBool::new(false),
@@ -711,10 +716,11 @@ impl Voice {
 
     /// Start listening, or — while listening — end the recording now.
     /// `send`: give the transcript to the pilot, or only show it.
-    pub fn toggle(self: &Arc<Self>, send: bool) {
+    /// `hold`: listen until the next toggle, silences included.
+    pub fn toggle(self: &Arc<Self>, send: bool, hold: bool) {
         let phase = *lock(&self.phase);
         match phase {
-            Phase::Idle => self.start(send),
+            Phase::Idle => self.start(send, hold),
             // The word is not confirmed yet: asked by hand, the turn is
             // the user's from now on, wake word or not.
             Phase::Listening if self.unconfirmed() => {
@@ -753,7 +759,7 @@ impl Voice {
 
     /// Enter listening (false if a turn is already under way). `woken`:
     /// started by the wake word, to be confirmed.
-    fn begin(&self, send: bool, woken: bool) -> bool {
+    fn begin(&self, send: bool, woken: bool, hold: bool) -> bool {
         {
             let mut p = lock(&self.phase);
             if *p != Phase::Idle {
@@ -765,6 +771,7 @@ impl Voice {
         self.confirmed.store(false, Ordering::SeqCst);
         self.stop.store(false, Ordering::SeqCst);
         self.send.store(send, Ordering::SeqCst);
+        self.hold.store(hold, Ordering::SeqCst);
         self.partial.store(false, Ordering::SeqCst);
         lock(&self.error).clear();
         lock(&self.text).clear();
@@ -887,8 +894,8 @@ impl Voice {
         let _ = std::fs::write(base.with_extension("txt"), heard);
     }
 
-    pub fn start(self: &Arc<Self>, send: bool) {
-        if !self.begin(send, false) {
+    pub fn start(self: &Arc<Self>, send: bool, hold: bool) {
+        if !self.begin(send, false, hold) {
             return;
         }
         self.spawn_record();
@@ -898,7 +905,7 @@ impl Voice {
     /// word's audio in front so that the transcript confirms it, on the
     /// microphone that heard it (`mic`, at `rate`).
     pub fn woken(self: &Arc<Self>, preroll: Vec<f32>, rate: u32, mic: Option<Mic>) {
-        if !self.begin(true, true) {
+        if !self.begin(true, true, false) {
             return;
         }
         *lock(&self.wake_clip) = Some((preroll.clone(), rate));
@@ -948,7 +955,7 @@ impl Voice {
     /// into the microphone: the same end-of-speech detection, live
     /// transcript and outcome. For trying the whole path without speaking.
     pub fn simulate(self: &Arc<Self>, samples: Vec<f32>, rate: u32, send: bool) {
-        if !self.begin(send, false) {
+        if !self.begin(send, false, false) {
             return;
         }
         let me = Arc::clone(self);
@@ -1038,10 +1045,18 @@ impl Voice {
         let margin = (parakeet::RATE as f32 * FINAL_MARGIN) as usize;
         let mut context_ready = false;
         let send = self.send.load(Ordering::SeqCst);
+        let hold = self.hold.load(Ordering::SeqCst);
+        let max_hold = (parakeet::RATE as f32 * MAX_HOLD) as usize;
         let outcome = 'listen: loop {
-            if self.stop.load(Ordering::SeqCst) {
+            if self.stop.load(Ordering::SeqCst) || (hold && all.len() >= max_hold) {
+                // Held: all of it counts — the key says when one speaks, and
+                // a voice there from the first frame sets the noise floor
+                // too high to be found. The partials may miss the end.
+                if hold {
+                    speech_end = all.len();
+                }
                 // Stopped by hand: only what followed real speech counts.
-                break if ep.heard_speech() && all.len() > parakeet::RATE as usize / 2 {
+                break if (hold || ep.heard_speech()) && all.len() > parakeet::RATE as usize / 2 {
                     Endpoint::Done
                 } else {
                     Endpoint::Nothing
@@ -1105,11 +1120,13 @@ impl Voice {
                 }
                 match fed {
                     Endpoint::More => {}
+                    // Held: only the release ends the turn.
+                    _ if hold => {}
                     end => break 'listen end,
                 }
             }
 
-            if ep.heard_speech() {
+            if ep.heard_speech() && !hold {
                 // A sentence said and finished: no need to wait longer.
                 if ep.silence() >= QUICK_END
                     && request_ends
@@ -1131,7 +1148,7 @@ impl Voice {
                 || (ep.heard_speech()
                     && ep.silence() >= FINAL_MARGIN + FRAME
                     && !covers(&last_partial_text, speech_end + margin));
-            if (woken || ep.heard_speech()) && !in_flight && due {
+            if (woken || hold || ep.heard_speech()) && !in_flight && due {
                 in_flight = partial_tx.send(all.clone()).is_ok();
                 last_partial = Instant::now();
             }

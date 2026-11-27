@@ -448,6 +448,75 @@ ColumnLayout {
         }
     }
 
+    // ── Tailscale ────────────────────────────────────────────────
+    // Le nœud allumé ou coupé ; la connexion au compte se fait dans les
+    // réglages (Settings), d'où ce bouton renvoie tant qu'il n'y en a pas.
+    readonly property bool tsShown: root.visible && Tailscale.known && !Tailscale.missing
+    onTsShownChanged: Tailscale.watchers += root.tsShown ? 1 : -1
+    Component.onDestruction: if (root.tsShown) Tailscale.watchers--
+
+    Heading {
+        Layout.topMargin: 10
+        visible: Tailscale.known && !Tailscale.missing
+        text: "Tailscale"
+    }
+
+    Card {
+        visible: Tailscale.known && !Tailscale.missing
+        implicitHeight: 46
+
+        Column {
+            anchors.left: parent.left
+            anchors.leftMargin: 12
+            anchors.right: tsBtn.left
+            anchors.rightMargin: 6
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 1
+
+            Text {
+                width: parent.width
+                text: Tailscale.tailnet !== "" ? Tailscale.tailnet : I18n.tr("tailscale.node")
+                font.family: "Inter"
+                font.pixelSize: 10
+                color: Theme.textSecondary
+                elide: Text.ElideRight
+            }
+            Text {
+                width: parent.width
+                text: Tailscale.stateText
+                font.family: "Inter"
+                font.pixelSize: 12
+                font.weight: Font.Medium
+                color: Tailscale.running ? Theme.textPrimary : Theme.textDim
+                elide: Text.ElideRight
+            }
+        }
+
+        GlassButton {
+            id: tsBtn
+            anchors.right: parent.right
+            anchors.rightMargin: 8
+            anchors.verticalCenter: parent.verticalCenter
+            implicitHeight: 26
+            fontSize: 11
+            enabled: Tailscale.busy === ""
+            text: !Tailscale.loggedIn ? I18n.tr("tailscale.connect")
+                : Tailscale.running ? I18n.tr("wifi.turnOff") : I18n.tr("wifi.turnOn")
+            accent: !Tailscale.running
+            onClicked: Tailscale.loggedIn ? Tailscale.toggle() : Tailscale.connect()
+        }
+    }
+
+    Text {
+        Layout.fillWidth: true
+        visible: Tailscale.error !== ""
+        text: Tailscale.denied ? I18n.tr("tailscale.denied", { cmd: Tailscale.operatorCommand }) : Tailscale.error
+        font.family: "Inter"
+        font.pixelSize: 10
+        color: Theme.colorDanger
+        wrapMode: Text.Wrap
+    }
+
     Text {
         Layout.fillWidth: true
         visible: root.error !== ""

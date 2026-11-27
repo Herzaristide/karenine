@@ -36,6 +36,7 @@ PopSlider 1.0 PopSlider.qml
 SoundDevices 1.0 SoundDevices.qml
 EnergyCard 1.0 EnergyCard.qml
 MusicView 1.0 MusicView.qml
+MarkdownText 1.0 MarkdownText.qml
 ClaudeView 1.0 ClaudeView.qml
 ClaudeConversation 1.0 ClaudeConversation.qml
 ClaudeAsk 1.0 ClaudeAsk.qml
@@ -48,4 +49,6 @@ SettingsSection 1.0 SettingsSection.qml
 SettingsRow 1.0 SettingsRow.qml
 SettingsSwitch 1.0 SettingsSwitch.qml
 Segmented 1.0 Segmented.qml
-AppsPop 1.0 AppsPop.qml
+DiskHealth 1.0 DiskHealth.qml
+DiskTiles 1.0 DiskTiles.qml
+KeyedModel 1.0 KeyedModel.qml

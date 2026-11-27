@@ -14,6 +14,8 @@ import "../services"
 //   LANGUE       celle de l'interface
 //   VIDÉO        la webcam (DeviceSettings), s'il y en a une
 //   ASSISTANT    le modèle du pilote (AssistantSettings)
+//   TAILSCALE    le nœud allumé ou coupé, le compte (services/Tailscale.qml)
+//   DISQUES      ceux de cette machine, leur santé SMART (DiskHealth)
 //   COMPTE       Google, pour l'agenda (GoogleAccount)
 //
 // Le son et le Wi-Fi se règlent dans leurs volets de la barre du bas. Tout
@@ -338,6 +340,110 @@ Item {
                         width: parent.width - 24
                     }
                 }
+            }
+
+            // ── Tailscale ────────────────────────────────────────
+            // Le nœud de cette machine (services/Tailscale.qml) : allumé ou
+            // coupé, et le compte qui l'a autorisé. Se connecter ouvre la page
+            // d'autorisation de Tailscale dans le navigateur.
+            SettingsSection {
+                id: tsSection
+                Layout.fillWidth: true
+                title: "Tailscale"
+
+                readonly property bool watching: root.visible
+                onWatchingChanged: Tailscale.watchers += tsSection.watching ? 1 : -1
+                Component.onCompleted: if (tsSection.watching) Tailscale.watchers++
+                Component.onDestruction: if (tsSection.watching) Tailscale.watchers--
+
+                SettingsRow {
+                    icon: "lock.svg"
+                    title: I18n.tr("tailscale.vpn")
+                    subtitle: !Tailscale.known ? I18n.tr("common.loading")
+                            : Tailscale.missing ? I18n.tr("tailscale.missing")
+                            : Tailscale.stateText
+                    clickable: Tailscale.loggedIn && Tailscale.busy === ""
+                    onClicked: Tailscale.toggle()
+                    SettingsSwitch {
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: Tailscale.loggedIn
+                        checked: Tailscale.running || Tailscale.backend === "Starting"
+                        onToggled: if (Tailscale.busy === "") Tailscale.toggle()
+                    }
+                }
+
+                SettingsRow {
+                    visible: Tailscale.known && !Tailscale.missing
+                    icon: "globe.svg"
+                    title: Tailscale.loggedIn && Tailscale.login !== "" ? Tailscale.login
+                         : Tailscale.pendingLogin ? I18n.tr("tailscale.pending")
+                         : I18n.tr("tailscale.loggedOut")
+                    subtitle: Tailscale.loggedIn
+                              ? [Tailscale.tailnet,
+                                 Tailscale.running ? I18n.trn("tailscale.peers", Tailscale.peersOnline) : ""]
+                                .filter(s => s !== "").join("  ·  ")
+                              : I18n.tr("tailscale.connectHint")
+
+                    Row {
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 6
+
+                        GlassButton {
+                            visible: !Tailscale.loggedIn && !Tailscale.pendingLogin
+                            accent: true
+                            fontSize: 11
+                            text: I18n.tr("tailscale.connect")
+                            onClicked: Tailscale.connect()
+                        }
+                        GlassButton {
+                            visible: Tailscale.pendingLogin && Tailscale.authUrl !== ""
+                            fontSize: 11
+                            text: I18n.tr("google.reopen")
+                            onClicked: Tailscale.reopen()
+                        }
+                        GlassButton {
+                            visible: Tailscale.pendingLogin
+                            fontSize: 11
+                            text: I18n.tr("common.cancel")
+                            onClicked: Tailscale.cancelLogin()
+                        }
+                        GlassButton {
+                            visible: Tailscale.loggedIn && !Tailscale.pendingLogin
+                            danger: true
+                            fontSize: 11
+                            enabled: Tailscale.busy === ""
+                            text: I18n.tr("google.disconnect")
+                            onClicked: Tailscale.disconnect()
+                        }
+                    }
+                }
+
+                // L'erreur du CLI ; sans droits sur le démon, la commande qui
+                // les donne (sélectionnable, pour la copier).
+                Item {
+                    Layout.fillWidth: true
+                    visible: Tailscale.error !== ""
+                    implicitHeight: tsError.implicitHeight + 16
+                    TextEdit {
+                        id: tsError
+                        x: 12
+                        y: 8
+                        width: parent.width - 24
+                        readOnly: true
+                        selectByMouse: true
+                        text: Tailscale.denied ? I18n.tr("tailscale.denied", { cmd: Tailscale.operatorCommand }) : Tailscale.error
+                        font.family: "Inter"
+                        font.pixelSize: 11
+                        color: Theme.colorDanger
+                        wrapMode: Text.Wrap
+                    }
+                }
+            }
+
+            // ── Disques ──────────────────────────────────────────
+            // Ceux de cette machine et leur santé SMART (DiskHealth).
+            DiskHealth {
+                Layout.fillWidth: true
             }
 
             // ── Compte ───────────────────────────────────────────

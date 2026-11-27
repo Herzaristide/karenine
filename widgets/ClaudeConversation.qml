@@ -634,18 +634,25 @@ Item {
                 spacing: 6
                 topPadding: 4
 
-                // Ce qui s'écrit.
-                Text {
-                    width: parent.width
-                    visible: ClaudeChat.partial.text !== ""
-                    text: ClaudeChat.partial.text + " ▍"
-                    textFormat: ClaudeChat.partial.kind === "thinking" ? Text.PlainText : Text.MarkdownText
-                    wrapMode: Text.Wrap
-                    font.family: "Inter"
-                    font.pixelSize: 13
-                    font.italic: ClaudeChat.partial.kind === "thinking"
-                    lineHeight: 1.15
-                    color: ClaudeChat.partial.kind === "thinking" ? Theme.textDim : Theme.textPrimary
+                // Ce qui s'écrit. Un Text neuf à chaque fragment (le Repeater
+                // recrée tout quand son tableau change) : réécrit en place, un
+                // Markdown de plus de 64 nœuds (un tableau) fait planter
+                // Qt 6.12.0 (QTBUG-151670, corrigé en 6.12.1).
+                Repeater {
+                    model: ClaudeChat.partial.text !== "" ? [ClaudeChat.partial] : []
+                    MarkdownText {
+                        id: writing
+                        required property var modelData
+                        readonly property bool thinking: writing.modelData.kind === "thinking"
+                        width: footCol.width
+                        links: !writing.thinking
+                        markdown: writing.modelData.text + " ▍"
+                        font.family: "Inter"
+                        font.pixelSize: 13
+                        font.italic: writing.thinking
+                        lineHeight: 1.15
+                        color: writing.thinking ? Theme.textDim : Theme.textPrimary
+                    }
                 }
                 // Il travaille, ou attend une permission.
                 Text {
@@ -721,17 +728,13 @@ Item {
 
     Component {
         id: textItem
-        Text {
+        MarkdownText {
             property var it: ({})
-            text: it.text || ""
-            textFormat: Text.MarkdownText
-            wrapMode: Text.Wrap
+            markdown: it.text || ""
             font.family: "Inter"
             font.pixelSize: 13
             lineHeight: 1.15
             color: Theme.textPrimary
-            linkColor: Theme.accentColor
-            onLinkActivated: (link) => Qt.openUrlExternally(link)
         }
     }
 
@@ -1193,7 +1196,8 @@ Item {
                     Layout.leftMargin: 6
                     Layout.rightMargin: 6
                     text: Pilot.voicePhase === "transcribing" ? I18n.tr("claude.chat.transcribing")
-                        : Pilot.voiceText !== "" ? Pilot.voiceText : I18n.tr("claude.chat.dictating")
+                        : Pilot.voiceText !== "" ? Pilot.voiceText
+                        : I18n.tr(ClaudeChat.dictateHeld ? "claude.chat.dictatingHold" : "claude.chat.dictating")
                     textFormat: Text.PlainText
                     wrapMode: Text.Wrap
                     font.family: "Inter"
@@ -1231,7 +1235,50 @@ Item {
                             else if (cursorRectangle.y < inputFlick.contentY)
                                 inputFlick.contentY = cursorRectangle.y;
                         }
+                        // Espace tenu : on dicte tant qu'il l'est. L'espace de
+                        // la frappe s'écrit tout de suite, et s'en va quand la
+                        // dictée commence ; une autre touche l'annule.
+                        property bool spaceHeld: false
+                        Timer {
+                            id: spaceHold
+                            interval: 350
+                            onTriggered: {
+                                ClaudeChat.dictateHold();
+                                input.spaceHeld = ClaudeChat.dictateHeld;
+                                var at = input.cursorPosition;
+                                if (input.spaceHeld && at > 0 && input.getText(at - 1, at) === " ")
+                                    input.remove(at - 1, at);
+                            }
+                        }
+                        function spaceUp() {
+                            spaceHold.stop();
+                            if (input.spaceHeld)
+                                ClaudeChat.dictateRelease();
+                            input.spaceHeld = false;
+                        }
+                        onActiveFocusChanged: if (!activeFocus) input.spaceUp()
+                        Component.onDestruction: if (input.spaceHeld) ClaudeChat.dictateRelease()
+                        Keys.onReleased: (event) => {
+                            if (event.key === Qt.Key_Space && !event.isAutoRepeat)
+                                input.spaceUp();
+                        }
                         Keys.onPressed: (event) => {
+                            if (event.key === Qt.Key_Space && (event.isAutoRepeat || input.spaceHeld)) {
+                                // Tenu, il se répète : une seule frappe compte.
+                                event.accepted = true;
+                                return;
+                            }
+                            if (event.key === Qt.Key_Space && event.modifiers === Qt.NoModifier
+                                    && input.selectedText === "")
+                                spaceHold.restart();
+                            else
+                                spaceHold.stop();
+                            // Entrée tenue n'envoie qu'une fois.
+                            if (event.isAutoRepeat && !(event.modifiers & Qt.ShiftModifier)
+                                    && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
+                                event.accepted = true;
+                                return;
+                            }
                             if (root.slashOpen) {
                                 var n = slashView.count;
                                 if (event.key === Qt.Key_Down || event.key === Qt.Key_Up) {
@@ -1435,7 +1482,7 @@ Item {
                         }
                     }
 
-                    // Dicter ; un second clic finit.
+                    // Dicter ; un second clic finit. Espace tenu fait de même.
                     Rectangle {
                         id: micBtn
                         implicitWidth: 30

@@ -8,8 +8,12 @@ links: [panels, widgets, development, architecture]
 # Search (`services/Search.qml`)
 
 What you type in the [conversation bar](#panels) both talks to the pilot
-and **searches**. The suggestions stack just above the bar, the best one
-against it; ↑ enters the list, Enter opens the chosen line.
+and **searches**. The results show in the bar's **launcher**, the same
+pane the NixOS snowflake opens: empty, it lists karenine's tools and every
+application by name; as you type, the tools whose name matches, the
+applications found (as a grid) and the other results (as rows, the best one
+against the bar), all ranked by relevance. ↑ ↓ walk them in that order,
+wherever they are shown; Enter opens the chosen one.
 
 ![The conversation bar, empty, before typing](screenshots/bar.webp)
 

@@ -4,8 +4,7 @@ Prometheus text for node_exporter's textfile collector, in `extras.prom` in
 the directory given as argument:
 
 - the physical disks, with the filesystems they hold (through partitions,
-  LUKS, LVM);
-- the AI services (ComfyUI, Ollama) and what they are doing;
+  LUKS, LVM), and the users whose home directory lies on each;
 - the MAC and LAN broadcast of the default interface, for Wake-on-LAN.
 
 The GPUs are not here: each machine reads its own (`gpu.prom`), in its NixOS
@@ -17,12 +16,9 @@ node_exporter never serves half of it.
 
 import json
 import os
+import pwd
 import subprocess
 import sys
-import urllib.request
-
-# The services worth showing, as systemd names them (SERVICES in servers.rs).
-SERVICES = ("comfyui", "ollama")
 
 
 def read(path):
@@ -47,14 +43,6 @@ def run(*args):
         ).stdout
     except (OSError, subprocess.SubprocessError):
         return ""
-
-
-def fetch(url):
-    try:
-        with urllib.request.urlopen(url, timeout=1) as r:
-            return json.load(r)
-    except (OSError, ValueError):
-        return None
 
 
 class Out:
@@ -87,7 +75,7 @@ def drives(out):
     Swap in RAM, loops and optical drives are left out."""
     raw = run(
         "lsblk", "-b", "-J", "-l", "-o",
-        "NAME,PKNAME,TYPE,SIZE,FSSIZE,FSUSED,MODEL,ROTA,TRAN,MOUNTPOINTS",
+        "NAME,PKNAME,TYPE,SIZE,FSSIZE,FSUSED,MODEL,ROTA,TRAN,RM,HOTPLUG,MOUNTPOINTS",
     )
     try:
         nodes = json.loads(raw).get("blockdevices") or []
@@ -109,8 +97,11 @@ def drives(out):
         else:
             kind = "SSD"
         model = (n.get("model") or "").replace("_", " ").strip() or name
+        # One you unplug (USB key, SD card, external drive): it can be ejected.
+        removable = tran == "usb" or any(
+            n.get(k) in (True, "1", 1) for k in ("rm", "hotplug"))
         disks[name] = {"model": model, "kind": kind, "size": num(n.get("size")) or 0,
-                       "fs_size": 0, "fs_used": 0, "mounts": []}
+                       "removable": removable, "fs_size": 0, "fs_used": 0, "mounts": []}
 
     # Each filesystem counts once, on the disk it sits on.
     for n in nodes:
@@ -138,7 +129,8 @@ def drives(out):
                 d["mounts"].append(mount)
 
     for name, d in disks.items():
-        out.add("drive_info", 1, name=name, model=d["model"], kind=d["kind"])
+        out.add("drive_info", 1, name=name, model=d["model"], kind=d["kind"],
+                removable="1" if d["removable"] else "0")
         out.add("drive_size_bytes", d["size"], name=name)
         out.add("drive_fs_size_bytes", d["fs_size"], name=name)
         out.add("drive_fs_used_bytes", d["fs_used"], name=name)
@@ -147,33 +139,32 @@ def drives(out):
         for mount in sorted(d["mounts"], key=lambda m: (len(m), m))[:4]:
             out.add("drive_mount", 1, name=name, mount=mount)
 
+    # Each user's home, on the disk of the longest mount that holds it.
+    for user, home in users():
+        best, length = None, -1
+        for name, d in disks.items():
+            for mount in d["mounts"]:
+                prefix = mount.rstrip("/") + "/"
+                if (home == mount or home.startswith(prefix)) and len(mount) > length:
+                    best, length = name, len(mount)
+        if best is not None:
+            out.add("drive_home", 1, name=best, user=user, home=home)
 
-# ── Services ────────────────────────────────────────────────────────────────
 
-
-def services(out):
-    """The installed ones, with ComfyUI's queue and Ollama's loaded models
-    when their API answers."""
-    show = run(
-        "systemctl", "show", "-p", "Id,LoadState,ActiveState",
-        *(s + ".service" for s in SERVICES),
-    )
-    for block in show.split("\n\n"):
-        field = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
-        name = field.get("Id", "").removesuffix(".service")
-        if name not in SERVICES or field.get("LoadState") != "loaded":
+def users():
+    """The people who log in: a uid of a normal user (from 1000, below the
+    systemd dynamic ones), a real shell and a home of their own. Read from
+    the passwd database only: the service cannot see /home (ProtectHome)."""
+    found = []
+    for p in pwd.getpwall():
+        shell = os.path.basename(p.pw_shell or "")
+        if not 1000 <= p.pw_uid < 60000 or shell in ("nologin", "false", ""):
             continue
-        out.add("service_info", 1, name=name, state=field.get("ActiveState", ""))
-        if name == "comfyui":
-            q = fetch("http://127.0.0.1:8188/queue")
-            if isinstance(q, dict):
-                n = len(q.get("queue_running") or []) + len(q.get("queue_pending") or [])
-                out.add("service_queue", n, name=name)
-        elif name == "ollama":
-            ps = fetch("http://127.0.0.1:11434/api/ps")
-            for m in (ps or {}).get("models") or []:
-                if m.get("name"):
-                    out.add("service_model", 1, name=name, model=m["name"])
+        home = p.pw_dir or ""
+        if not home.startswith("/") or home in ("/", "/var/empty", "/nonexistent"):
+            continue
+        found.append((p.pw_name, home))
+    return sorted(found, key=lambda u: u[1])
 
 
 # ── Wake-on-LAN ─────────────────────────────────────────────────────────────
@@ -201,7 +192,7 @@ def main():
     if len(sys.argv) != 2:
         sys.exit("usage: node-extras <textfile directory>")
     out = Out()
-    for part in (drives, services, wake):
+    for part in (drives, wake):
         try:
             part(out)
         except Exception as e:  # one part failing leaves the others

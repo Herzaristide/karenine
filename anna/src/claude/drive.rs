@@ -1641,7 +1641,12 @@ mod tests {
             {"name":"agents","description":"(removed) x"},
             {"name":"extra-usage","description":"Renamed to /usage-credits"},
         ]));
-        let names: Vec<_> = list.as_array().unwrap().iter().map(|c| &c["name"]).collect();
+        let names: Vec<_> = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| &c["name"])
+            .collect();
         assert_eq!(names, ["compact"]);
         assert_eq!(list[0]["aliases"][0], "c");
         assert_eq!(offered(&Value::Null), json!([]));

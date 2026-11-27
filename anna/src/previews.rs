@@ -60,8 +60,8 @@ fn kind_of(path: &str) -> Option<Kind> {
     Some(match ext.as_str() {
         "mp4" | "m4v" | "mkv" | "webm" | "mov" | "avi" | "mpg" | "mpeg" | "flv" | "ogv" | "wmv"
         | "ts" | "m2ts" | "3gp" => Kind::Video,
-        "mp3" | "flac" | "ogg" | "oga" | "opus" | "wav" | "m4a" | "aac" | "aif" | "aiff" | "ape"
-        | "wv" | "wma" | "mka" => Kind::Audio,
+        "mp3" | "flac" | "ogg" | "oga" | "opus" | "wav" | "m4a" | "aac" | "aif" | "aiff"
+        | "ape" | "wv" | "wma" | "mka" => Kind::Audio,
         "glb" | "gltf" | "obj" | "stl" | "ply" | "fbx" | "3mf" | "dae" | "3ds" | "usd" | "usda"
         | "usdc" | "usdz" => Kind::Model,
         "pdf" => Kind::Pdf,
@@ -152,7 +152,9 @@ fn cached(base: &str) -> Option<String> {
             return Some(f);
         }
     }
-    Path::new(&format!("{base}.fail")).is_file().then(String::new)
+    Path::new(&format!("{base}.fail"))
+        .is_file()
+        .then(String::new)
 }
 
 fn generate(job: &Job) -> String {
@@ -241,7 +243,22 @@ fn scale_filter() -> String {
 fn fit(src: &str, base: &str) -> Option<String> {
     let part = format!("{base}.part.png");
     let vf = scale_filter();
-    if !ok("ffmpeg", &["-v", "error", "-y", "-i", src, "-frames:v", "1", "-vf", &vf, &part], None) {
+    if !ok(
+        "ffmpeg",
+        &[
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            src,
+            "-frames:v",
+            "1",
+            "-vf",
+            &vf,
+            &part,
+        ],
+        None,
+    ) {
         return None;
     }
     finish_png(&part, base)
@@ -260,7 +277,15 @@ fn write_svg(base: &str, svg: &str) -> Option<String> {
 fn video(path: &str, base: &str) -> Option<String> {
     let length = capture(
         "ffprobe",
-        &["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+        &[
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "csv=p=0",
+            path,
+        ],
     )
     .and_then(|o| String::from_utf8_lossy(&o).trim().parse::<f64>().ok())
     .unwrap_or(0.0);
@@ -268,10 +293,36 @@ fn video(path: &str, base: &str) -> Option<String> {
     let at = format!("{:.2}", length * 0.1);
     let part = format!("{base}.part.png");
     let vf = scale_filter();
-    let args = ["-v", "error", "-y", "-ss", &at, "-i", path, "-frames:v", "1", "-an", "-vf", &vf, &part];
+    let args = [
+        "-v",
+        "error",
+        "-y",
+        "-ss",
+        &at,
+        "-i",
+        path,
+        "-frames:v",
+        "1",
+        "-an",
+        "-vf",
+        &vf,
+        &part,
+    ];
     if !ok("ffmpeg", &args, None) || !nonempty(&part) {
         // Shorter than its own 10 % keyframe, or no duration: the first frame.
-        let args = ["-v", "error", "-y", "-i", path, "-frames:v", "1", "-an", "-vf", &vf, &part];
+        let args = [
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            path,
+            "-frames:v",
+            "1",
+            "-an",
+            "-vf",
+            &vf,
+            &part,
+        ];
         if !ok("ffmpeg", &args, None) {
             return None;
         }
@@ -287,16 +338,34 @@ fn audio(path: &str, base: &str) -> Option<String> {
     // The cover: the first picture stream (an attached picture).
     let part = format!("{base}.part.png");
     let vf = scale_filter();
-    let args = ["-v", "error", "-y", "-i", path, "-map", "0:v:0", "-frames:v", "1", "-vf", &vf, &part];
+    let args = [
+        "-v",
+        "error",
+        "-y",
+        "-i",
+        path,
+        "-map",
+        "0:v:0",
+        "-frames:v",
+        "1",
+        "-vf",
+        &vf,
+        &part,
+    ];
     if ok("ffmpeg", &args, None) && nonempty(&part) {
         return finish_png(&part, base);
     }
     // Else the waveform: mono, 2 kHz (the envelope is all we draw), s16le.
     let pcm = capture(
         "ffmpeg",
-        &["-v", "error", "-i", path, "-vn", "-ac", "1", "-ar", "2000", "-f", "s16le", "-"],
+        &[
+            "-v", "error", "-i", path, "-vn", "-ac", "1", "-ar", "2000", "-f", "s16le", "-",
+        ],
     )?;
-    let samples: Vec<i16> = pcm.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+    let samples: Vec<i16> = pcm
+        .chunks_exact(2)
+        .map(|b| i16::from_le_bytes([b[0], b[1]]))
+        .collect();
     if samples.is_empty() {
         return None;
     }
@@ -316,7 +385,9 @@ fn waveform_svg(samples: &[i16]) -> String {
     let (w, h) = (120.0f32, 80.0f32);
     let step = w / n as f32;
     let bar = step * 0.6;
-    let mut svg = format!(r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" fill="#ffffff">"##);
+    let mut svg = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" fill="#ffffff">"##
+    );
     for (i, p) in peaks.iter().enumerate() {
         let v = (p / top).powf(0.8);
         let bh = (v * (h - 4.0)).max(2.0);
@@ -369,7 +440,18 @@ fn pdf(path: &str, base: &str) -> Option<String> {
     // pdftoppm adds the extension itself: <base>.part → <base>.part.png.
     let stem = format!("{base}.part");
     let size = SIZE.to_string();
-    let args = ["-png", "-f", "1", "-l", "1", "-scale-to", &size, "-singlefile", path, &stem];
+    let args = [
+        "-png",
+        "-f",
+        "1",
+        "-l",
+        "1",
+        "-scale-to",
+        &size,
+        "-singlefile",
+        path,
+        &stem,
+    ];
     if !ok("pdftoppm", &args, None) {
         return None;
     }
@@ -386,23 +468,33 @@ fn engrave(ly: &str, cwd: &Path, dir: &Path) -> Option<PathBuf> {
     let ok = ok(
         "bwrap",
         &[
-            "--ro-bind", "/", "/",
-            "--dev", "/dev",
-            "--proc", "/proc",
+            "--ro-bind",
+            "/",
+            "/",
+            "--dev",
+            "/dev",
+            "--proc",
+            "/proc",
             // No tmpfs on /tmp: it would hide a score that lives there. Its
             // temporary files go to `dir` instead.
-            "--bind", d, d,
-            "--setenv", "TMPDIR", d,
+            "--bind",
+            d,
+            d,
+            "--setenv",
+            "TMPDIR",
+            d,
             "--unshare-all",
             "--die-with-parent",
-            "--chdir", cwd.to_str()?,
+            "--chdir",
+            cwd.to_str()?,
             "lilypond",
             "-dpreview",
             "-dno-print-pages",
             "-dresolution=150",
             "--png",
             "--loglevel=ERROR",
-            "-o", &out,
+            "-o",
+            &out,
             ly,
         ],
         None,
@@ -520,7 +612,12 @@ fn parse_midi(d: &[u8]) -> Option<Vec<Note>> {
                         on.insert((ch, a), tick);
                     } else if kind == 0x80 || (kind == 0x90 && v == 0) {
                         if let Some(s) = on.remove(&(ch, a)) {
-                            notes.push(Note { track, start: s, end: tick.max(s + 1), pitch: a });
+                            notes.push(Note {
+                                track,
+                                start: s,
+                                end: tick.max(s + 1),
+                                pitch: a,
+                            });
                             any = true;
                         }
                     }
@@ -539,7 +636,12 @@ fn parse_midi(d: &[u8]) -> Option<Vec<Note>> {
 fn piano_roll_svg(notes: &[Note]) -> String {
     let (w, h) = (120.0f64, 80.0f64);
     let first = notes.iter().map(|n| n.start).min().unwrap_or(0);
-    let last = notes.iter().map(|n| n.end).max().unwrap_or(1).max(first + 1);
+    let last = notes
+        .iter()
+        .map(|n| n.end)
+        .max()
+        .unwrap_or(1)
+        .max(first + 1);
     let lo = notes.iter().map(|n| n.pitch).min().unwrap_or(60) as f64;
     let hi = notes.iter().map(|n| n.pitch).max().unwrap_or(72) as f64;
     // At least two octaves tall, so a melody does not fill the whole tile.
@@ -548,7 +650,9 @@ fn piano_roll_svg(notes: &[Note]) -> String {
     let row = h / range;
     let span = (last - first) as f64;
     let shades = [1.0, 0.55, 0.8, 0.4, 0.68];
-    let mut svg = format!(r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" fill="#ffffff">"##);
+    let mut svg = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" fill="#ffffff">"##
+    );
     // A dense file: a regular sample of its notes is the same picture.
     let stride = notes.len().div_ceil(3000).max(1);
     for n in notes.iter().step_by(stride) {
@@ -617,7 +721,9 @@ fn epub(path: &str, base: &str) -> Option<String> {
     // content="<id>">; else an image whose id or name says "cover".
     let href = items
         .iter()
-        .find(|t| attr(t, "properties").is_some_and(|p| p.split_whitespace().any(|w| w == "cover-image")))
+        .find(|t| {
+            attr(t, "properties").is_some_and(|p| p.split_whitespace().any(|w| w == "cover-image"))
+        })
         .and_then(|t| attr(t, "href"))
         .or_else(|| {
             let meta = opf
@@ -625,7 +731,10 @@ fn epub(path: &str, base: &str) -> Option<String> {
                 .filter_map(|(at, _)| opf[at..].find('>').map(|e| &opf[at..at + e]))
                 .find(|t| attr(t, "name").as_deref() == Some("cover"))?;
             let id = attr(meta, "content")?;
-            items.iter().find(|t| attr(t, "id").as_deref() == Some(id.as_str())).and_then(|t| attr(t, "href"))
+            items
+                .iter()
+                .find(|t| attr(t, "id").as_deref() == Some(id.as_str()))
+                .and_then(|t| attr(t, "href"))
         })
         .or_else(|| {
             items
@@ -638,8 +747,15 @@ fn epub(path: &str, base: &str) -> Option<String> {
                 .and_then(|t| attr(t, "href"))
         })?;
 
-    let dir = Path::new(&opf_path).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
-    let entry = percent_decode(&if dir.is_empty() { href } else { format!("{dir}/{href}") });
+    let dir = Path::new(&opf_path)
+        .parent()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let entry = percent_decode(&if dir.is_empty() {
+        href
+    } else {
+        format!("{dir}/{href}")
+    });
     // unzip reads its names as patterns: escape the wildcards.
     let pattern: String = entry
         .chars()
@@ -706,7 +822,9 @@ mod tests {
 
     #[test]
     fn waveform_has_every_bar() {
-        let s: Vec<i16> = (0..10000).map(|i| ((i as f32 / 50.0).sin() * 20000.0) as i16).collect();
+        let s: Vec<i16> = (0..10000)
+            .map(|i| ((i as f32 / 50.0).sin() * 20000.0) as i16)
+            .collect();
         assert_eq!(waveform_svg(&s).matches("<rect").count(), WAVE_BARS);
     }
 }

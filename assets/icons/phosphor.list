@@ -30,6 +30,7 @@ phone         regular  device-mobile
 pin           regular  push-pin
 pin-fill      fill     push-pin
 power         regular  power
+eject         regular  eject
 reboot        regular  arrow-clockwise
 screenshot    regular  selection
 screen-record regular  video-camera

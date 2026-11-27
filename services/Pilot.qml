@@ -34,8 +34,9 @@ Singleton {
     property string voiceWakeWord: "Karénine"
 
     // Lance l'écoute, ou la termine tout de suite si elle est en cours.
-    function voiceToggle(send) {
-        pilot._send({ cmd: "voice_toggle", send: send === undefined ? true : !!send });
+    // `hold` : l'écoute dure jusqu'à ce qu'on la termine, silences compris.
+    function voiceToggle(send, hold) {
+        pilot._send({ cmd: "voice_toggle", send: send === undefined ? true : !!send, hold: !!hold });
     }
 
     function voiceWakeToggle() {

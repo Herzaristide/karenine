@@ -85,7 +85,12 @@ fn parents() -> Vec<String> {
 fn parent_of(pid: u32) -> Option<u32> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     // « pid (comm) state ppid … » — comm may hold spaces and parentheses.
-    stat.rsplit_once(')')?.1.split_whitespace().nth(1)?.parse().ok()
+    stat.rsplit_once(')')?
+        .1
+        .split_whitespace()
+        .nth(1)?
+        .parse()
+        .ok()
 }
 
 /// What anna is sent to show `question`.
@@ -108,7 +113,12 @@ fn spec(question: &str, ask: &Ask, chain: &[String]) -> Value {
             },
             vec![Field {
                 key: "answer".into(),
-                kind: if *ask == Ask::Text { "text" } else { "password" }.into(),
+                kind: if *ask == Ask::Text {
+                    "text"
+                } else {
+                    "password"
+                }
+                .into(),
                 label: String::new(),
                 value: String::new(),
                 options: Vec::new(),
@@ -134,7 +144,12 @@ fn spec(question: &str, ask: &Ask, chain: &[String]) -> Value {
             ],
             "confirm",
         ),
-        Ask::Notice => (i18n::tr("askpass.notice.title"), Vec::new(), Vec::new(), "notice"),
+        Ask::Notice => (
+            i18n::tr("askpass.notice.title"),
+            Vec::new(),
+            Vec::new(),
+            "notice",
+        ),
     };
     json!({
         "cmd": "prompt_open",
@@ -215,7 +230,10 @@ mod tests {
             classify("Enter passphrase for key '/home/a/.ssh/id_ed25519': ", None),
             Ask::Secret
         );
-        assert_eq!(classify("Username for 'https://github.com': ", None), Ask::Text);
+        assert_eq!(
+            classify("Username for 'https://github.com': ", None),
+            Ask::Text
+        );
         assert_eq!(
             classify(
                 "Are you sure you want to continue connecting (yes/no/[fingerprint])? ",
@@ -230,9 +248,15 @@ mod tests {
     #[test]
     fn the_asker_is_found() {
         let c = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(who(&c(&["sudo", "fish"]), "[sudo] password for a: "), "sudo");
+        assert_eq!(
+            who(&c(&["sudo", "fish"]), "[sudo] password for a: "),
+            "sudo"
+        );
         assert_eq!(who(&c(&["ssh", "git"]), "Enter passphrase"), "git");
-        assert_eq!(who(&c(&["git-remote-http"]), "Password for 'https://a@b': "), "git");
+        assert_eq!(
+            who(&c(&["git-remote-http"]), "Password for 'https://a@b': "),
+            "git"
+        );
         assert_eq!(who(&c(&["ssh", "zed"]), "Enter passphrase"), "ssh");
     }
 

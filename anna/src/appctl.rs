@@ -108,9 +108,15 @@ fn foot_osc(ini: &str) -> String {
         };
         let (key, value) = (key.trim(), value.trim());
         let osc = if let Some(n) = key.strip_prefix("regular") {
-            n.parse::<u8>().ok().filter(|n| *n < 8).map(|n| format!("4;{n}"))
+            n.parse::<u8>()
+                .ok()
+                .filter(|n| *n < 8)
+                .map(|n| format!("4;{n}"))
         } else if let Some(n) = key.strip_prefix("bright") {
-            n.parse::<u8>().ok().filter(|n| *n < 8).map(|n| format!("4;{}", n + 8))
+            n.parse::<u8>()
+                .ok()
+                .filter(|n| *n < 8)
+                .map(|n| format!("4;{}", n + 8))
         } else {
             match key {
                 "foreground" => Some("10".into()),
@@ -188,7 +194,12 @@ fn parse_stat(stat: &str) -> Option<(String, u32)> {
     let open = stat.find('(')?;
     let close = stat.rfind(')')?;
     let comm = stat.get(open + 1..close)?.to_string();
-    let ppid = stat.get(close + 1..)?.split_whitespace().nth(1)?.parse().ok()?;
+    let ppid = stat
+        .get(close + 1..)?
+        .split_whitespace()
+        .nth(1)?
+        .parse()
+        .ok()?;
     Some((comm, ppid))
 }
 
@@ -280,7 +291,11 @@ mod tests {
             .lines()
             .map(|l| match l.split_once('=') {
                 Some((k, v)) => {
-                    let v = v.split_whitespace().map(|_| "112233").collect::<Vec<_>>().join(" ");
+                    let v = v
+                        .split_whitespace()
+                        .map(|_| "112233")
+                        .collect::<Vec<_>>()
+                        .join(" ");
                     format!("{k}={v}\n")
                 }
                 None => format!("{l}\n"),

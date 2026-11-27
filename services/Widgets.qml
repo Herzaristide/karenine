@@ -142,6 +142,14 @@ Singleton {
         widgets.show("files");
     }
 
+    // Un disque à montrer (l'onglet Système) : sa machine ("" ici ; un
+    // serveur, l'Explorer le monte) et son point de montage. Même demande
+    // que explorerShow, prise par FileExplorer.openDisk.
+    function explorerShowDisk(machine, host, mount) {
+        widgets.explorerRequest = { disk: { machine: machine, host: host, main: mount }, tick: Date.now() };
+        widgets.show("files");
+    }
+
     // ── Le sélecteur de fichiers des applications ───────────────
     // Le portail FileChooser (xdg-desktop-portal-termfilechooser) lance
     // karenine-pick, qui écrit « explorer:choisir:<json> » sur la FIFO :

@@ -193,7 +193,13 @@ fn start_pw_record(
     label: &str,
 ) -> Result<(Capture, Receiver<Vec<f32>>), String> {
     let mut child = Command::new("pw-record")
-        .args(["--raw", "--format", "f32", "--channels", &channels.to_string()])
+        .args([
+            "--raw",
+            "--format",
+            "f32",
+            "--channels",
+            &channels.to_string(),
+        ])
         .args(target)
         .args(["--rate", &rate.to_string(), "-"])
         .stdout(Stdio::piped())

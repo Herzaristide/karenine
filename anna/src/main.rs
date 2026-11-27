@@ -63,7 +63,6 @@ mod client;
 mod color;
 mod gesture;
 mod google;
-mod world;
 mod hwstats;
 mod i18n;
 mod icons;
@@ -81,6 +80,7 @@ mod sharepick;
 mod state;
 mod templates;
 mod tuner;
+mod world;
 
 use appctl::{reload_all, AppCtlOptions};
 use protocol::{Command, Response};
@@ -472,35 +472,14 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             let mut memory = servers::Memory::default();
             // Every second: node_exporter reads /proc at each request, so the
             // device shown is followed live (the textfiles, GPU included,
-            // keep their own timers' pace).
+            // keep their own timers' pace). This machine is one of them.
             let mut interval = tokio::time::interval(Duration::from_secs(1));
             // A slow server delays the next round rather than stacking them.
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            // This machine's disks and services ride along (Tailscale lists
-            // only the others), for the views that show them — not the one
-            // following a single device — every 5 s: six processes a round.
-            let mut local: Option<(std::time::Instant, servers::Local)> = None;
             loop {
                 interval.tick().await;
-                let stale = name.is_none()
-                    && local
-                        .as_ref()
-                        .is_none_or(|(at, _)| at.elapsed() >= Duration::from_secs(5));
-                let (stats, fresh) = tokio::join!(
-                    servers::sample_all(&mut memory, name.as_deref()),
-                    async {
-                        if stale {
-                            Some(servers::sample_local().await)
-                        } else {
-                            None
-                        }
-                    }
-                );
-                if let Some(l) = fresh {
-                    local = Some((std::time::Instant::now(), l));
-                }
-                let shown = local.as_ref().map(|(_, l)| l);
-                let json = serde_json::json!({ "servers": stats, "local": shown }).to_string();
+                let stats = servers::sample_all(&mut memory, name.as_deref()).await;
+                let json = serde_json::json!({ "servers": stats }).to_string();
                 if write_line(&mut writer, &json).await.is_err() {
                     break; // socket closed
                 }
@@ -554,35 +533,42 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             ctx.drive.watch(id, agent, &mut writer).await;
         }
 
-        Command::ClaudeChatPage { id, agent, before, limit } => {
-            let reply = tokio::task::spawn_blocking(move || {
-                match claude::transcript::conversation(&id, agent.as_deref()) {
-                    Some(path) => {
-                        let (page, _) = claude::transcript::page(&path, Some(before), limit);
-                        let mut v = serde_json::to_value(page).unwrap_or_default();
-                        v["ok"] = true.into();
-                        v
+        Command::ClaudeChatPage {
+            id,
+            agent,
+            before,
+            limit,
+        } => {
+            let reply =
+                tokio::task::spawn_blocking(move || {
+                    match claude::transcript::conversation(&id, agent.as_deref()) {
+                        Some(path) => {
+                            let (page, _) = claude::transcript::page(&path, Some(before), limit);
+                            let mut v = serde_json::to_value(page).unwrap_or_default();
+                            v["ok"] = true.into();
+                            v
+                        }
+                        None => serde_json::json!({ "ok": false, "error": "unknown session" }),
                     }
-                    None => serde_json::json!({ "ok": false, "error": "unknown session" }),
-                }
-            })
-            .await
-            .unwrap_or_else(|e| serde_json::json!({ "ok": false, "error": e.to_string() }));
+                })
+                .await
+                .unwrap_or_else(|e| serde_json::json!({ "ok": false, "error": e.to_string() }));
             let _ = write_line(&mut writer, &reply.to_string()).await;
         }
 
         Command::ClaudeChatDiff { id, agent, path } => {
-            let reply = tokio::task::spawn_blocking(move || {
-                match claude::transcript::conversation(&id, agent.as_deref()) {
-                    Some(t) => serde_json::json!({
-                        "ok": true,
-                        "hunks": claude::summary::diff(&t, &path),
-                    }),
-                    None => serde_json::json!({ "ok": false, "error": "unknown session" }),
-                }
-            })
-            .await
-            .unwrap_or_else(|e| serde_json::json!({ "ok": false, "error": e.to_string() }));
+            let reply =
+                tokio::task::spawn_blocking(move || {
+                    match claude::transcript::conversation(&id, agent.as_deref()) {
+                        Some(t) => serde_json::json!({
+                            "ok": true,
+                            "hunks": claude::summary::diff(&t, &path),
+                        }),
+                        None => serde_json::json!({ "ok": false, "error": "unknown session" }),
+                    }
+                })
+                .await
+                .unwrap_or_else(|e| serde_json::json!({ "ok": false, "error": e.to_string() }));
             let _ = write_line(&mut writer, &reply.to_string()).await;
         }
 
@@ -598,8 +584,20 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             let _ = write_line(&mut writer, &reply.to_string()).await;
         }
 
-        Command::ClaudeSend { id, cwd, text, files, model, effort, mode } => {
-            let launch = claude::drive::Launch { model, effort, mode };
+        Command::ClaudeSend {
+            id,
+            cwd,
+            text,
+            files,
+            model,
+            effort,
+            mode,
+        } => {
+            let launch = claude::drive::Launch {
+                model,
+                effort,
+                mode,
+            };
             let reply = match ctx.drive.send(id, cwd, text, files, launch).await {
                 Ok(id) => serde_json::json!({ "ok": true, "id": id }),
                 Err(e) => serde_json::json!({ "ok": false, "error": e }),
@@ -611,8 +609,18 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             write_result(&mut writer, ctx.drive.interrupt(&id).await).await;
         }
 
-        Command::ClaudeSet { id, model, effort, mode, remote } => {
-            write_result(&mut writer, ctx.drive.set(&id, model, effort, mode, remote).await).await;
+        Command::ClaudeSet {
+            id,
+            model,
+            effort,
+            mode,
+            remote,
+        } => {
+            write_result(
+                &mut writer,
+                ctx.drive.set(&id, model, effort, mode, remote).await,
+            )
+            .await;
         }
 
         Command::ClaudeUsage => {
@@ -627,7 +635,12 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             let _ = write_line(&mut writer, &reply.to_string()).await;
         }
 
-        Command::ClaudeAnswer { id, ask, action, values } => {
+        Command::ClaudeAnswer {
+            id,
+            ask,
+            action,
+            values,
+        } => {
             write_result(&mut writer, ctx.drive.answer(&id, &ask, action, values)).await;
         }
 
@@ -819,8 +832,8 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
         }
 
         // ── Voice ────────────────────────────────────────────────────────
-        Command::VoiceToggle { send } => {
-            ctx.voice.toggle(send);
+        Command::VoiceToggle { send, hold } => {
+            ctx.voice.toggle(send, hold);
             write_result(&mut writer, Ok(())).await;
         }
 
@@ -891,8 +904,19 @@ async fn handle_connection(stream: UnixStream, ctx: Arc<Ctx>) {
             let _ = write_line(&mut writer, &reply.to_string()).await;
         }
 
-        Command::PilotConfigure { provider, url, model, think, key } => {
-            let config = claude::pilot::Config { provider, url, model, think };
+        Command::PilotConfigure {
+            provider,
+            url,
+            model,
+            think,
+            key,
+        } => {
+            let config = claude::pilot::Config {
+                provider,
+                url,
+                model,
+                think,
+            };
             write_result(&mut writer, ctx.pilot.configure(config, key).await).await;
         }
 
@@ -999,7 +1023,10 @@ async fn run_desk(ctx: &Arc<Ctx>, tool: &str, args: &serde_json::Value) -> Resul
             let snapshot = ctx.change_theme(|state| state.set_mode(mode)).await?;
             let event = serde_json::to_string(&Response::changed(snapshot)).unwrap_or_default();
             let _ = ctx.tx.send(event);
-            Ok(format!("thème {}", if mode == "dark" { "sombre" } else { "clair" }))
+            Ok(format!(
+                "thème {}",
+                if mode == "dark" { "sombre" } else { "clair" }
+            ))
         }
         "reglage" if s("nom") == "mot_activation" => {
             let v = s("valeur").to_lowercase();
@@ -1009,7 +1036,12 @@ async fn run_desk(ctx: &Arc<Ctx>, tool: &str, args: &serde_json::Value) -> Resul
                 _ => return Err(format!("mot d'activation « {v} » : oui ou non")),
             };
             ctx.voice.set_wake(on);
-            Ok(if on { "mot d'activation écouté" } else { "mot d'activation coupé" }.into())
+            Ok(if on {
+                "mot d'activation écouté"
+            } else {
+                "mot d'activation coupé"
+            }
+            .into())
         }
         // The recordings belong to the daemon (recorder.rs).
         "enregistrer" => {

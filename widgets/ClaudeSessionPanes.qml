@@ -605,14 +605,13 @@ Flickable {
                             implicitHeight: reportText.implicitHeight + 16
                             radius: Theme.radiusSmall
                             color: Theme.bgDeep
-                            Text {
+                            MarkdownText {
                                 id: reportText
                                 x: 8
                                 y: 8
                                 width: parent.width - 16
-                                text: job.output !== "" ? job.output.split("\n").slice(-200).join("\n") : job.modelData.report
-                                textFormat: job.output !== "" ? Text.PlainText : Text.MarkdownText
-                                wrapMode: Text.Wrap
+                                links: job.output === ""
+                                markdown: job.output !== "" ? job.output.split("\n").slice(-200).join("\n") : job.modelData.report
                                 font.family: job.output !== "" ? root.mono : "Inter"
                                 font.pixelSize: job.output !== "" ? 11 : 12
                                 color: Theme.textSecondary

@@ -13,7 +13,7 @@ window:
 | Setting | Where | What it changes |
 | --- | --- | --- |
 | **Interface language** | its own section, one row per language | Every text of the shell, the lock screen, and the messages anna shows (errors, notices). Dates follow it. |
-| **Voice language** | under “Voice”, ‹ › to change | The one the pilot answers in (Parakeet recognizes the spoken one by itself). “Same as interface” by default, or “Automatic detection”, or a given language. |
+| **Voice language** | under “Voice”, ‹ › to change | The one the pilot answers in (Parakeet recognizes the spoken one by itself). “Automatic detection” by default, or “Same as interface”, or a given language. |
 
 They are separate because they often differ: you can speak French to an
 interface in English. The interface is in **English** by default.
@@ -25,7 +25,7 @@ the lock screen and anna:
 { "lang": "en", "voice": "fr" }
 ```
 
-`voice` empty means the interface language; `auto` answers in the language of the request.
+`voice` set to `auto`, or missing, answers in the language of the request; empty means the interface language.
 The interface language can also be typed in the bar's search
 (“language”): Enter moves to the next one.
 

@@ -10,10 +10,13 @@ import "../services"
 // puis celles qui sont ouvertes sans rien faire ; enfin les terminées, à
 // reprendre : regroupées par jour. Celles
 // d'avant aujourd'hui sont masquées tant qu'on ne les demande pas.
-// En haut, un champ pour chercher (titre, projet, branche), « + » pour une
-// nouvelle session dans le panneau et ›_ pour une nouvelle dans un terminal ;
-// puis les projets, sur une ligne qui défile : un clic n'affiche que les sessions de ce projet
-// (et les nouvelles s'y ouvrent), un second les rend toutes.
+// En haut, un champ pour chercher (titre, projet, branche), puis les dossiers
+// récents (Places), en pastilles, à la ligne au besoin : un clic n'affiche que
+// les sessions de ce dossier, un second les rend toutes ; leur « + » y ouvre
+// une nouvelle session. « Autres dossiers » : les sessions de tous ceux qui
+// n'ont pas de pastille, et son « + » en choisit un dans l'Explorer.
+// ›_, à côté du champ, change les « + » en ›_ : la prochaine session s'ouvre
+// dans un terminal.
 //
 // Un clic sur une session ouvre sa conversation (ClaudeConversation), à la
 // place de la liste : on la lit, et on y écrit comme dans Claude Desktop.
@@ -43,41 +46,32 @@ Item {
         clip: true
         boundsBehavior: Flickable.StopAtBounds
 
-        // Une nouvelle session : le choix du projet est ouvert, pour la lancer
-        // dans le panneau ("panel") ou dans un terminal ("terminal").
-        property string picking: ""
+        // La prochaine session s'ouvre dans un terminal plutôt qu'ici.
+        property bool inTerminal: false
 
-        function start(where, project) {
-            root.picking = "";
-            if (where === "terminal")
-                ClaudeSessions.startInTerminal(root.folders[project]);
+        // La pastille de tous les dossiers qui n'en ont pas.
+        readonly property string others: "*"
+
+        function start(dir) {
+            var where = root.inTerminal ? "terminal" : "panel";
+            root.inTerminal = false;
+            if (dir === root.others)
+                ClaudeChat.newSessionElsewhere(where);
             else
-                ClaudeChat.newSession(root.folders[project], project);
+                ClaudeChat.startIn(where, dir, root.nameOf(dir));
         }
 
-        // Le projet choisi s'il y en a un, sinon on le demande.
-        function askStart(where) {
-            if (root.project !== "" && root.folders[root.project] !== undefined)
-                root.start(where, root.project);
-            else
-                root.picking = root.picking === where ? "" : where;
-        }
-        // Le dossier de chaque projet, d'après ses sessions.
-        readonly property var folders: {
-            var f = {};
-            ClaudeSessions.live.concat(ClaudeSessions.recent).forEach(s => {
-                if (s.project !== "" && s.cwd !== "" && f[s.project] === undefined)
-                    f[s.project] = s.cwd;
-            });
-            return f;
-        }
+        onVisibleChanged: if (root.visible) Places.refresh()
+        Component.onCompleted: Places.refresh()
 
-        // Les filtres : le projet choisi ("" : tous) et le texte cherché.
+        // Le projet choisi (son dossier ; "" : tous ; `others`) et le texte cherché.
         property string project: ""
         property string query: ""
 
         function matches(s) {
-            if (root.project !== "" && s.project !== root.project)
+            var dir = Places.projectOf(s.cwd);
+            if (root.project === root.others ? root.projects.some(p => p.dir === dir)
+                                             : root.project !== "" && dir !== root.project)
                 return false;
             var q = root.query.trim().toLowerCase();
             if (q === "")
@@ -111,47 +105,33 @@ Item {
         readonly property int oldCount: root.unpinnedRecent.filter(s => root.isOld(s)).length
             + root.unpinnedLive.filter(s => s.state === "idle" && root.isOld(s)).length
 
-        // Les projets des sessions : [{ name, rank, updated, active }]. Ceux où
-        // une session attend (0), puis ceux où une est ouverte (1), par nom ;
-        // puis les autres (2), le dernier touché d'abord.
-        readonly property var projectList: {
+        // Les projets qui ont une session ouverte : [{ dir, rank }]. Ceux où
+        // une session attend (0), puis les autres (1).
+        readonly property var openProjects: {
             var by = {};
-            ClaudeSessions.live.concat(ClaudeSessions.recent).forEach(s => {
-                if (s.project === "")
-                    return;
-                var p = by[s.project] || (by[s.project] = { name: s.project, rank: 2, updated: 0, active: false });
-                p.active = p.active || s.state === "waiting" || s.state === "busy";
-                p.updated = Math.max(p.updated, s.updated);
-                p.rank = Math.min(p.rank, s.state === "waiting" ? 0 : s.state === "ended" ? 2 : 1);
+            ClaudeSessions.live.forEach(s => {
+                var dir = Places.projectOf(s.cwd);
+                if (Places.isProject(dir))
+                    by[dir] = Math.min(by[dir] === undefined ? 1 : by[dir], s.state === "waiting" ? 0 : 1);
             });
-            return Object.values(by).sort((a, b) => a.rank - b.rank
-                || (a.rank < 2 ? 0 : b.updated - a.updated)
-                || a.name.localeCompare(b.name));
+            return Object.keys(by).map(dir => ({ dir: dir, rank: by[dir] }))
+                .sort((a, b) => a.rank - b.rank || a.dir.localeCompare(b.dir));
         }
-        // Les dossiers jetables, où l'on n'ouvre rien de nouveau.
-        function temporary(dir) {
-            return dir === "/tmp" || dir.startsWith("/tmp/") || dir.indexOf("/.config/Claude/scratch-workspaces/") >= 0;
+        // Les filtres : ceux-là, puis les dossiers récents (Places), et celui
+        // qui est choisi, même sorti des récents.
+        readonly property var projects: {
+            var dirs = root.openProjects.map(p => p.dir);
+            Places.projects.forEach(p => {
+                if (dirs.indexOf(p.dir) < 0)
+                    dirs.push(p.dir);
+            });
+            if (root.project !== "" && root.project !== root.others && dirs.indexOf(root.project) < 0)
+                dirs.push(root.project);
+            return Places.named(dirs);
         }
-        // Où ouvrir une nouvelle session.
-        readonly property var targets: root.projectList.map(p => p.name)
-            .filter(n => root.folders[n] !== undefined && !root.temporary(root.folders[n]))
-        // Les vrais projets, actifs depuis une semaine (ou avec une session qui
-        // attend ou travaille) : ni le dossier personnel, ni un dossier qui en
-        // range plusieurs autres (~/code). Leurs sessions restent dans « Tous ».
-        readonly property var projects: root.targets.filter(n => {
-            var dir = root.folders[n];
-            var info = root.projectList.find(p => p.name === n);
-            if (root.tick >= 0 && !info.active && Date.now() - info.updated > 7 * root.dayMs)
-                return false;
-            return dir !== Quickshell.env("HOME")
-                && root.targets.filter(o => root.folders[o].startsWith(dir + "/")).length < 2;
-        })
-
-        // Le projet choisi n'a plus de session : on ne reste pas sur une
-        // liste vide.
-        onProjectsChanged: {
-            if (root.project !== "" && root.projects.indexOf(root.project) < 0)
-                root.project = "";
+        function nameOf(dir) {
+            var p = root.projects.find(o => o.dir === dir);
+            return p ? p.name : dir.substring(dir.lastIndexOf("/") + 1);
         }
 
         function midnight(ms) {
@@ -237,15 +217,20 @@ Item {
             property bool active: false
             // Un point : une session y attend (0) ou y est ouverte (1).
             property int rank: 2
+            // Un « + » à droite (›_ : dans un terminal).
+            property bool startable: false
             signal clicked()
-            implicitWidth: chipRow.implicitWidth + 18
+            signal start()
+            implicitWidth: chipRow.implicitWidth + 18 + (chip.startable ? 18 : 0)
             implicitHeight: 24
             radius: 12
             color: chip.active ? Qt.alpha(Theme.accentColor, 0.18)
                  : chipMa.containsMouse ? Theme.hoverOverlay : Qt.alpha(Theme.textPrimary, 0.06)
             Row {
                 id: chipRow
-                anchors.centerIn: parent
+                anchors.left: parent.left
+                anchors.leftMargin: 9
+                anchors.verticalCenter: parent.verticalCenter
                 spacing: 6
                 Rectangle {
                     visible: chip.rank < 2
@@ -269,6 +254,38 @@ Item {
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
                 onClicked: chip.clicked()
+            }
+            Rectangle {
+                visible: chip.startable
+                anchors.right: parent.right
+                anchors.rightMargin: 2
+                anchors.verticalCenter: parent.verticalCenter
+                width: 20
+                height: 20
+                radius: 10
+                color: startMa.containsMouse ? Qt.alpha(Theme.accentColor, 0.24) : "transparent"
+                Text {
+                    anchors.centerIn: parent
+                    visible: !root.inTerminal
+                    text: "+"
+                    font.family: "Inter"
+                    font.pixelSize: 14
+                    color: startMa.containsMouse ? Theme.accentColor : Theme.textSecondary
+                }
+                NixIcon {
+                    anchors.centerIn: parent
+                    visible: root.inTerminal
+                    iconSize: 12
+                    source: "../assets/icons/terminal.svg"
+                    color: Theme.accentColor
+                }
+                MouseArea {
+                    id: startMa
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: chip.start()
+                }
             }
         }
 
@@ -328,7 +345,7 @@ Item {
                     color: Theme.textPrimary
                 }
                 Rectangle {
-                    visible: root.project === ""
+                    visible: root.project === "" || root.project === root.others
                     implicitWidth: projText.implicitWidth + 12
                     implicitHeight: 18
                     radius: 5
@@ -617,9 +634,9 @@ Item {
             width: root.width
             spacing: 8
 
-            // Le champ ; à côté, « + » et ›_ pour une nouvelle session.
+            // Le champ ; à côté, ›_ : la prochaine session dans un terminal.
             RowLayout {
-                visible: ClaudeSessions.live.length + ClaudeSessions.recent.length > 0
+                visible: ClaudeSessions.loaded
                 Layout.fillWidth: true
                 spacing: 6
 
@@ -679,105 +696,48 @@ Item {
                     }
                 }
 
-                Rectangle {
-                    implicitWidth: 32
-                    implicitHeight: 32
-                    radius: Theme.radiusSmall
-                    color: root.picking === "panel" ? Theme.selectedFill : newMa.containsMouse ? Theme.hoverOverlay : Theme.bgElevated
-                    Text {
-                        anchors.centerIn: parent
-                        text: root.picking === "panel" ? "×" : "+"
-                        font.family: "Inter"
-                        font.pixelSize: 18
-                        color: root.picking === "panel" ? Theme.accentColor : Theme.textSecondary
-                    }
-                    MouseArea {
-                        id: newMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.askStart("panel")
-                    }
-                }
-
                 // Une nouvelle session, dans un terminal.
                 Rectangle {
                     implicitWidth: 32
                     implicitHeight: 32
                     radius: Theme.radiusSmall
-                    color: root.picking === "terminal" ? Theme.selectedFill : newTermMa.containsMouse ? Theme.hoverOverlay : Theme.bgElevated
+                    color: root.inTerminal ? Theme.selectedFill : newTermMa.containsMouse ? Theme.hoverOverlay : Theme.bgElevated
                     NixIcon {
                         anchors.centerIn: parent
                         iconSize: 16
                         source: "../assets/icons/terminal.svg"
-                        color: root.picking === "terminal" ? Theme.accentColor : Theme.textSecondary
+                        color: root.inTerminal ? Theme.accentColor : Theme.textSecondary
                     }
                     MouseArea {
                         id: newTermMa
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: root.askStart("terminal")
+                        onClicked: root.inTerminal = !root.inTerminal
                     }
                 }
             }
 
-            // Nouvelle session : dans quel projet ?
-            Heading {
-                visible: root.picking !== ""
-                text: root.picking === "terminal" ? I18n.tr("claude.newInTerminal") : I18n.tr("claude.chat.newIn")
-            }
+            // Les dossiers, à la ligne quand la place manque.
             Flow {
-                visible: root.picking !== ""
+                visible: ClaudeSessions.loaded
                 Layout.fillWidth: true
                 spacing: 4
                 Repeater {
-                    model: root.picking !== "" ? root.targets : []
+                    // Suivis par leur nom : les pastilles restent en place
+                    // quand une session avance. "" : tous.
+                    model: ScriptModel { values: [""].concat(root.projects.map(p => p.dir), [root.others]) }
                     Chip {
-                        id: newChip
+                        id: projChip
                         required property string modelData
-                        label: newChip.modelData
-                        onClicked: root.start(root.picking, newChip.modelData)
-                    }
-                }
-            }
-
-            // Les projets (dès qu'il y en a deux), sur une ligne ; la molette
-            // la fait défiler quand elle dépasse.
-            ListView {
-                id: projectBar
-                visible: root.projects.length > 1
-                Layout.fillWidth: true
-                implicitHeight: 24
-                orientation: ListView.Horizontal
-                spacing: 4
-                clip: true
-                boundsBehavior: Flickable.StopAtBounds
-                // Suivis par leur nom : la ligne reste en place quand une
-                // session avance. "" : tous.
-                model: ScriptModel { values: [""].concat(root.projects) }
-                delegate: Chip {
-                    id: projChip
-                    required property string modelData
-                    required property int index
-                    readonly property var info: root.projectList.find(p => p.name === projChip.modelData)
-                    label: projChip.modelData === "" ? I18n.tr("claude.allProjects") : projChip.modelData
-                    rank: projChip.info ? projChip.info.rank : 2
-                    active: root.project === projChip.modelData
-                    onClicked: {
-                        root.project = projChip.active ? "" : projChip.modelData;
-                        projectBar.positionViewAtIndex(projChip.index, ListView.Contain);
-                    }
-                }
-
-                WheelHandler {
-                    enabled: projectBar.contentWidth > projectBar.width
-                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-                    orientation: Qt.Vertical
-                    onWheel: (event) => {
-                        var max = projectBar.originX + projectBar.contentWidth - projectBar.width;
-                        projectBar.contentX = Math.max(projectBar.originX,
-                            Math.min(max, projectBar.contentX - event.angleDelta.y / 2));
+                        readonly property var info: root.openProjects.find(p => p.dir === projChip.modelData)
+                        label: projChip.modelData === "" ? I18n.tr("claude.allProjects")
+                             : projChip.modelData === root.others ? I18n.tr("claude.otherFolders") : root.nameOf(projChip.modelData)
+                        rank: projChip.info ? projChip.info.rank : 2
+                        active: root.project === projChip.modelData
+                        onClicked: root.project = projChip.active ? "" : projChip.modelData
+                        startable: projChip.modelData !== ""
+                        onStart: root.start(projChip.modelData)
                     }
                 }
             }

@@ -39,9 +39,9 @@ pub enum Command {
     },
 
     // ── tailnet devices (tailscale + node_exporter) ───────────────────────
-    /// Keep connection open; daemon pushes `{"servers":[ServerStats…],
-    /// "local":{hostname, drives, services}}` every second, re-reading the
-    /// list each time. With `name`, only that device's node_exporter is
+    /// Keep connection open; daemon pushes `{"servers":[ServerStats…]}`
+    /// every second (this machine first, `local`), re-reading the list each
+    /// time. With `name`, only that device's node_exporter is
     /// asked (the one the shell shows); the others report what Tailscale
     /// says of them.
     ServersWatch {
@@ -299,9 +299,13 @@ pub enum Command {
     /// Start listening, or end the recording now if already listening.
     /// `send` (default true): hand the transcript to the pilot; false only
     /// shows it (`anna voice dictate`).
+    /// `hold`: a key held down — listen until the next toggle, silences
+    /// included.
     VoiceToggle {
         #[serde(default = "yes")]
         send: bool,
+        #[serde(default)]
+        hold: bool,
     },
     /// The wake word « Karénine » (claude/wake.rs): `on` turns it on or
     /// off, absent toggles it. Remembered across restarts.

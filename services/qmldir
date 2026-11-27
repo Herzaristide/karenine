@@ -28,4 +28,7 @@ singleton ClaudeChat 1.0 ClaudeChat.qml
 singleton Prompts 1.0 Prompts.qml
 singleton Phone 1.0 Phone.qml
 singleton Previews 1.0 Previews.qml
+singleton Places 1.0 Places.qml
 singleton World 1.0 World.qml
+singleton Tailscale 1.0 Tailscale.qml
+singleton Disks 1.0 Disks.qml

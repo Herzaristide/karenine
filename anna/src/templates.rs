@@ -182,7 +182,8 @@ mod tests {
         fs::create_dir_all(home.join(".config/chromium")).unwrap();
         let read = || {
             let text =
-                fs::read_to_string(home.join(".config/chromium/policies/managed/accent.json")).unwrap();
+                fs::read_to_string(home.join(".config/chromium/policies/managed/accent.json"))
+                    .unwrap();
             serde_json::from_str::<serde_json::Value>(&text).unwrap()["BrowserThemeColor"]
                 .as_str()
                 .unwrap()

@@ -274,10 +274,22 @@ fn widget_line(name: &str, action: &str) -> Result<String, String> {
 /// The folders `montrer_dossier` knows by name: what is said (without
 /// accents), then the `XDG_<key>_DIR` and its fallback under ~.
 const KNOWN_DIRS: [(&[&str], &str, &str); 7] = [
-    (&["maison", "home", "dossier personnel", "perso", "accueil"], "", ""),
-    (&["telechargements", "telechargement", "downloads", "download"], "DOWNLOAD", "Downloads"),
+    (
+        &["maison", "home", "dossier personnel", "perso", "accueil"],
+        "",
+        "",
+    ),
+    (
+        &["telechargements", "telechargement", "downloads", "download"],
+        "DOWNLOAD",
+        "Downloads",
+    ),
     (&["documents", "document", "docs"], "DOCUMENTS", "Documents"),
-    (&["images", "image", "photos", "pictures"], "PICTURES", "Pictures"),
+    (
+        &["images", "image", "photos", "pictures"],
+        "PICTURES",
+        "Pictures",
+    ),
     (&["musique", "musiques", "music"], "MUSIC", "Music"),
     (&["videos", "video"], "VIDEOS", "Videos"),
     (&["bureau", "desktop"], "DESKTOP", "Desktop"),
@@ -339,7 +351,12 @@ fn resolve_folder(said: &str) -> Result<std::path::PathBuf, String> {
                     crate::paths::user_dir(key, fallback)
                 }
             })
-            .or_else(|| project_dir(&words).ok().or_else(|| project_dir(said).ok()).map(PathBuf::from))
+            .or_else(|| {
+                project_dir(&words)
+                    .ok()
+                    .or_else(|| project_dir(said).ok())
+                    .map(PathBuf::from)
+            })
             .or_else(|| Some(home.join(said)))
     };
     match found {
@@ -426,7 +443,11 @@ fn read_page(url: &str) -> Result<String, String> {
         .read_to_string(&mut body)
         .map_err(|e| e.to_string())?;
     let text: String = html_text(&body).chars().take(PAGE_TEXT_MAX).collect();
-    Ok(if text.trim().is_empty() { "(page sans texte)".into() } else { text })
+    Ok(if text.trim().is_empty() {
+        "(page sans texte)".into()
+    } else {
+        text
+    })
 }
 
 fn html_text(html: &str) -> String {
@@ -451,9 +472,12 @@ fn html_text(html: &str) -> String {
             let Some(end) = end else { break };
             // Blocks end lines.
             let tag = &lb[i + 1..end];
-            if ["p>", "p ", "br", "div", "li", "h1", "h2", "h3", "h4", "tr", "/p", "/div", "/li", "/h"]
-                .iter()
-                .any(|b| tag.starts_with(b.as_bytes()))
+            if [
+                "p>", "p ", "br", "div", "li", "h1", "h2", "h3", "h4", "tr", "/p", "/div", "/li",
+                "/h",
+            ]
+            .iter()
+            .any(|b| tag.starts_with(b.as_bytes()))
             {
                 out.push('\n');
             } else {
@@ -810,15 +834,23 @@ const SCREEN_MAX: f64 = 1568.0;
 /// `-g "<x>,<y> <w>x<h>"`, then `-s <scale>`), and the line saying what it
 /// is. `target` empty: the focused monitor; else the window whose class, then
 /// title, contains it — if it is on a workspace shown on some monitor.
-fn capture_area(monitors: &Value, clients: &Value, active: &Value, target: &str)
-    -> Result<(Vec<String>, String), String> {
+fn capture_area(
+    monitors: &Value,
+    clients: &Value,
+    active: &Value,
+    target: &str,
+) -> Result<(Vec<String>, String), String> {
     let mons = monitors.as_array().cloned().unwrap_or_default();
     let num = |v: &Value, k: &str| v.get(k).and_then(Value::as_f64).unwrap_or(0.0);
     let text = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
     // Scale the image down so its long side (in logical pixels) is at most
     // SCREEN_MAX, never above the monitor's own pixels.
     let factor = |logical: f64, scale: f64| {
-        if logical > 0.0 { (SCREEN_MAX / logical).min(scale.max(1e-3)) } else { 1.0 }
+        if logical > 0.0 {
+            (SCREEN_MAX / logical).min(scale.max(1e-3))
+        } else {
+            1.0
+        }
     };
 
     let target = target.trim().to_lowercase();
@@ -827,12 +859,19 @@ fn capture_area(monitors: &Value, clients: &Value, active: &Value, target: &str)
             .iter()
             .find(|m| m.get("focused").and_then(Value::as_bool) == Some(true))
             .ok_or("aucun écran actif")?;
-        let (w, h, scale) = (num(mon, "width"), num(mon, "height"), num(mon, "scale").max(1e-3));
+        let (w, h, scale) = (
+            num(mon, "width"),
+            num(mon, "height"),
+            num(mon, "scale").max(1e-3),
+        );
         let args = vec![
-            "-o".into(), text(mon, "name"),
-            "-s".into(), format!("{:.3}", factor(w.max(h) / scale, scale)),
+            "-o".into(),
+            text(mon, "name"),
+            "-s".into(),
+            format!("{:.3}", factor(w.max(h) / scale, scale)),
         ];
-        let line = format!(
+        let line =
+            format!(
             "écran {} ({w}×{h}) ; fenêtre active : {} — {}. La barre de conversation est en bas.",
             text(mon, "name"), text(active, "class"), text(active, "title")
         );
@@ -845,30 +884,52 @@ fn capture_area(monitors: &Value, clients: &Value, active: &Value, target: &str)
     let shown_ws: Vec<i64> = mons
         .iter()
         .flat_map(|m| {
-            [m.pointer("/activeWorkspace/id"), m.pointer("/specialWorkspace/id")]
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_i64)
-                .collect::<Vec<_>>()
+            [
+                m.pointer("/activeWorkspace/id"),
+                m.pointer("/specialWorkspace/id"),
+            ]
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_i64)
+            .collect::<Vec<_>>()
         })
         .collect();
-    let ws_of = |c: &Value| c.pointer("/workspace/id").and_then(Value::as_i64).unwrap_or(i64::MIN);
-    let visible = |c: &Value| shown_ws.contains(&ws_of(c)) && c.get("hidden").and_then(Value::as_bool) != Some(true);
-    let win = all.iter().find(|c| visible(c) && has(c, "class"))
+    let ws_of = |c: &Value| {
+        c.pointer("/workspace/id")
+            .and_then(Value::as_i64)
+            .unwrap_or(i64::MIN)
+    };
+    let visible = |c: &Value| {
+        shown_ws.contains(&ws_of(c)) && c.get("hidden").and_then(Value::as_bool) != Some(true)
+    };
+    let win = all
+        .iter()
+        .find(|c| visible(c) && has(c, "class"))
         .or_else(|| all.iter().find(|c| visible(c) && has(c, "title")))
         .or_else(|| all.iter().find(|c| has(c, "class") || has(c, "title")))
         .ok_or_else(|| format!("aucune fenêtre ne correspond à « {target} »"))?;
     let label = format!("{} — {}", text(win, "class"), text(win, "title"));
     if !visible(win) {
-        let ws = win.pointer("/workspace/name").and_then(Value::as_str).unwrap_or("?");
+        let ws = win
+            .pointer("/workspace/name")
+            .and_then(Value::as_str)
+            .unwrap_or("?");
         return Err(format!(
             "la fenêtre {label} est sur le workspace {ws}, qui n'est pas affiché : elle ne peut pas \
              être vue sans l'afficher (afficher_fenetre change ce que voit l'utilisateur ; ne le fais \
              que s'il le veut)"
         ));
     }
-    let at = |i: usize| win.pointer(&format!("/at/{i}")).and_then(Value::as_f64).unwrap_or(0.0);
-    let size = |i: usize| win.pointer(&format!("/size/{i}")).and_then(Value::as_f64).unwrap_or(0.0);
+    let at = |i: usize| {
+        win.pointer(&format!("/at/{i}"))
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0)
+    };
+    let size = |i: usize| {
+        win.pointer(&format!("/size/{i}"))
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0)
+    };
     let (w, h) = (size(0), size(1));
     if w < 1.0 || h < 1.0 {
         return Err(format!("la fenêtre {label} n'a pas de taille à l'écran"));
@@ -879,8 +940,10 @@ fn capture_area(monitors: &Value, clients: &Value, active: &Value, target: &str)
         .map(|m| num(m, "scale"))
         .unwrap_or(1.0);
     let args = vec![
-        "-g".into(), format!("{},{} {}x{}", at(0), at(1), w, h),
-        "-s".into(), format!("{:.3}", factor(w.max(h), scale)),
+        "-g".into(),
+        format!("{},{} {}x{}", at(0), at(1), w, h),
+        "-s".into(),
+        format!("{:.3}", factor(w.max(h), scale)),
     ];
     Ok((args, format!("fenêtre {label} ({w}×{h})")))
 }
@@ -1240,7 +1303,8 @@ mod tests {
     #[test]
     fn the_whole_screen_is_the_focused_monitor() {
         let (m, c) = hypr();
-        let (args, line) = capture_area(&m, &c, &json!({"class": "zed", "title": "t"}), "").unwrap();
+        let (args, line) =
+            capture_area(&m, &c, &json!({"class": "zed", "title": "t"}), "").unwrap();
         // 1920 px at scale 1.25: 1536 logical, brought up to 1568.
         assert_eq!(args, vec!["-o", "eDP-1", "-s", "1.021"]);
         assert!(line.starts_with("écran eDP-1 (1920×1080)"));
@@ -1263,7 +1327,9 @@ mod tests {
         let (m, c) = hypr();
         let err = capture_area(&m, &c, &json!({}), "docs").unwrap_err();
         assert!(err.contains("workspace 3"), "{err}");
-        assert!(capture_area(&m, &c, &json!({}), "gimp").unwrap_err().contains("aucune fenêtre"));
+        assert!(capture_area(&m, &c, &json!({}), "gimp")
+            .unwrap_err()
+            .contains("aucune fenêtre"));
     }
 
     #[test]
@@ -1271,7 +1337,10 @@ mod tests {
         let html = "<html><head><title>T</title><style>a{}</style></head><body>\
                     <h1>Météo</h1><p>Il fait&nbsp;12&deg; à <b>Paris</b>.</p>\
                     <script>var x = '<p>';</script><div>İstanbul &amp; co</div></body></html>";
-        assert_eq!(html_text(html), "Météo\nIl fait 12&deg; à Paris .\nİstanbul & co");
+        assert_eq!(
+            html_text(html),
+            "Météo\nIl fait 12&deg; à Paris .\nİstanbul & co"
+        );
     }
 
     #[test]
@@ -1319,7 +1388,10 @@ mod tests {
     #[test]
     fn folders_are_found_by_what_is_said() {
         let home = crate::paths::home_dir();
-        assert_eq!(folder_words("mon dossier de Téléchargements"), "telechargements");
+        assert_eq!(
+            folder_words("mon dossier de Téléchargements"),
+            "telechargements"
+        );
         assert_eq!(folder_words("le projet karenine"), "karenine");
         // In the Nix build sandbox HOME is /homeless-shelter, which does
         // not exist: resolve_folder rightly refuses it there.
@@ -1333,7 +1405,10 @@ mod tests {
 
     #[test]
     fn explorer_lines_match_the_shell() {
-        assert_eq!(explorer_line(std::path::Path::new("/")), "explorer:dossier:/\n");
+        assert_eq!(
+            explorer_line(std::path::Path::new("/")),
+            "explorer:dossier:/\n"
+        );
         assert_eq!(
             explorer_line(std::path::Path::new("/nulle/part.txt")),
             "explorer:fichier:/nulle/part.txt\n"

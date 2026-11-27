@@ -21,13 +21,14 @@ import "../widgets"
 //                                                                                   notif.
 //
 // Les workspaces 1-5 de l'écran montrent les icônes de leurs fenêtres ; un
-// clic y va. Le flocon ouvre son volet : les outils de karenine et les
-// applications (widgets/AppsPop.qml). Le micro, au bout du champ, parle au
+// clic y va. Le flocon et le champ ouvrent le même volet, le lanceur : les
+// outils de karenine et les applications, puis, dès qu'on tape, ce qui
+// correspond (applications, fichiers, réglages, web — le service Search),
+// trié par pertinence. Le micro, au bout du champ, parle au
 // pilote : la phrase s'écrit dans le champ pendant qu'on parle (anna la
 // transcrit en local), puis part au pilote ; le mot d'éveil fait la même
-// chose. Ce qu'on tape
-// cherche (applications, fichiers, réglages, web — le service Search) et
-// part au pilote avec Entrée.
+// chose. Ce qu'on tape part au pilote avec Entrée, si aucune ligne du
+// lanceur n'est retenue.
 //
 // À droite, les groupes : chaque icône ouvre son volet au-dessus d'elle, un
 // seul à la fois ; un clic ailleurs dans la barre, Échap ou la même icône le
@@ -98,6 +99,7 @@ PanelWindow { // qmllint disable uncreatable-type
         input.text = "";
         answer.hide();
         bar.selected = -1;
+        bar.launcher = false;
         bar.focusRequested = false;
         input.focus = false;
         if (had)
@@ -198,7 +200,7 @@ PanelWindow { // qmllint disable uncreatable-type
 
     function submit() {
         if (bar.selected >= 0) {
-            bar.activateResult(Search.results[bar.selected]);
+            bar.activateResult(bar.nav[bar.selected]);
             return;
         }
         // « tâche … » : Entrée ajoute la tâche plutôt que de la demander
@@ -250,9 +252,17 @@ PanelWindow { // qmllint disable uncreatable-type
         function onPopRequested(name, action) {
             var buttons = {
                 sound: soundBtn, mic: micBtn, wifi: wifiBtn, bluetooth: btBtn, phone: phoneBtn,
-                notifications: notifBtn, tasks: tasksBtn, power: powerBtn, apps: logo,
+                notifications: notifBtn, tasks: tasksBtn, power: powerBtn,
                 energy: batteryBtn.visible ? batteryBtn : clockBtn
             };
+            if (name === "apps") {
+                var show = action === "ouvrir" ? true : action === "fermer" ? false : !results.on;
+                if (show)
+                    bar.openLauncher();
+                else if (results.on)
+                    bar.release();
+                return;
+            }
             var on = action === "ouvrir" ? true
                    : action === "fermer" ? false
                    : bar.pop !== name;
@@ -279,7 +289,12 @@ PanelWindow { // qmllint disable uncreatable-type
         && (bar.anchorHovered || popHover.hovered || phoneHover.hovered || powerHover.hovered)
     property bool popArmed: false
 
-    onPopChanged: bar.popArmed = bar.popHovered
+    onPopChanged: {
+        bar.popArmed = bar.popHovered;
+        // Un autre volet prend la place du lanceur.
+        if (bar.pop !== "")
+            bar.launcher = false;
+    }
     onPopHoveredChanged: {
         if (bar.popHovered) {
             bar.popArmed = true;
@@ -305,8 +320,77 @@ PanelWindow { // qmllint disable uncreatable-type
     // La largeur du contenu de chaque volet.
     readonly property var popWidths: ({
         "wifi": 320, "bluetooth": 320, "sound": 300, "mic": 300,
-        "notifications": 380, "energy": 300, "tasks": 380, "apps": 400
+        "notifications": 380, "energy": 300, "tasks": 380
     })
+
+    // ── Le lanceur ───────────────────────────────────────────────
+    // Un seul volet, au-dessus du flocon et du champ : le flocon y donne le
+    // clavier au champ, et taper le filtre. Champ vide : les outils de
+    // karenine puis toutes les applications, par nom. Avec du texte : les
+    // outils dont le nom correspond, les applications trouvées (en grille)
+    // et le reste (fichiers, réglages, web… en lignes, contre le champ),
+    // le tout trié par pertinence (Search).
+    //
+    //   OUTILS
+    //   [▣ Musique] [▣ Fichiers] [▣ Système] …
+    //   APPLICATIONS
+    //   ◻ Blender   ◻ Chromium   ◻ GIMP   ◻ Kitty   ◻ …
+    //   ▤ rapport.pdf   ~/docs                          Fichier
+    //   ❄  Demander à Karénine…
+    // Ouvert par le flocon (champ vide compris) ; refermé avec le champ.
+    property bool launcher: false
+
+    // Les outils : un onglet du panneau, ou une action.
+    readonly property var tools: [
+        { icon: "music.svg", label: I18n.tr("widget.music"), tab: "music" },
+        { icon: "folder.svg", label: I18n.tr("widget.explorer"), tab: "files" },
+        { icon: "monitor.svg", label: I18n.tr("widget.stats"), tab: "system" },
+        { icon: "calendar.svg", label: I18n.tr("widget.agenda"), tab: "agenda" },
+        { icon: "tasks.svg", label: I18n.tr("apps.tasks"), tab: "" },
+        { icon: "sparkles.svg", label: I18n.tr("widget.claude"), tab: "claude" },
+        { icon: "settings.svg", label: I18n.tr("widget.settings"), tab: "settings" }
+    ]
+    readonly property var shownTools: {
+        if (!bar.searching)
+            return bar.tools;
+        var q = Search.query.trim();
+        return bar.tools.filter(t => Fuzzy.best(q, [t.label]) > 0);
+    }
+
+    // Toutes les applications, par nom, comme Search les rend.
+    readonly property var allApps: DesktopEntries.applications.values
+        .filter(e => e && !e.noDisplay)
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map(e => ({ type: "app", id: "app:" + e.id, title: e.name, subtitle: "",
+                     tone: Theme.accentColor, payload: { entry: e } }))
+
+    // Ce que ↑ ↓ parcourent, dans l'ordre : la pertinence, ou les noms.
+    readonly property var nav: bar.searching ? Search.results : bar.allApps
+    readonly property var appResults: bar.nav.filter(i => i.type === "app")
+    readonly property var otherResults: bar.searching ? Search.results.filter(i => i.type !== "app") : []
+    readonly property var currentResult: bar.selected >= 0 ? bar.nav[bar.selected] || null : null
+
+    function openLauncher() {
+        bar.launcher = true;
+        bar.pop = "";
+        if (bar.focusRequested)
+            input.forceActiveFocus();
+        else
+            bar.focusRequested = true;
+    }
+    function toggleLauncher() {
+        if (results.on)
+            bar.release();
+        else
+            bar.openLauncher();
+    }
+    function openTool(t) {
+        if (t.tab === "")
+            Widgets.showTasks();
+        else
+            Widgets.show(t.tab);
+        bar.release();
+    }
 
     // ── La recherche ─────────────────────────────────────────────
     // Ce qu'on tape part aussi dans Search ; tant qu'il y a des suggestions,
@@ -350,16 +434,16 @@ PanelWindow { // qmllint disable uncreatable-type
     }
 
     function adjustSelected(dir) {
-        var item = bar.selected >= 0 ? Search.results[bar.selected] : null;
+        var item = bar.selected >= 0 ? bar.nav[bar.selected] : null;
         if (!item || !item.payload || !item.payload.adjust)
             return false;
         Search.activate(item, dir > 0 ? "up" : "down");
         return true;
     }
 
-    // ↑ ↓ dans la liste (la meilleure en bas, contre le champ) : ↑ y entre
-    // par la première, ↓ depuis elle revient au champ (-1). Vrai s'ils ont
-    // servi.
+    // ↑ ↓ dans le lanceur, par ordre de pertinence (où que la ligne soit
+    // montrée, grille ou liste) : ↑ y entre par la meilleure, ↓ depuis elle
+    // revient au champ (-1). Vrai s'ils ont servi.
     function rowStep(dir) {
         // Pendant le chargement, la liste à l'écran est celle de la frappe
         // d'avant : on n'y entre pas, ↑ attend la nouvelle.
@@ -367,7 +451,7 @@ PanelWindow { // qmllint disable uncreatable-type
             bar.pendingUp = dir > 0;
             return true;
         }
-        var n = results.on ? Search.results.length : 0;
+        var n = results.on ? bar.nav.length : 0;
         if (n === 0 || (dir < 0 && bar.selected < 0))
             return false;
         bar.selected = Math.max(-1, Math.min(n - 1, bar.selected + dir));
@@ -805,7 +889,6 @@ PanelWindow { // qmllint disable uncreatable-type
             NotificationCenter {}
         }
         Component { id: energyPop; EnergyCard {} }
-        Component { id: appsPop; AppsPop { onLaunched: bar.pop = "" } }
         Component {
             id: tasksPop
             TaskList {
@@ -948,7 +1031,7 @@ PanelWindow { // qmllint disable uncreatable-type
                 anchors.leftMargin: 14
             }
 
-            // ── Le flocon : les outils et les applications ──
+            // ── Le flocon : il ouvre le lanceur (cf. launcher) ──
             Item {
                 id: logo
                 anchors.left: wsSep.right
@@ -964,7 +1047,7 @@ PanelWindow { // qmllint disable uncreatable-type
                     height: width
                     radius: width / 2
                     color: Theme.selectedFill
-                    opacity: bar.voiceOn || bar.pop === "apps" ? 1 : logoMa.containsMouse ? 0.6 : 0
+                    opacity: bar.voiceOn || results.on ? 1 : logoMa.containsMouse ? 0.6 : 0
                     Behavior on opacity { NumberAnimation { duration: 200 } }
                 }
 
@@ -1020,7 +1103,7 @@ PanelWindow { // qmllint disable uncreatable-type
                     anchors.margins: -6
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: bar.togglePop("apps", logo)
+                    onClicked: bar.toggleLauncher()
                 }
             }
 
@@ -1830,28 +1913,36 @@ PanelWindow { // qmllint disable uncreatable-type
             }
         }
 
-        // ── Les suggestions, au-dessus du champ ──────────────────
-        // Une ligne par suggestion : l'icône, le nom puis où il se trouve, et
-        // son type à droite. La meilleure est en bas, contre la barre, pour
-        // que ↑ y entre directement.
+        // ── Le lanceur, au-dessus du flocon et du champ ──────────
+        // Cf. launcher : les outils, les applications en grille, puis les
+        // autres résultats en lignes, la meilleure en bas, contre la barre.
+        // Une ligne : l'icône, le nom puis où il se trouve, et son type à
+        // droite.
         Item {
             id: results
 
             readonly property int rowH: 40
-            readonly property int maxRows: 8
-            readonly property int pad: 8
+            readonly property int maxRows: 6
+            readonly property int pad: 10
+            readonly property int cellH: 76
+            // Les rangées d'applications visibles d'un coup ; la grille
+            // défile au-delà.
+            readonly property int maxGridRows: bar.searching ? 2 : 4
+            readonly property int cols: Math.max(3, Math.floor((width - 2 * pad) / 112))
             // Seulement quand le champ a le clavier : le texte gardé après
-            // un geste ailleurs reste dans le champ, sans sa liste. Le pointeur
-            // dessus la retient, le temps d'un clic sur une suggestion (cliquer
-            // ici peut donner le clavier à cette autre surface).
-            readonly property bool on: bar.searching && bar.pop === "" && Search.results.length > 0
+            // un geste ailleurs reste dans le champ, sans le lanceur. Le
+            // pointeur dessus le retient, le temps d'un clic (cliquer ici
+            // peut donner le clavier à cette autre surface).
+            readonly property bool on: !bar.voiceOn && bar.pop === ""
                                        && (input.activeFocus || resultsHover.hovered)
+                                       && (bar.searching ? bar.nav.length > 0 || bar.shownTools.length > 0
+                                                         : bar.launcher)
 
             anchors.bottom: parent.bottom
             anchors.bottomMargin: bar.barH
-            x: field.x - 18
-            width: Math.min(680, field.width + 36)
-            height: Math.min(Search.results.length, maxRows) * rowH + 2 * pad
+            x: logo.x - 18
+            width: Math.min(720, field.x + field.width - logo.x + 36)
+            height: Math.min(launcherCol.implicitHeight + 2 * pad, bar.above - 20)
             Behavior on height { NumberAnimation { duration: 220; easing.type: Easing.OutQuint } }
 
             opacity: on ? 1 : 0
@@ -1867,168 +1958,309 @@ PanelWindow { // qmllint disable uncreatable-type
                 anchors.fill: parent
             }
 
-            ListView {
-                id: list
-                anchors.fill: parent
-                anchors.margins: results.pad
+            // La ligne retenue au clavier reste en vue, grille ou liste.
+            Connections {
+                target: bar
+                function onCurrentResultChanged() {
+                    if (!bar.currentResult)
+                        return;
+                    var g = bar.appResults.indexOf(bar.currentResult);
+                    if (g >= 0)
+                        appGrid.positionViewAtIndex(g, GridView.Contain);
+                    var l = bar.otherResults.indexOf(bar.currentResult);
+                    if (l >= 0)
+                        list.positionViewAtIndex(l, ListView.Contain);
+                }
+            }
 
-                model: Search.results
-                verticalLayoutDirection: ListView.BottomToTop
-                clip: true
-                boundsBehavior: Flickable.StopAtBounds
-                interactive: contentHeight > height
-                currentIndex: bar.selected
-                highlightFollowsCurrentItem: false
-                onCurrentIndexChanged: {
-                    if (currentIndex >= 0)
-                        positionViewAtIndex(currentIndex, ListView.Contain);
+            component Heading: Text {
+                font.family: bar.uiFont
+                font.pixelSize: 10
+                font.weight: Font.DemiBold
+                font.letterSpacing: 0.8
+                font.capitalization: Font.AllUppercase
+                color: Theme.textDim
+                leftPadding: 4
+            }
+
+            Column {
+                id: launcherCol
+                x: results.pad
+                y: results.pad
+                width: results.width - 2 * results.pad
+                spacing: 6
+
+                Heading {
+                    visible: bar.shownTools.length > 0
+                    text: I18n.tr("apps.tools")
+                }
+                Flow {
+                    visible: bar.shownTools.length > 0
+                    width: parent.width
+                    spacing: 4
+                    Repeater {
+                        model: bar.shownTools
+                        Rectangle {
+                            id: tool
+                            required property var modelData
+                            width: toolRow.implicitWidth + 18
+                            height: 30
+                            radius: Theme.radiusSmall
+                            color: toolMa.containsMouse ? Theme.hoverOverlay : Qt.alpha(Theme.textPrimary, 0.06)
+                            Row {
+                                id: toolRow
+                                anchors.centerIn: parent
+                                spacing: 7
+                                NixIcon {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    iconSize: 15
+                                    source: "../assets/ui/" + tool.modelData.icon
+                                    color: toolMa.containsMouse ? Theme.accentColor : Theme.iconColor
+                                }
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: tool.modelData.label
+                                    font.family: bar.uiFont
+                                    font.pixelSize: 12
+                                    color: Theme.textPrimary
+                                }
+                            }
+                            MouseArea {
+                                id: toolMa
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: bar.openTool(tool.modelData)
+                            }
+                        }
+                    }
                 }
 
-                delegate: Item {
-                    id: row
-                    required property var modelData
-                    required property int index
-                    width: list.width
-                    height: results.rowH
-
-                    readonly property bool current: bar.selected === row.index
-                    readonly property string icon: bar.iconFor(row.modelData)
-                    readonly property bool glyph: row.icon.indexOf(bar.glyphDir) === 0
-                    // Un réglage se règle sur place : son contrôle prend la
-                    // place de la pastille du type. Les écrans, eux, passent
-                    // au suivant d'un clic.
-                    readonly property string control: bar.controlFor(row.modelData)
-                    readonly property bool hasControl: row.control !== "" && row.control !== "screens"
-
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: Theme.radiusSmall
-                        color: row.current ? Theme.selectedFill
-                                           : rowMa.containsMouse ? Theme.hoverOverlay : "transparent"
-                        Behavior on color { ColorAnimation { duration: 120 } }
-                    }
-
-                    Item {
-                        id: rowIcon
-                        anchors.left: parent.left
-                        anchors.leftMargin: 10
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: 24
-                        height: 24
-
-                        Image {
-                            id: rowImage
-                            anchors.fill: parent
-                            source: row.glyph ? "" : row.icon
-                            sourceSize.width: 48
-                            sourceSize.height: 48
-                            fillMode: row.icon.startsWith("file://") ? Image.PreserveAspectCrop
-                                                                     : Image.PreserveAspectFit
-                            asynchronous: true
-                            smooth: true
-                            visible: !row.glyph && row.icon.length > 0 && rowImage.status !== Image.Error
-                        }
-
-                        // Sinon, une pastille de la teinte du type : l'icône
-                        // de assets/icons, ou à défaut l'initiale.
+                Heading {
+                    visible: bar.appResults.length > 0
+                    topPadding: bar.shownTools.length > 0 ? 4 : 0
+                    text: I18n.tr("apps.apps")
+                }
+                // Les applications, en grille.
+                GridView {
+                    id: appGrid
+                    visible: bar.appResults.length > 0
+                    width: parent.width
+                    height: Math.min(Math.ceil(bar.appResults.length / results.cols), results.maxGridRows)
+                            * results.cellH
+                    cellWidth: Math.floor(width / results.cols)
+                    cellHeight: results.cellH
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    interactive: contentHeight > height
+                    model: bar.appResults
+                    delegate: Item {
+                        id: app
+                        required property var modelData
+                        readonly property bool current: bar.currentResult === app.modelData
+                        width: appGrid.cellWidth
+                        height: appGrid.cellHeight
                         Rectangle {
                             anchors.fill: parent
-                            radius: 7
-                            visible: !rowImage.visible
-                            color: Qt.alpha(row.modelData.tone, 0.2)
-
-                            NixIcon {
-                                anchors.centerIn: parent
-                                visible: row.glyph
-                                iconSize: 14
-                                source: row.glyph ? row.icon : ""
-                                color: row.modelData.tone
+                            anchors.margins: 2
+                            radius: Theme.radiusSmall
+                            color: app.current ? Theme.selectedFill
+                                               : appMa.containsMouse ? Theme.hoverOverlay : "transparent"
+                            Behavior on color { ColorAnimation { duration: 120 } }
+                        }
+                        Column {
+                            anchors.centerIn: parent
+                            width: parent.width - 8
+                            spacing: 6
+                            Image {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                width: 32
+                                height: 32
+                                sourceSize.width: 64
+                                sourceSize.height: 64
+                                source: bar.iconFor(app.modelData) || Theme.icon("application-x-executable", true)
+                                fillMode: Image.PreserveAspectFit
+                                asynchronous: true
                             }
                             Text {
-                                anchors.centerIn: parent
-                                visible: !row.glyph
-                                text: row.modelData.title.substring(0, 1).toUpperCase()
-                                color: row.modelData.tone
+                                width: parent.width
+                                horizontalAlignment: Text.AlignHCenter
+                                text: app.modelData.title
+                                elide: Text.ElideRight
                                 font.family: bar.uiFont
-                                font.pixelSize: 12
-                                font.weight: Font.DemiBold
+                                font.pixelSize: 11
+                                color: Theme.textPrimary
                             }
                         }
-                    }
-
-                    // Le type ; sur la ligne retenue, ce qu'Entrée fera.
-                    Rectangle {
-                        id: kind
-                        visible: !row.hasControl
-                        anchors.right: parent.right
-                        anchors.rightMargin: 8
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: kindLabel.implicitWidth + 16
-                        height: 22
-                        radius: 6
-                        color: row.current ? "transparent" : Theme.hoverOverlay
-
-                        Text {
-                            id: kindLabel
-                            anchors.centerIn: parent
-                            text: row.current ? "↵ " + (row.modelData.type === "task" ? I18n.tr("common.add") : I18n.tr("common.open"))
-                                              : bar.typeLabels[row.modelData.type] || row.modelData.type
-                            font.family: bar.uiFont
-                            font.pixelSize: 10
-                            font.weight: Font.Medium
-                            color: row.current ? Theme.textPrimary : Theme.textSecondary
+                        MouseArea {
+                            id: appMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: bar.activateResult(app.modelData)
                         }
                     }
+                }
 
-                    // Le nom, puis où il se trouve, en plus discret.
-                    Row {
-                        anchors.left: rowIcon.right
-                        anchors.leftMargin: 14
-                        anchors.right: row.hasControl ? controlSlot.left : kind.left
-                        anchors.rightMargin: 10
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 8
+                // Le reste : fichiers, réglages, web…, la meilleure en bas.
+                ListView {
+                    id: list
+                    visible: bar.otherResults.length > 0
+                    width: parent.width
+                    height: Math.min(bar.otherResults.length, results.maxRows) * results.rowH
 
-                        Text {
-                            id: rowTitle
-                            width: Math.min(implicitWidth, parent.width)
-                            text: row.modelData.title
-                            elide: Text.ElideRight
-                            font.family: bar.uiFont
-                            font.pixelSize: 13
-                            font.weight: Font.Medium
-                            color: Theme.textPrimary
+                    model: bar.otherResults
+                    verticalLayoutDirection: ListView.BottomToTop
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    interactive: contentHeight > height
+
+                    delegate: Item {
+                        id: row
+                        required property var modelData
+                        required property int index
+                        width: list.width
+                        height: results.rowH
+
+                        readonly property bool current: bar.currentResult === row.modelData
+                        readonly property string icon: bar.iconFor(row.modelData)
+                        readonly property bool glyph: row.icon.indexOf(bar.glyphDir) === 0
+                        // Un réglage se règle sur place : son contrôle prend la
+                        // place de la pastille du type. Les écrans, eux, passent
+                        // au suivant d'un clic.
+                        readonly property string control: bar.controlFor(row.modelData)
+                        readonly property bool hasControl: row.control !== "" && row.control !== "screens"
+
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: Theme.radiusSmall
+                            color: row.current ? Theme.selectedFill
+                                               : rowMa.containsMouse ? Theme.hoverOverlay : "transparent"
+                            Behavior on color { ColorAnimation { duration: 120 } }
                         }
-                        Text {
-                            width: Math.max(0, parent.width - rowTitle.width - parent.spacing)
-                            anchors.baseline: rowTitle.baseline
-                            text: row.hasControl ? "" : row.modelData.subtitle || ""
-                            elide: Text.ElideMiddle
-                            font.family: bar.uiFont
-                            font.pixelSize: 11
-                            color: Theme.textSecondary
+
+                        Item {
+                            id: rowIcon
+                            anchors.left: parent.left
+                            anchors.leftMargin: 10
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 24
+                            height: 24
+
+                            Image {
+                                id: rowImage
+                                anchors.fill: parent
+                                source: row.glyph ? "" : row.icon
+                                sourceSize.width: 48
+                                sourceSize.height: 48
+                                fillMode: row.icon.startsWith("file://") ? Image.PreserveAspectCrop
+                                                                         : Image.PreserveAspectFit
+                                asynchronous: true
+                                smooth: true
+                                visible: !row.glyph && row.icon.length > 0 && rowImage.status !== Image.Error
+                            }
+
+                            // Sinon, une pastille de la teinte du type : l'icône
+                            // de assets/icons, ou à défaut l'initiale.
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: 7
+                                visible: !rowImage.visible
+                                color: Qt.alpha(row.modelData.tone, 0.2)
+
+                                NixIcon {
+                                    anchors.centerIn: parent
+                                    visible: row.glyph
+                                    iconSize: 14
+                                    source: row.glyph ? row.icon : ""
+                                    color: row.modelData.tone
+                                }
+                                Text {
+                                    anchors.centerIn: parent
+                                    visible: !row.glyph
+                                    text: row.modelData.title.substring(0, 1).toUpperCase()
+                                    color: row.modelData.tone
+                                    font.family: bar.uiFont
+                                    font.pixelSize: 12
+                                    font.weight: Font.DemiBold
+                                }
+                            }
                         }
-                    }
 
-                    MouseArea {
-                        id: rowMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: bar.activateResult(row.modelData)
-                    }
+                        // Le type ; sur la ligne retenue, ce qu'Entrée fera.
+                        Rectangle {
+                            id: kind
+                            visible: !row.hasControl
+                            anchors.right: parent.right
+                            anchors.rightMargin: 8
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: kindLabel.implicitWidth + 16
+                            height: 22
+                            radius: 6
+                            color: row.current ? "transparent" : Theme.hoverOverlay
 
-                    // Après la zone de clic de la ligne : le contrôle reçoit
-                    // les siens en premier.
-                    Loader {
-                        id: controlSlot
-                        anchors.right: parent.right
-                        anchors.rightMargin: 14
-                        anchors.verticalCenter: parent.verticalCenter
-                        active: row.hasControl
-                        sourceComponent: row.control === "theme" ? themeControl
-                                       : row.control === "volume" ? volumeControl
-                                       : row.control === "accent" ? accentControl : null
+                            Text {
+                                id: kindLabel
+                                anchors.centerIn: parent
+                                text: row.current ? "↵ " + (row.modelData.type === "task" ? I18n.tr("common.add") : I18n.tr("common.open"))
+                                                  : bar.typeLabels[row.modelData.type] || row.modelData.type
+                                font.family: bar.uiFont
+                                font.pixelSize: 10
+                                font.weight: Font.Medium
+                                color: row.current ? Theme.textPrimary : Theme.textSecondary
+                            }
+                        }
+
+                        // Le nom, puis où il se trouve, en plus discret.
+                        Row {
+                            anchors.left: rowIcon.right
+                            anchors.leftMargin: 14
+                            anchors.right: row.hasControl ? controlSlot.left : kind.left
+                            anchors.rightMargin: 10
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 8
+
+                            Text {
+                                id: rowTitle
+                                width: Math.min(implicitWidth, parent.width)
+                                text: row.modelData.title
+                                elide: Text.ElideRight
+                                font.family: bar.uiFont
+                                font.pixelSize: 13
+                                font.weight: Font.Medium
+                                color: Theme.textPrimary
+                            }
+                            Text {
+                                width: Math.max(0, parent.width - rowTitle.width - parent.spacing)
+                                anchors.baseline: rowTitle.baseline
+                                text: row.hasControl ? "" : row.modelData.subtitle || ""
+                                elide: Text.ElideMiddle
+                                font.family: bar.uiFont
+                                font.pixelSize: 11
+                                color: Theme.textSecondary
+                            }
+                        }
+
+                        MouseArea {
+                            id: rowMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: bar.activateResult(row.modelData)
+                        }
+
+                        // Après la zone de clic de la ligne : le contrôle reçoit
+                        // les siens en premier.
+                        Loader {
+                            id: controlSlot
+                            anchors.right: parent.right
+                            anchors.rightMargin: 14
+                            anchors.verticalCenter: parent.verticalCenter
+                            active: row.hasControl
+                            sourceComponent: row.control === "theme" ? themeControl
+                                           : row.control === "volume" ? volumeControl
+                                           : row.control === "accent" ? accentControl : null
+                        }
                     }
                 }
             }
@@ -2208,7 +2440,7 @@ PanelWindow { // qmllint disable uncreatable-type
                     sourceComponent: ({
                         "wifi": wifiPop, "bluetooth": btPop, "sound": soundPop,
                         "mic": micPop, "notifications": notifPop,
-                        "energy": energyPop, "tasks": tasksPop, "apps": appsPop
+                        "energy": energyPop, "tasks": tasksPop
                     })[popHost.shown] || null
                 }
             }

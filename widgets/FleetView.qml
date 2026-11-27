@@ -6,11 +6,10 @@ import Quickshell.Io
 import "../services"
 
 // La vue Système du panneau de droite : toute la flotte, une carte par
-// machine. Celle-ci d'abord (hwstats_watch, deux fois par seconde), puis
-// celles du tailnet (servers_watch : node_exporter, sinon ssh, chaque seconde). Sur
+// machine, celle-ci d'abord, toutes relevées de la même façon par leur
+// node_exporter (servers_watch, chaque seconde ; celle-ci sur 127.0.0.1). Sur
 // chaque carte : le processeur, la mémoire et la carte graphique ; puis ses
-// disques physiques, un par un, remplis à l'accent ; puis ses services
-// d'IA (ComfyUI, Ollama), actifs ou non, et ce qu'ils font.
+// disques physiques, un par un, remplis à l'accent.
 //
 //   ╭ ● zola  ce PC                                   ╮
 //   │ CPU 4 %      RAM 31 %      GPU —               │
@@ -25,13 +24,20 @@ Flickable {
     clip: true
     boundsBehavior: Flickable.StopAtBounds
 
-    // ── Cette machine ────────────────────────────────────────────
-    property var hw: null
-    // { hostname, drives, services }, venu avec les serveurs.
-    property var local: null
-    // ── Les autres ───────────────────────────────────────────────
+    // Les machines Linux du tailnet, celle-ci d'abord (`local`).
     property var servers: []
     property bool serversLoaded: false
+    // Les cartes suivent les machines par leur nom : un relevé met à jour
+    // celles qui restent sans les recréer (cf. KeyedModel). Le survol, le
+    // focus et la liste des services dépliée tiennent.
+    property var byName: ({})
+    KeyedModel { id: cards }
+    function setServers(list) {
+        var map = {};
+        list.forEach(s => map[s.name] = s);
+        root.servers = list;
+        cards.sync(list.map(s => s.name), () => root.byName = map);
+    }
 
     // Les dernières valeurs du processeur, par machine, pour la courbe.
     property var history: ({})
@@ -45,23 +51,6 @@ Flickable {
     }
 
     Socket {
-        id: hwSock
-        path: Anna.socketPath
-        parser: SplitParser {
-            onRead: (line) => {
-                try {
-                    var s = JSON.parse(line);
-                    if (s.cpu_usage === undefined)
-                        return;
-                    root.hw = s;
-                    root.remember("", s.cpu_usage);
-                } catch (e) { /* ligne partielle */ }
-            }
-        }
-        onConnectedChanged: if (connected) write('{"cmd":"hwstats_watch","interval_ms":1000}\n')
-    }
-
-    Socket {
         id: serversSock
         path: Anna.socketPath
         parser: SplitParser {
@@ -70,8 +59,7 @@ Flickable {
                     var msg = JSON.parse(line);
                     if (msg.servers === undefined)
                         return;
-                    root.servers = msg.servers.filter(s => s.os === "linux");
-                    root.local = msg.local || null;
+                    root.setServers(msg.servers.filter(s => s.os === "linux"));
                     root.serversLoaded = true;
                     msg.servers.forEach(s => {
                         if (s.measured && !s.error)
@@ -90,13 +78,11 @@ Flickable {
         repeat: true
         triggeredOnStart: true
         onTriggered: {
-            if (!hwSock.connected)
-                hwSock.connected = true;
             if (!serversSock.connected)
                 serversSock.connected = true;
         }
     }
-    onVisibleChanged: if (!visible) { hwSock.connected = false; serversSock.connected = false; }
+    onVisibleChanged: if (!visible) serversSock.connected = false
 
     // « actif 3 j », « actif 5 h », « actif 12 min ».
     function uptime(s) {
@@ -114,18 +100,37 @@ Flickable {
                           : I18n.tr("unit.gb", { n: Math.round(gb) });
     }
 
+    // 230 Mo, 1,4 Go : la mémoire d'un conteneur.
+    function mem(b) {
+        return b >= 1e9 ? I18n.tr("unit.gb", { n: (b / 1e9).toLocaleString(I18n.locale, "f", 1) })
+                        : I18n.tr("unit.mb", { n: Math.round(b / 1e6) });
+    }
+
+    // « 21 nov. 2026 » d'une date « 2026-11-21 ».
+    function day(iso) {
+        var p = (iso || "").split("-").map(Number);
+        return p.length === 3 ? new Date(p[0], p[1] - 1, p[2]).toLocaleDateString(I18n.locale, "d MMM yyyy") : "";
+    }
+
+    function escapeHtml(s) {
+        return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
     function act(args) {
         Quickshell.execDetached(["anna", "servers"].concat(args));
     }
 
     // Une carte de machine, la même pour celle-ci et pour les autres.
     // `m` : { name, online, error, uptime, cpu, temp, ramUsed, ramTotal,
-    //         gpu: { asleep, usage, used, total } | null, drives, services,
+    //         gpu: { asleep, usage, used, total } | null, drives, osName, nixpkgsRev, nixpkgsDate,
+    //         onBattery, watts, containers, failed: ["backup.service"], systemd,
     //         host, canWake, lastSeen, remote }
     component MachineCard: Rectangle {
         id: card
         required property var m
         readonly property bool up: card.m.online && !card.m.error
+        // La liste des services en échec, dépliée par leur bouton.
+        property bool showFailed: false
 
         Layout.fillWidth: true
         implicitHeight: cardCol.implicitHeight + 26
@@ -169,18 +174,141 @@ Flickable {
                     font.pixelSize: 12
                     color: card.m.error ? Theme.colorWarning : Theme.textSecondary
                 }
-                // Une session dans le terminal, et l'alimentation.
+                // Ses services systemd : une pastille verte à zéro, rouge
+                // avec le nombre en échec, qui déplie leur liste sous
+                // l'en-tête. Cachée sans le collecteur systemd (inconnu).
+                Rectangle {
+                    id: failedPill
+                    readonly property int n: card.m.failed.length
+                    readonly property color tone: n > 0 ? Theme.colorDanger : Theme.colorSuccess
+                    visible: card.up && card.m.systemd
+                    implicitWidth: Math.max(implicitHeight, failedText.implicitWidth + 14)
+                    implicitHeight: 20
+                    radius: implicitHeight / 2
+                    color: Qt.alpha(tone, failedMa.containsMouse && n > 0 ? 0.32 : 0.2)
+                    Behavior on color { ColorAnimation { duration: 180 } }
+                    Text {
+                        id: failedText
+                        anchors.centerIn: parent
+                        text: failedPill.n
+                        font.family: "Inter"
+                        font.pixelSize: 11
+                        font.weight: Font.Bold
+                        font.features: { "tnum": 1 }
+                        color: failedPill.tone
+                    }
+                    MouseArea {
+                        id: failedMa
+                        anchors.fill: parent
+                        enabled: failedPill.n > 0
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: card.showFailed = !card.showFailed
+                    }
+                }
+                // Une session dans le terminal, et l'alimentation : en ssh
+                // pour une autre machine, ici même pour celle-ci.
                 BarButton {
-                    visible: card.m.remote && card.up
+                    visible: card.up
                     size: 26
                     icon: "terminal.svg"
-                    onClicked: DefaultApps.runInTerminal("", ["ssh", card.m.host])
+                    onClicked: {
+                        if (card.m.remote)
+                            DefaultApps.runInTerminal("", ["ssh", card.m.host]);
+                        else
+                            DefaultApps.openInTerminal(Quickshell.env("HOME") || "");
+                    }
                 }
                 BarButton {
-                    visible: card.m.remote && card.up
+                    visible: card.up
                     size: 26
                     icon: "power.svg"
                     onClicked: powerMenu.visible = !powerMenu.visible
+                }
+            }
+
+            // ── Le système et ce qu'il consomme ──
+            // « NixOS 26.11 (Zokor) · nixpkgs 2786a2a · 21 nov. 2026 », et à
+            // droite les watts : la batterie quand elle se décharge (toute la
+            // machine), sinon le processeur (RAPL).
+            RowLayout {
+                visible: card.up && (card.m.osName !== "" || card.m.watts >= 0)
+                Layout.fillWidth: true
+                Layout.topMargin: -6
+                spacing: 8
+                Text {
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                    text: [card.m.osName].concat(card.m.nixpkgsRev !== ""
+                              ? [I18n.tr("fleet.nixpkgs", { rev: card.m.nixpkgsRev }), root.day(card.m.nixpkgsDate)]
+                              : []).filter(x => x).join("  ·  ")
+                    font.family: "Inter"
+                    font.pixelSize: 11
+                    color: Theme.textDim
+                }
+                Text {
+                    visible: card.m.watts >= 0
+                    text: I18n.tr(card.m.onBattery ? "fleet.wattsBattery" : "fleet.wattsCpu",
+                                  { n: Math.round(card.m.watts) })
+                    font.family: "Inter"
+                    font.pixelSize: 11
+                    font.features: { "tnum": 1 }
+                    color: Theme.textSecondary
+                }
+            }
+
+            // ── Les services en échec ──
+            //   ● backup.service
+            // Un clic ouvre son journal (depuis le démarrage) dans le terminal.
+            ColumnLayout {
+                visible: card.up && card.showFailed && card.m.failed.length > 0
+                Layout.fillWidth: true
+                spacing: 6
+
+                Text {
+                    text: I18n.tr("fleet.failed")
+                    font.family: "Inter"
+                    font.pixelSize: 10
+                    font.weight: Font.DemiBold
+                    font.letterSpacing: 0.8
+                    font.capitalization: Font.AllUppercase
+                    color: Theme.colorDanger
+                }
+
+                Repeater {
+                    model: card.m.failed
+
+                    RowLayout {
+                        id: unit
+                        required property var modelData
+                        Layout.fillWidth: true
+                        spacing: 8
+                        HoverHandler {
+                            id: unitHover
+                            cursorShape: Qt.PointingHandCursor
+                        }
+                        TapHandler {
+                            onTapped: {
+                                var argv = ["journalctl", "-b", "-e", "-u", unit.modelData];
+                                DefaultApps.runInTerminal("", card.m.remote
+                                    ? ["ssh", "-t", card.m.host].concat(argv) : argv);
+                            }
+                        }
+                        Rectangle {
+                            implicitWidth: 6
+                            implicitHeight: 6
+                            radius: 3
+                            color: Theme.colorDanger
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            text: unit.modelData
+                            font.family: "Inter"
+                            font.pixelSize: 12
+                            color: unitHover.hovered ? Theme.accentColor : Theme.textPrimary
+                        }
+                    }
                 }
             }
 
@@ -215,7 +343,10 @@ Flickable {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                root.act([pw.modelData.a, card.m.name]);
+                                if (card.m.remote)
+                                    root.act([pw.modelData.a, card.m.name]);
+                                else
+                                    Quickshell.execDetached(["systemctl", pw.modelData.a === "off" ? "poweroff" : "reboot"]);
                                 powerMenu.visible = false;
                             }
                         }
@@ -258,7 +389,7 @@ Flickable {
                     label: "CPU"
                     value: card.m.cpu
                     detail: card.m.temp > 0 ? card.m.temp + " °C" : ""
-                    curve: root.history[card.m.remote ? card.m.name : ""] || []
+                    curve: root.history[card.m.name] || []
                     tone: Theme.colorCoral
                 }
                 Metric {
@@ -272,13 +403,16 @@ Flickable {
                     value: !card.m.gpu || card.m.gpu.asleep ? -1 : card.m.gpu.usage
                     detail: !card.m.gpu ? I18n.tr("stats.notDetected")
                           : card.m.gpu.asleep ? I18n.tr("stats.asleep")
-                          : card.m.gpu.total > 0 ? root.bytes(card.m.gpu.used) + " / " + root.bytes(card.m.gpu.total) : ""
+                          : [card.m.gpu.total > 0 ? root.bytes(card.m.gpu.used) + " / " + root.bytes(card.m.gpu.total) : "",
+                             card.m.gpu.temp > 0 ? card.m.gpu.temp + " °C" : ""].filter(x => x).join(" · ")
                     tone: Theme.accentColor
                     hot: value >= 80
                 }
             }
 
-            // ── Les disques physiques ──
+            // ── Les disques physiques : les mêmes cases que dans l'Explorer ──
+            // (DiskTiles). Un clic le montre dans l'Explorer, sur sa machine
+            // (montée au besoin) ; un disque amovible d'ici s'éjecte.
             ColumnLayout {
                 visible: card.up && card.m.drives.length > 0
                 Layout.fillWidth: true
@@ -286,114 +420,79 @@ Flickable {
 
                 Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Theme.dividerColor }
 
-                Repeater {
-                    model: card.m.drives
+                DiskTiles {
+                    id: tiles
+                    Layout.fillWidth: true
+                    disks: Disks.fromDrives(card.m.drives, card.m.remote ? card.m.name : "",
+                                            card.m.host || "", card.m.name, false)
+                    running: root.visible
+                    onOpened: (d) => Widgets.explorerShowDisk(d.machine, d.host, d.main)
+                    onOpenedHome: (d, path) => Widgets.explorerShowDisk(d.machine, d.host, path)
+                }
 
-                    ColumnLayout {
-                        id: drive
-                        required property var modelData
-                        readonly property real pct: drive.modelData.fs_size > 0
-                                                    ? drive.modelData.fs_used / drive.modelData.fs_size : 0
-                        Layout.fillWidth: true
-                        spacing: 5
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 8
-                            NixIcon {
-                                iconSize: 15
-                                source: "../assets/ui/disk.svg"
-                                color: Theme.textSecondary
-                            }
-                            Text {
-                                Layout.fillWidth: true
-                                elide: Text.ElideRight
-                                textFormat: Text.StyledText
-                                text: drive.modelData.model + "  <font color='" + Theme.textDim + "'>"
-                                      + [drive.modelData.kind].concat(drive.modelData.mounts.slice(0, 1)).join(" · ")
-                                      + "</font>"
-                                font.family: "Inter"
-                                font.pixelSize: 12
-                                color: Theme.textPrimary
-                            }
-                            Text {
-                                text: drive.modelData.fs_size > 0
-                                      ? root.bytes(drive.modelData.fs_used) + " / " + root.bytes(drive.modelData.fs_size)
-                                      : root.bytes(drive.modelData.size)
-                                font.family: "Inter"
-                                font.pixelSize: 11
-                                font.features: { "tnum": 1 }
-                                color: Theme.textDim
-                            }
-                        }
-                        Rectangle {
-                            Layout.fillWidth: true
-                            implicitHeight: 6
-                            radius: 3
-                            color: Theme.dividerColor
-                            Rectangle {
-                                width: parent.width * drive.pct
-                                height: parent.height
-                                radius: 3
-                                // Presque plein : l'alerte plutôt que l'accent.
-                                color: drive.pct >= 0.9 ? Theme.colorDanger : Theme.accentColor
-                            }
-                        }
-                    }
+                // Une éjection ratée sur cette machine : pourquoi (un clic l'efface).
+                Text {
+                    Layout.fillWidth: true
+                    visible: !card.m.remote && Disks.error !== ""
+                    text: Disks.error
+                    wrapMode: Text.Wrap
+                    font.family: "Inter"
+                    font.pixelSize: 11
+                    color: Theme.colorDanger
+                    TapHandler { onTapped: Disks.error = "" }
                 }
             }
 
-            // ── Les services d'IA ──
-            Flow {
-                visible: card.up && card.m.services.length > 0
+            // ── Les conteneurs Docker (cAdvisor), les plus actifs d'abord ──
+            //   ● db       postgres:16              12 %   230 Mo
+            ColumnLayout {
+                visible: card.up && card.m.containers.length > 0
                 Layout.fillWidth: true
                 spacing: 6
 
+                Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: Theme.dividerColor }
+
+                Text {
+                    text: I18n.tr("fleet.containers")
+                    font.family: "Inter"
+                    font.pixelSize: 10
+                    font.weight: Font.DemiBold
+                    font.letterSpacing: 0.8
+                    font.capitalization: Font.AllUppercase
+                    color: Theme.textDim
+                }
+
                 Repeater {
-                    model: card.m.services
+                    model: card.m.containers
 
-                    Rectangle {
-                        id: svc
+                    RowLayout {
+                        id: ctr
                         required property var modelData
-                        readonly property bool active: svc.modelData.state === "active"
-                        readonly property string what: svc.modelData.name === "comfyui"
-                            ? (svc.modelData.queue > 0 ? I18n.tr("fleet.queue", { n: svc.modelData.queue }) : "")
-                            : svc.modelData.models.join(", ")
-
-                        width: svcRow.implicitWidth + 16
-                        height: 26
-                        radius: 7
-                        color: Theme.bgDeep
-
-                        Row {
-                            id: svcRow
-                            anchors.centerIn: parent
-                            spacing: 6
-                            Rectangle {
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: 6
-                                height: 6
-                                radius: 3
-                                color: svc.active ? Theme.colorSuccess
-                                     : svc.modelData.state === "failed" ? Theme.colorDanger : Theme.textDim
-                            }
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: svc.modelData.name === "comfyui" ? "ComfyUI" : "Ollama"
-                                font.family: "Inter"
-                                font.pixelSize: 12
-                                font.weight: Font.Medium
-                                color: svc.active ? Theme.textPrimary : Theme.textSecondary
-                            }
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: (svc.active ? I18n.tr("fleet.active") : svc.modelData.state === "failed"
-                                       ? I18n.tr("fleet.failed") : I18n.tr("fleet.stopped"))
-                                      + (svc.what !== "" ? " · " + svc.what : "")
-                                font.family: "Inter"
-                                font.pixelSize: 11
-                                color: Theme.textDim
-                            }
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Rectangle {
+                            implicitWidth: 6
+                            implicitHeight: 6
+                            radius: 3
+                            color: Theme.colorSuccess
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            textFormat: Text.StyledText
+                            text: root.escapeHtml(ctr.modelData.name) + "  <font color='" + Theme.textDim + "'>"
+                                  + root.escapeHtml(ctr.modelData.image) + "</font>"
+                            font.family: "Inter"
+                            font.pixelSize: 12
+                            color: Theme.textPrimary
+                        }
+                        Text {
+                            text: (ctr.modelData.cpu >= 0 ? I18n.tr("common.percent", { n: ctr.modelData.cpu }) + "  " : "")
+                                  + root.mem(ctr.modelData.mem)
+                            font.family: "Inter"
+                            font.pixelSize: 11
+                            font.features: { "tnum": 1 }
+                            color: Theme.textDim
                         }
                     }
                 }
@@ -512,8 +611,8 @@ Flickable {
             Text {
                 visible: root.serversLoaded
                 text: I18n.tr("fleet.count", {
-                    n: root.servers.length + 1,
-                    up: root.servers.filter(s => s.online).length + 1
+                    n: root.servers.length,
+                    up: root.servers.filter(s => s.online).length
                 })
                 font.family: "Inter"
                 font.pixelSize: 11
@@ -521,36 +620,16 @@ Flickable {
             }
         }
 
-        // Cette machine.
-        MachineCard {
-            m: ({
-                name: root.local && root.local.hostname ? root.local.hostname : "localhost",
-                remote: false,
-                online: true,
-                error: "",
-                uptime: 0,
-                cpu: root.hw ? root.hw.cpu_usage : -1,
-                temp: root.hw ? root.hw.cpu_temp : 0,
-                ramUsed: root.hw ? root.hw.ram_used : 0,
-                ramTotal: root.hw ? root.hw.ram_total : 0,
-                gpu: root.hw && root.hw.gpu_present
-                     ? { asleep: root.hw.gpu_asleep, usage: root.hw.gpu_usage,
-                         used: root.hw.gpu_mem_used_mib * 1048576, total: root.hw.gpu_mem_total_mib * 1048576 }
-                     : (root.hw && root.hw.gpu_asleep ? { asleep: true, usage: 0, used: 0, total: 0 } : null),
-                drives: root.local ? root.local.drives : [],
-                services: root.local ? root.local.services : []
-            })
-        }
-
-        // Les autres, dans l'ordre du tailnet.
+        // Celle-ci, puis les autres dans l'ordre du tailnet.
         Repeater {
-            model: root.servers
+            model: cards
 
             MachineCard {
-                required property var modelData
+                required property string key
+                readonly property var modelData: root.byName[key] || ({ name: key })
                 m: ({
                     name: modelData.name,
-                    remote: true,
+                    remote: !modelData.local,
                     host: modelData.host,
                     online: modelData.online,
                     error: modelData.error,
@@ -561,9 +640,20 @@ Flickable {
                     ramUsed: modelData.ram_used,
                     ramTotal: modelData.ram_total,
                     gpu: modelData.gpu ? { asleep: modelData.gpu.asleep, usage: modelData.gpu.usage,
-                                           used: modelData.gpu.mem_used, total: modelData.gpu.mem_total } : null,
+                                           used: modelData.gpu.mem_used, total: modelData.gpu.mem_total,
+                                           temp: modelData.gpu.temp } : null,
                     drives: modelData.drives || [],
-                    services: modelData.services || []
+                    osName: modelData.os_name || "",
+                    nixpkgsRev: modelData.nixpkgs_rev || "",
+                    nixpkgsDate: modelData.nixpkgs_date || "",
+                    // La batterie qui se décharge dit toute la machine ; sinon
+                    // le processeur seul.
+                    onBattery: modelData.battery_watts >= 0,
+                    watts: modelData.battery_watts >= 0 ? modelData.battery_watts
+                         : modelData.cpu_watts !== undefined ? modelData.cpu_watts : -1,
+                    containers: modelData.containers || [],
+                    failed: modelData.failed || [],
+                    systemd: modelData.systemd === true
                 })
             }
         }
