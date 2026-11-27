@@ -18,7 +18,8 @@ import "../services"
 //   │                        │ SANDISK    ⏏ │
 //   ╰────────────────────────┴──────────────╯
 //
-// En haut à gauche son nom, précédé d'une pastille s'il faut le surveiller
+// En haut à gauche l'icône de son type (NVMe, SSD, HDD, USB) et son nom,
+// précédés d'une pastille s'il faut le surveiller
 // (orange) ou si SMART le juge défaillant (rouge, et la case cerclée de
 // rouge) ; en bas l'occupé sur le total, et au survol le pourcentage, sa
 // température et son usure ; le pourcentage en grand quand la case est
@@ -48,7 +49,7 @@ Item {
     property string connecting: ""
 
     // La hauteur d'un bloc, sans l'intitulé de sa machine.
-    property int blockHeight: 52
+    property int blockHeight: 40
     property int minCellWidth: 96
     // Le poids minimal d'un disque, rapporté au plus gros de sa rangée.
     property real floor: 0.35
@@ -61,7 +62,7 @@ Item {
     // Le bouton d'un dossier personnel : son chemin sur la machine du disque.
     signal openedHome(var disk, string path)
 
-    readonly property int headerH: root.showHost ? 18 : 0
+    readonly property int headerH: root.showHost ? 16 : 0
     readonly property string currentKey: root.current >= 0 && root.current < (root.disks || []).length
                                          ? root.keyOf(root.disks[root.current]) : ""
 
@@ -79,6 +80,15 @@ Item {
         var fmt = v => i === 0 ? String(Math.round(v)) : v.toLocaleString(I18n.locale, "f", d.size / div < 10 ? 1 : 0);
         var total = I18n.tr(units[i], { n: fmt(d.size / div) });
         return d.mounted ? fmt(d.used / div) + " / " + total : total;
+    }
+
+    // L'icône de son type : une barrette M.2, un circuit, un disque dur, une
+    // prise USB.
+    function iconOf(kind) {
+        return kind === "NVMe" ? "../assets/icons/disk-nvme.svg"
+             : kind === "SSD" ? "../assets/icons/disk-ssd.svg"
+             : kind === "USB" ? "../assets/icons/disk-usb.svg"
+             : "../assets/icons/disk.svg";
     }
 
     // ── La mise en page ──────────────────────────────────────────
@@ -350,7 +360,9 @@ Item {
             property string homeHint: ""
             // Assez haute pour deux lignes, et pour le pourcentage en grand.
             readonly property bool roomy: disk.height >= 34
-            readonly property bool tall: disk.height >= 60 && disk.width >= 130
+            readonly property bool tall: disk.height >= 48 && disk.width >= 130
+            // La marge du haut et du bas : resserrée dans une case basse.
+            readonly property int pad: disk.height < 40 ? 4 : 6
             // Ce qu'occupent les boutons du coin droit.
             readonly property real corner: (disk.homes.length > 0 ? homesRow.width + 2 : 0)
                                          + (disk.ejectable ? 18 + 2 : 0)
@@ -447,7 +459,7 @@ Item {
                 // Placé par le calcul, pas par des ancres qui changeraient
                 // selon la hauteur (elles ne se défont pas toujours).
                 x: 8
-                y: disk.roomy ? 6 : Math.round((disk.height - title.height) / 2)
+                y: disk.roomy ? disk.pad : Math.round((disk.height - title.height) / 2)
                 spacing: 5
                 Rectangle {
                     visible: disk.health === "failing" || disk.health === "watch"
@@ -457,10 +469,17 @@ Item {
                     radius: 3
                     color: disk.failing ? Theme.colorDanger : Theme.colorWarning
                 }
+                // Son type, en icône.
+                NixIcon {
+                    anchors.verticalCenter: parent.verticalCenter
+                    iconSize: 11
+                    source: root.iconOf(disk.modelData.kind)
+                    color: Theme.textSecondary
+                }
                 Text {
-                    width: Math.min(implicitWidth, disk.width - 16 - disk.corner
-                                    - (disk.roomy ? 0 : bottom.width + 8)
-                                    - (disk.health === "failing" || disk.health === "watch" ? 11 : 0))
+                    width: Math.max(0, Math.min(implicitWidth, disk.width - 16 - disk.corner
+                                    - (disk.roomy ? 0 : bottom.width + 8) - 16
+                                    - (disk.health === "failing" || disk.health === "watch" ? 11 : 0)))
                     text: disk.modelData.label.toUpperCase()
                     elide: Text.ElideRight
                     font.family: "Inter"
@@ -477,7 +496,7 @@ Item {
                 id: bottom
                 visible: disk.width >= 60
                 x: disk.roomy ? 8 : disk.width - 8 - disk.corner - bottom.width
-                y: disk.roomy ? disk.height - 6 - bottom.height : Math.round((disk.height - bottom.height) / 2)
+                y: disk.roomy ? disk.height - disk.pad - bottom.height : Math.round((disk.height - bottom.height) / 2)
                 width: disk.roomy ? Math.min(implicitWidth, disk.width - 16 - (disk.tall ? big.width + 6 : 0))
                                   : Math.min(implicitWidth, (disk.width - 16 - disk.corner) / 2)
                 text: disk.bottomText

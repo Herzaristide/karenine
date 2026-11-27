@@ -2091,7 +2091,7 @@ Item {
         connecting: root.connecting
         // Vu de la machine du disque : le chemin sur le serveur.
         currentPath: root.remote ? root.remotePath(root.path) : root.path
-        blockHeight: 48
+        blockHeight: 34
         onOpened: (d) => root.openDisk(d)
         // Comme un clic sur le disque, mais vers ce dossier.
         onOpenedHome: (d, path) => root.openDisk(Object.assign({}, d, { main: path }))

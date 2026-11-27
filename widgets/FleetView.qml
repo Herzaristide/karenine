@@ -425,7 +425,7 @@ Flickable {
                     Layout.fillWidth: true
                     disks: Disks.fromDrives(card.m.drives, card.m.remote ? card.m.name : "",
                                             card.m.host || "", card.m.name, false)
-                    blockHeight: 76
+                    blockHeight: 50
                     onOpened: (d) => Widgets.explorerShowDisk(d.machine, d.host, d.main)
                     onOpenedHome: (d, path) => Widgets.explorerShowDisk(d.machine, d.host, path)
                 }

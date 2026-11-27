@@ -60,6 +60,9 @@ check         bold     check
 computer      regular  desktop
 server        regular  hard-drives
 disk          regular  hard-drive
+disk-nvme     regular  memory
+disk-ssd      regular  circuitry
+disk-usb      regular  usb
 
 # ── Le lecteur : pleines, comme des touches ──────────────────
 play          fill     play
