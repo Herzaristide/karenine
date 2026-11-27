@@ -107,8 +107,8 @@ Item {
     readonly property int sideW: root.compact ? 0 : root.placesW + 12
     readonly property int headerH: 34
     readonly property int footerH: 30
-    // Les disques, en haut sur toute la largeur (DiskTiles) : une rangée,
-    // plusieurs s'ils sont trop nombreux pour tenir.
+    // Les disques, en haut sur toute la largeur (DiskTiles) : un bloc par
+    // machine, plusieurs rangées si elles sont trop nombreuses pour tenir.
     readonly property int switchH: Math.max(46, diskBar.implicitHeight)
 
     // Un chemin en URL « file:// », chaque segment encodé.
@@ -2079,9 +2079,9 @@ Item {
     }
 
     // ── Les disques de toutes les machines, en haut ──────────────
-    // Les mêmes cases que dans la flotte (DiskTiles), sur toute la largeur :
-    // un clic va à sa racine, sur sa machine (montée au besoin) ; celui où
-    // l'on est est cerclé d'accent.
+    // Le même treemap que dans la flotte (DiskTiles), un bloc par machine
+    // sur toute la largeur : un clic va à sa racine, sur sa machine (montée
+    // au besoin) ; celui où l'on est est cerclé d'accent.
     DiskTiles {
         id: diskBar
         width: root.width
@@ -2091,7 +2091,7 @@ Item {
         connecting: root.connecting
         // Vu de la machine du disque : le chemin sur le serveur.
         currentPath: root.remote ? root.remotePath(root.path) : root.path
-        running: root.visible
+        blockHeight: 48
         onOpened: (d) => root.openDisk(d)
         // Comme un clic sur le disque, mais vers ce dossier.
         onOpenedHome: (d, path) => root.openDisk(Object.assign({}, d, { main: path }))
